@@ -525,6 +525,18 @@ pub(crate) struct PyConfigurationKey {
     key: ConfigurationKey,
 }
 
+impl PyConfigurationKey {
+    /// Return the key object of `key`.
+    pub(super) const fn of(key: ConfigurationKey) -> Self {
+        Self { key }
+    }
+
+    /// Return the core key.
+    pub(super) const fn core(&self) -> &ConfigurationKey {
+        &self.key
+    }
+}
+
 #[pymethods]
 impl PyConfigurationKey {
     /// Compare structurally with another key; another type is

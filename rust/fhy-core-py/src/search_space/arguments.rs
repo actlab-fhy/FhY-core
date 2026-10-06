@@ -17,6 +17,7 @@ use crate::util::python::{Seed, read_type_name};
 
 use super::choice::PyChoice;
 use super::configuration::PyConfiguration;
+use super::measurement::{PyMeasurement, PyObjective};
 use super::space::{PyCondition, PyForbidden, PySpace};
 use super::trace::PyTrace;
 
@@ -160,6 +161,8 @@ pub(super) enum Seeded {
     Space(PySpace),
     Configuration(PyConfiguration),
     Trace(PyTrace),
+    Objective(PyObjective),
+    Measurement(PyMeasurement),
 }
 
 /// The seed of an instance the binding builds from a core value.

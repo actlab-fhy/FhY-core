@@ -52,6 +52,7 @@ use crate::solver::{GroundSimplifier, Solver};
 use super::alternative::{Alternative, PlainAlternative};
 use super::choice::Choice;
 use super::configuration::{Configuration, ConfigurationKey, KeyEntry, KeyValue};
+use super::error::MeasurementError;
 use super::measurement::{Measurement, MeasurementStatus, Objective};
 use super::space::{Condition, Forbidden, Space};
 use super::variable::{PlainVariable, Variable};
@@ -767,12 +768,20 @@ impl MeasurementData {
     ///
     /// Returns the error of an opaque value of the key that cannot give
     /// its foreign form.
-    #[expect(
-        unused_variables,
-        reason = "interface stub: the body is todo!() until the implementation"
-    )]
     pub fn of(measurement: &Measurement) -> Result<Self, ForeignError> {
-        todo!()
+        Ok(Self {
+            key: ConfigurationKeyData::of(measurement.key())?,
+            status: measurement.status().clone(),
+            values: measurement
+                .values()
+                .iter()
+                .map(|(objective, value)| MeasuredValueRepr {
+                    objective: objective.clone(),
+                    value: *value,
+                })
+                .collect(),
+            notes: measurement.notes().to_vec(),
+        })
     }
 
     /// Return the measurement, its key's opaque values resolved by
@@ -786,15 +795,26 @@ impl MeasurementData {
     /// constructor refuses, or
     /// [`UnexpectedValues`](super::MeasurementError::UnexpectedValues) for
     /// values held by a measurement that did not succeed.
-    #[expect(
-        unused_variables,
-        reason = "interface stub: the body is todo!() until the implementation"
-    )]
     pub fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
         self,
         resolver: &R,
     ) -> Result<Measurement, BuildError> {
-        todo!()
+        let key = self.key.build(resolver)?;
+        let values: Vec<(Objective, f64)> = self
+            .values
+            .into_iter()
+            .map(|entry| (entry.objective, entry.value))
+            .collect();
+        let measurement = match self.status {
+            MeasurementStatus::Ok => Measurement::ok(key, values).map_err(BuildError::invalid)?,
+            _ if !values.is_empty() => {
+                return Err(BuildError::invalid(MeasurementError::UnexpectedValues));
+            }
+            MeasurementStatus::Infeasible { reason } => Measurement::infeasible(key, reason),
+            MeasurementStatus::Failed { reason } => Measurement::failed(key, reason),
+            MeasurementStatus::Timeout => Measurement::timeout(key),
+        };
+        Ok(measurement.with_notes(self.notes))
     }
 }
 

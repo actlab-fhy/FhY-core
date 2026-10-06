@@ -2,17 +2,13 @@
 //! [`Objective`]; the record of one measured configuration,
 //! [`Measurement`]; and what measures, [`Measurer`].
 
-#![expect(
-    unused_variables,
-    dead_code,
-    reason = "interface stub: the bodies are todo!() until the implementation"
-)]
-
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use serde::de;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::diagnostic::Note;
@@ -78,19 +74,25 @@ impl Objective {
     ///
     /// Returns [`MeasurementError::EmptyName`] for an empty name.
     pub fn new(name: &str, direction: Direction) -> Result<Self, MeasurementError> {
-        todo!()
+        if name.is_empty() {
+            return Err(MeasurementError::EmptyName);
+        }
+        Ok(Self {
+            name: Arc::from(name),
+            direction,
+        })
     }
 
     /// Return the objective's name.
     #[must_use]
     pub fn name(&self) -> &str {
-        todo!()
+        &self.name
     }
 
     /// Return which way the objective's values are better.
     #[must_use]
     pub fn direction(&self) -> Direction {
-        todo!()
+        self.direction
     }
 
     /// Compare the values `left` and `right` of the objective:
@@ -103,27 +105,52 @@ impl Objective {
     /// another NaN, so it never wins a comparison and any number beats it.
     #[must_use]
     pub fn compare(&self, left: f64, right: f64) -> Option<Ordering> {
-        todo!()
+        if self.direction == Direction::Report {
+            return None;
+        }
+        let ordering = match (left.is_nan(), right.is_nan()) {
+            (true, true) => return Some(Ordering::Equal),
+            (true, false) => return Some(Ordering::Less),
+            (false, true) => return Some(Ordering::Greater),
+            (false, false) => left.partial_cmp(&right)?,
+        };
+        Some(match self.direction {
+            Direction::Minimize => ordering.reverse(),
+            Direction::Maximize | Direction::Report => ordering,
+        })
     }
 }
 
 impl fmt::Display for Objective {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        write!(f, "{} ({})", self.name, self.direction)
     }
+}
+
+/// The wire form of an [`Objective`].
+#[derive(Serialize, Deserialize)]
+#[serde(rename = "Objective", deny_unknown_fields)]
+struct ObjectiveWire {
+    name: String,
+    direction: Direction,
 }
 
 /// Serializes `{"name", "direction"}`.
 impl Serialize for Objective {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        todo!()
+        ObjectiveWire {
+            name: self.name.to_string(),
+            direction: self.direction,
+        }
+        .serialize(serializer)
     }
 }
 
 /// Deserializes `{"name", "direction"}`, refusing an empty name.
 impl<'de> Deserialize<'de> for Objective {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        todo!()
+        let wire = ObjectiveWire::deserialize(deserializer)?;
+        Self::new(&wire.name, wire.direction).map_err(de::Error::custom)
     }
 }
 
@@ -169,7 +196,7 @@ pub enum MeasurementStatus {
 pub struct Measurement(Arc<MeasurementInner>);
 
 /// The fields of a [`Measurement`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct MeasurementInner {
     key: ConfigurationKey,
     status: MeasurementStatus,
@@ -191,72 +218,122 @@ impl Measurement {
         key: ConfigurationKey,
         values: Vec<(Objective, f64)>,
     ) -> Result<Self, MeasurementError> {
-        todo!()
+        if values.is_empty() {
+            return Err(MeasurementError::NoValues);
+        }
+        let mut names = HashSet::with_capacity(values.len());
+        if let Some((repeated, _)) = values
+            .iter()
+            .find(|(objective, _)| !names.insert(objective.name()))
+        {
+            return Err(MeasurementError::RepeatedObjective {
+                name: repeated.name().to_owned(),
+            });
+        }
+        if let Some((objective, _)) = values.iter().find(|(_, value)| !value.is_finite()) {
+            return Err(MeasurementError::NonFiniteValue {
+                objective: objective.name().to_owned(),
+            });
+        }
+        let values = values
+            .into_iter()
+            .map(|(objective, value)| (objective, without_negative_zero(value)))
+            .collect();
+        Ok(Self::of(key, MeasurementStatus::Ok, values))
+    }
+
+    /// Return the measurement of `key` with `status` and `values`, and no
+    /// notes.
+    fn of(key: ConfigurationKey, status: MeasurementStatus, values: Vec<(Objective, f64)>) -> Self {
+        Self(Arc::new(MeasurementInner {
+            key,
+            status,
+            values,
+            notes: Vec::new(),
+        }))
     }
 
     /// Return the measurement of a configuration `key` that cannot be
     /// realized, for `reason`.
     #[must_use]
     pub fn infeasible(key: ConfigurationKey, reason: impl Into<String>) -> Self {
-        todo!()
+        Self::of(
+            key,
+            MeasurementStatus::Infeasible {
+                reason: reason.into(),
+            },
+            Vec::new(),
+        )
     }
 
     /// Return the measurement of the configuration `key` that broke, for
     /// `reason`.
     #[must_use]
     pub fn failed(key: ConfigurationKey, reason: impl Into<String>) -> Self {
-        todo!()
+        Self::of(
+            key,
+            MeasurementStatus::Failed {
+                reason: reason.into(),
+            },
+            Vec::new(),
+        )
     }
 
     /// Return the measurement of the configuration `key` that ran out of
     /// time.
     #[must_use]
     pub fn timeout(key: ConfigurationKey) -> Self {
-        todo!()
+        Self::of(key, MeasurementStatus::Timeout, Vec::new())
     }
 
     /// Return the measurement with `notes` in place of its own.
     #[must_use]
     pub fn with_notes(self, notes: Vec<Note>) -> Self {
-        todo!()
+        let mut inner = Arc::unwrap_or_clone(self.0);
+        inner.notes = notes;
+        Self(Arc::new(inner))
     }
 
     /// Return the key of the configuration measured.
     #[must_use]
     pub fn key(&self) -> &ConfigurationKey {
-        todo!()
+        &self.0.key
     }
 
     /// Return how the measurement went.
     #[must_use]
     pub fn status(&self) -> &MeasurementStatus {
-        todo!()
+        &self.0.status
     }
 
     /// Return whether the measurement succeeded.
     #[must_use]
     pub fn is_ok(&self) -> bool {
-        todo!()
+        self.0.status == MeasurementStatus::Ok
     }
 
     /// Return the values, one per objective, in the order given; none for
     /// a measurement that did not succeed.
     #[must_use]
     pub fn values(&self) -> &[(Objective, f64)] {
-        todo!()
+        &self.0.values
     }
 
     /// Return the value of the objective named `objective`, if the
     /// measurement holds one.
     #[must_use]
     pub fn value(&self, objective: &str) -> Option<f64> {
-        todo!()
+        self.0
+            .values
+            .iter()
+            .find(|(held, _)| held.name() == objective)
+            .map(|(_, value)| *value)
     }
 
     /// Return the notes.
     #[must_use]
     pub fn notes(&self) -> &[Note] {
-        todo!()
+        &self.0.notes
     }
 
     /// Return whether this measurement dominates `other`: at least as good
@@ -269,21 +346,67 @@ impl Measurement {
     /// succeed, and [`MeasurementError::DifferentObjectives`] when their
     /// objectives differ, by name or direction, in any order.
     pub fn dominates(&self, other: &Self) -> Result<bool, MeasurementError> {
-        todo!()
+        if !self.is_ok() || !other.is_ok() {
+            return Err(MeasurementError::NotOk);
+        }
+        if self.0.values.len() != other.0.values.len() {
+            return Err(MeasurementError::DifferentObjectives);
+        }
+        let mut is_better_somewhere = false;
+        for (objective, value) in &self.0.values {
+            let theirs = other
+                .0
+                .values
+                .iter()
+                .find(|(held, _)| held == objective)
+                .map(|(_, theirs)| *theirs)
+                .ok_or(MeasurementError::DifferentObjectives)?;
+            match objective.compare(*value, theirs) {
+                Some(Ordering::Less) => return Ok(false),
+                Some(Ordering::Greater) => is_better_somewhere = true,
+                Some(Ordering::Equal) | None => {}
+            }
+        }
+        Ok(is_better_somewhere)
     }
+}
+
+/// Return `value`, `-0.0` made `0.0`.
+fn without_negative_zero(value: f64) -> f64 {
+    if value == 0.0 { 0.0 } else { value }
 }
 
 impl PartialEq for Measurement {
     fn eq(&self, other: &Self) -> bool {
-        todo!()
+        let (left, right) = (&self.0, &other.0);
+        left.key == right.key
+            && left.status == right.status
+            && left.notes == right.notes
+            && left.values.len() == right.values.len()
+            && left.values.iter().zip(&right.values).all(
+                |((left_objective, left_value), (right_objective, right_value))| {
+                    left_objective == right_objective
+                        && left_value.to_bits() == right_value.to_bits()
+                },
+            )
     }
 }
 
+/// A measurement's values are finite and never `-0.0`, so comparing their
+/// bits is `==` on them.
 impl Eq for Measurement {}
 
 impl Hash for Measurement {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        todo!()
+        let inner = &self.0;
+        inner.key.hash(state);
+        inner.status.hash(state);
+        inner.values.len().hash(state);
+        for (objective, value) in &inner.values {
+            objective.hash(state);
+            value.to_bits().hash(state);
+        }
+        inner.notes.hash(state);
     }
 }
 

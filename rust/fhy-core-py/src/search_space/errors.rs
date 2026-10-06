@@ -65,10 +65,6 @@ static REPLAY_MISMATCH_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "Repl
 static NOT_ENUMERABLE_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "NotEnumerableError");
 
 /// `MeasurementError`.
-#[expect(
-    dead_code,
-    reason = "interface stub: used once the conversions are implemented"
-)]
 static MEASUREMENT_ERROR: ExceptionClass = ExceptionClass::new(MODULE, "MeasurementError");
 
 /// `DeadEndError`.
@@ -199,11 +195,6 @@ pub(super) fn replay_error_to_py(py: Python<'_>, error: ReplayError) -> PyErr {
 
 /// Return the Python exception of an objective or a measurement the core
 /// refuses: `MeasurementError`.
-#[expect(
-    dead_code,
-    unused_variables,
-    reason = "interface stub: the body is todo!() until the implementation"
-)]
 pub(super) fn measurement_error_to_py(py: Python<'_>, error: &MeasurementError) -> PyErr {
-    todo!()
+    MEASUREMENT_ERROR.err(py, (error.to_string(),))
 }
