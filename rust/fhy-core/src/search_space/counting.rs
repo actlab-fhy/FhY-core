@@ -235,25 +235,21 @@ fn apply(
         };
         let node = space.decision_at(position);
         let name = node.name();
-        match configuration.activity(name) {
-            Some(Activity::Active) => {
-                let domain = decision_domain(node)?;
-                let Some(value) = domain.value_at(coordinate) else {
-                    return Ok(None);
-                };
-                match try_extend(&configuration, name, value, context)? {
-                    Some(extended) => configuration = extended,
-                    None => return Ok(None),
-                }
+        if configuration.activity(name) == Some(Activity::Active) {
+            let domain = decision_domain(node)?;
+            let Some(value) = domain.value_at(coordinate) else {
+                return Ok(None);
+            };
+            match try_extend(&configuration, name, value, context)? {
+                Some(extended) => configuration = extended,
+                None => return Ok(None),
             }
-            _ => {
-                let is_parent_active = space.parent_at(position).is_none_or(|(choice, _)| {
-                    configuration.activity(space.decision_at(choice).name())
-                        == Some(Activity::Active)
-                });
-                if is_parent_active {
-                    multiplicity *= &counts[position];
-                }
+        } else {
+            let is_parent_active = space.parent_at(position).is_none_or(|(choice, _)| {
+                configuration.activity(space.decision_at(choice).name()) == Some(Activity::Active)
+            });
+            if is_parent_active {
+                multiplicity *= &counts[position];
             }
         }
     }
@@ -307,19 +303,22 @@ fn find_top(space: &Space, position: usize) -> usize {
     current
 }
 
+/// Return the representative of `position`'s set in the union-find forest
+/// `leader`, halving the path on the way.
+fn root(leader: &mut [usize], position: usize) -> usize {
+    let mut current = position;
+    while leader[current] != current {
+        leader[current] = leader[leader[current]];
+        current = leader[current];
+    }
+    current
+}
+
 /// Return the components of `space`, in canonical order of their first
 /// top-level decision.
 fn find_components(space: &Space, tree: &Tree) -> Vec<Component> {
     let count = space.decision_count();
     let mut leader: Vec<usize> = (0..count).collect();
-    fn root(leader: &mut [usize], position: usize) -> usize {
-        let mut current = position;
-        while leader[current] != current {
-            leader[current] = leader[leader[current]];
-            current = leader[current];
-        }
-        current
-    }
     let link = |left: usize, right: usize, leader: &mut Vec<usize>| {
         let (left, right) = (root(leader, left), root(leader, right));
         if left != right {
@@ -457,10 +456,7 @@ fn classify_unenumerable(space: &Space, decision: Identifier) -> Cardinality {
 /// Return the count the components' `answers` make together, as
 /// [`Space::cardinality`] documents.
 fn combine(answers: Vec<Cardinality>) -> Cardinality {
-    if answers
-        .iter()
-        .any(|answer| *answer == Cardinality::Exact(BigUint::ZERO))
-    {
+    if answers.contains(&Cardinality::Exact(BigUint::ZERO)) {
         return Cardinality::Exact(BigUint::ZERO);
     }
     if let Some(unknown) = answers

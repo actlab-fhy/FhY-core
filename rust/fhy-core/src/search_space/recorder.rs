@@ -123,22 +123,21 @@ impl Recorder {
             .preset
             .as_ref()
             .and_then(|preset| preset.value(decision));
-        let coordinate = match preset {
-            Some(value) => domain
+        let coordinate = if let Some(value) = preset {
+            domain
                 .coordinate_of(value)
-                .ok_or(TraceError::CoordinateOutOfDomain { position })?,
-            None => {
-                let step = PendingStep::of_decision(
-                    &kind,
-                    configuration,
-                    decision,
-                    &domain,
-                    position,
-                    context,
-                )
-                .ok_or_else(unknown)?;
-                ask(oracle, &step)?
-            }
+                .ok_or(TraceError::CoordinateOutOfDomain { position })?
+        } else {
+            let step = PendingStep::of_decision(
+                &kind,
+                configuration,
+                decision,
+                &domain,
+                position,
+                context,
+            )
+            .ok_or_else(unknown)?;
+            ask(oracle, &step)?
         };
         let value = domain
             .value_at(&coordinate)

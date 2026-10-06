@@ -37,7 +37,7 @@ fn recorded_to_python<'py>(
 ) -> PyResult<Bound<'py, PyTuple>> {
     let py = space.py();
     let (trace, configuration) = recorded.into_parts();
-    let trace = trace_to_python(py, trace, |_| StepObjects::default())?;
+    let trace = trace_to_python(py, &trace, |_| StepObjects::default())?;
     let configuration = match configuration {
         Some(configuration) => configuration_to_python(space.as_any(), configuration)?,
         None => py.None().into_bound(py),
@@ -213,7 +213,7 @@ pub(super) fn configuration_trace<'py>(
         |context| core.trace(context),
         |error| trace_error_to_py(py, error),
     )?;
-    trace_to_python(py, trace, |_| StepObjects::default())
+    trace_to_python(py, &trace, |_| StepObjects::default())
 }
 
 /// Where an enumeration stands.

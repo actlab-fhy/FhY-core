@@ -282,7 +282,7 @@ impl PyRecorder {
     fn trace(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.with_run(|run| {
             let objects = &run.objects;
-            trace_to_python(py, run.recorder.trace(), |position| {
+            trace_to_python(py, &run.recorder.trace(), |position| {
                 objects
                     .get(position)
                     .map_or_else(StepObjects::default, |objects| objects.clone_ref(py))
@@ -318,7 +318,7 @@ impl PyRecorder {
             Err(error) => return Err(trace_error_to_py(py, error)),
         };
         let (trace, configuration) = recorded.into_parts();
-        let trace = trace_to_python(py, trace, |position| {
+        let trace = trace_to_python(py, &trace, |position| {
             objects
                 .get(position)
                 .map_or_else(StepObjects::default, |objects| objects.clone_ref(py))

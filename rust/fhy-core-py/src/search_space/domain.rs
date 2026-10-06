@@ -90,10 +90,10 @@ pub(super) fn coordinate_to_python<'py>(
 }
 
 /// Return the Python `int` of `value`, a natural number.
-pub(super) fn natural_to_python<'py>(
-    py: Python<'py>,
+pub(super) fn natural_to_python(
+    py: Python<'_>,
     value: impl Into<BigInt>,
-) -> PyResult<Bound<'py, PyAny>> {
+) -> PyResult<Bound<'_, PyAny>> {
     big_int_to_python(py, &value.into())
 }
 
@@ -241,8 +241,10 @@ impl PyChoiceDomain {
         read_index(index, "ChoiceDomain.value_at's index")?
             .and_then(|position| usize::try_from(position).ok())
             .filter(|&position| position < choices.len())
-            .map(|position| choices.get_item(position).map(Bound::unbind))
-            .unwrap_or_else(|| Err(past_the_end(index, choices.len())))
+            .map_or_else(
+                || Err(past_the_end(index, choices.len())),
+                |position| choices.get_item(position).map(Bound::unbind),
+            )
     }
 
     /// Return the index of the choice equal to `value`.
@@ -392,7 +394,7 @@ impl PyOrderDomain {
         let elements = self.elements.bind(py);
         let ordered = positions
             .iter()
-            .map(|&position| elements.get_item(position as usize))
+            .map(|&position| elements.get_item(usize::try_from(position).unwrap_or(usize::MAX)))
             .collect::<PyResult<Vec<_>>>()?;
         PyTuple::new(py, ordered).map(Some)
     }

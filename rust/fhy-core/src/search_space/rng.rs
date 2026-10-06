@@ -6,7 +6,7 @@ use std::num::NonZeroU64;
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
-/// A seeded, deterministic generator of 64-bit numbers: SplitMix64.
+/// A seeded, deterministic generator of 64-bit numbers: `SplitMix64`.
 ///
 /// Its stream is a contract: for a seed, the numbers it returns, and for
 /// each method, which numbers it takes and how it turns them into its
@@ -64,26 +64,31 @@ impl TryFrom<RngWire> for Rng {
     }
 }
 
-/// SplitMix64's increment of the state.
+/// `SplitMix64`'s increment of the state.
 const GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
-/// SplitMix64's first mixing multiplier.
+/// `SplitMix64`'s first mixing multiplier.
 const MIX_FIRST: u64 = 0xBF58_476D_1CE4_E5B9;
-/// SplitMix64's second mixing multiplier.
+/// `SplitMix64`'s second mixing multiplier.
 const MIX_SECOND: u64 = 0x94D0_49BB_1331_11EB;
 
-/// Return the 32-bit digits of the 64-bit digits `digits`, least
-/// significant first.
-fn digits_to_u32(digits: &[u64]) -> Vec<u32> {
-    digits
+/// Return the number whose 64-bit digits are `digits`, least significant
+/// first.
+fn from_digits(digits: &[u64]) -> BigUint {
+    let bytes: Vec<u8> = digits
         .iter()
-        .flat_map(|&digit| {
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "each half of a 64-bit digit is taken on purpose"
-            )]
-            [digit as u32, (digit >> 32) as u32]
-        })
-        .collect()
+        .flat_map(|digit| digit.to_le_bytes())
+        .collect();
+    BigUint::from_bytes_le(&bytes)
+}
+
+/// Return the high and the low 64 bits of `value`.
+fn split_halves(value: u128) -> (u64, u64) {
+    let bytes = value.to_le_bytes();
+    let mut low = [0_u8; 8];
+    let mut high = [0_u8; 8];
+    low.copy_from_slice(&bytes[..8]);
+    high.copy_from_slice(&bytes[8..]);
+    (u64::from_le_bytes(high), u64::from_le_bytes(low))
 }
 
 impl Rng {
@@ -114,28 +119,20 @@ impl Rng {
         let bound = bound.get();
         let threshold = bound.wrapping_neg() % bound;
         loop {
-            let product = u128::from(self.next_u64()) * u128::from(bound);
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "the low half of the 128-bit product is wanted"
-            )]
-            let low = product as u64;
+            let (high, low) = split_halves(u128::from(self.next_u64()) * u128::from(bound));
             if low >= threshold {
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "the high half of a product of two 64-bit numbers fits 64 bits"
-                )]
-                return (product >> 64) as u64;
+                return high;
             }
         }
     }
 
     /// Return a number drawn uniformly from `[0, bound)`.
     ///
-    /// With `b` the bit length of `bound` and `n = ceil(b / 64)`, draws `n`
-    /// numbers, the first the least significant limb, keeps the low `b - 64
-    /// * (n - 1)` bits of the last, and returns the number unless it is at
-    /// least `bound`, in which case it draws `n` again.
+    /// With `b` the bit length of `bound`, `n = ceil(b / 64)` and
+    /// `r = b - 64 * (n - 1)`, draws `n` numbers, the first the least
+    /// significant limb, keeps the low `r` bits of the last, and returns the
+    /// number unless it is at least `bound`, in which case it draws `n`
+    /// again.
     ///
     /// # Panics
     ///
@@ -159,7 +156,7 @@ impl Rng {
             if let Some(top) = digits.last_mut() {
                 *top &= top_mask;
             }
-            let candidate = BigUint::from_slice(&digits_to_u32(&digits));
+            let candidate = from_digits(&digits);
             if candidate < *bound {
                 return candidate;
             }
@@ -170,9 +167,12 @@ impl Rng {
     /// 1, swap the item at `i` with the one at `below(i + 1)`.
     pub fn shuffle<T>(&mut self, items: &mut [T]) {
         for index in (1..items.len()).rev() {
-            let count = u64::try_from(index + 1).unwrap_or(u64::MAX);
-            let other = self.below(NonZeroU64::MIN.saturating_add(count - 1));
-            let other = usize::try_from(other).unwrap_or(index);
+            // `index + 1` items remain, at most `usize::MAX`, which fits
+            // 64 bits on every platform Rust supports.
+            let Some(remaining) = u64::try_from(index + 1).ok().and_then(NonZeroU64::new) else {
+                continue;
+            };
+            let other = usize::try_from(self.below(remaining)).unwrap_or(index);
             items.swap(index, other);
         }
     }

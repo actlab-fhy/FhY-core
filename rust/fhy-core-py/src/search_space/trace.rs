@@ -231,12 +231,12 @@ fn owned_step(domain: &Bound<'_, PyAny>, step: &TraceStep) -> PyResult<TraceStep
 /// # Errors
 ///
 /// Raises what building the object raises.
-pub(super) fn trace_to_python(
-    py: Python<'_>,
-    trace: Trace,
+pub(super) fn trace_to_python<'py>(
+    py: Python<'py>,
+    trace: &Trace,
     objects: impl Fn(usize) -> StepObjects,
-) -> PyResult<Bound<'_, PyAny>> {
-    let seeded = PyTrace::assemble(py, &trace, objects)?;
+) -> PyResult<Bound<'py, PyAny>> {
+    let seeded = PyTrace::assemble(py, trace, objects)?;
     instantiate(PyTrace::public_class().get(py)?, 0, Seeded::Trace(seeded))
 }
 
@@ -429,7 +429,7 @@ impl PyTrace {
         data: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let trace: Trace = parse_tree(cls, read_tree(cls, data)?)?;
-        decoded(cls, trace)
+        decoded(cls, &trace)
     }
 
     /// Return the trace of the V2 JSON text `payload`, an instance of
@@ -440,7 +440,7 @@ impl PyTrace {
         payload: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let trace: Trace = parse_tree(cls, read_text_tree(cls, &read_text(payload)?)?)?;
-        decoded(cls, trace)
+        decoded(cls, &trace)
     }
 
     /// Pickle as a call of `from_json` with the V2 text.
@@ -467,7 +467,7 @@ impl PyTrace {
 ///
 /// Raises what building the object raises, and `SerializationError` for
 /// an object that is no instance of `cls`.
-fn decoded<'py>(cls: &Bound<'py, PyType>, trace: Trace) -> PyResult<Bound<'py, PyAny>> {
-    let seeded = PyTrace::assemble(cls.py(), &trace, |_| StepObjects::default())?;
+fn decoded<'py>(cls: &Bound<'py, PyType>, trace: &Trace) -> PyResult<Bound<'py, PyAny>> {
+    let seeded = PyTrace::assemble(cls.py(), trace, |_| StepObjects::default())?;
     check_instance(cls, instantiate(cls, 0, Seeded::Trace(seeded))?)
 }
