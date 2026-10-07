@@ -9,8 +9,11 @@
 //!
 //! The core decodes a space recursively, once per level of choices, so a
 //! payload is refused (`RecursionError`) when its choices nest deeper than
-//! Python's recursion limit, as a deep provenance is. The classes have no
-//! V1 form: no V1 payload of them exists.
+//! Python's recursion limit, as a deep provenance is. The core's own
+//! decoder refuses one whose choices nest past its `MAX_CHOICE_DEPTH`
+//! (`DeserializationValueError`), which, under the default recursion
+//! limit, is the refusal a deep payload meets. The classes have no V1
+//! form: no V1 payload of them exists.
 
 use pyo3::exceptions::PyRecursionError;
 use pyo3::prelude::*;
@@ -170,9 +173,11 @@ fn build_in_context<T: Send>(
 ///
 /// Raises `RecursionError` for choices nested deeper than the recursion
 /// limit, `MalformedPayloadError` for text that is no JSON,
-/// `DeserializationValueError` for a payload of another shape or one a
-/// constructor refuses, the exception a part's hook raises, and
-/// `SerializationError` for an object that is no instance of `cls`.
+/// `DeserializationValueError` for a payload of another shape, one nested
+/// deeper than a reader reads or whose choices nest past the core's
+/// `MAX_CHOICE_DEPTH`, or one a constructor refuses, the exception a
+/// part's hook raises, and `SerializationError` for an object that is no
+/// instance of `cls`.
 pub(super) fn decode_part<'py>(
     cls: &Bound<'py, PyType>,
     family: Family,

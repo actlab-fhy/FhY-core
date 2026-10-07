@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from fhy_core.search_space import Space
 from fhy_core.serialization import (
     _HEADER_STRUCT,
     BinaryPayloadCodec,
@@ -25,6 +26,7 @@ from fhy_core.serialization import (
     SerializationError,
     register_serializable,
 )
+from fhy_core.symbolic.param import Param
 from fhy_core.traits.frozen import FrozenMixin
 
 
@@ -79,6 +81,35 @@ def test_from_json_wraps_malformed_input(payload: str | bytes, match: str) -> No
     """Test ``from_json`` reports malformed input as ``MalformedPayloadError``."""
     with pytest.raises(MalformedPayloadError, match=match):
         _Point.from_json(payload)
+
+
+def _deep_tuple_text(depth: int) -> str:
+    """Return the JSON text of `depth` nested one-element tuple values."""
+    return '{"tuple":[' * depth + '{"bool":true}' + "]}" * depth
+
+
+@pytest.mark.parametrize(
+    ("cls", "text"),
+    [
+        pytest.param(Space, '{"a":' * 200 + "1" + "}" * 200, id="read-as-a-tree"),
+        pytest.param(
+            Param,
+            '{"constraint_system":{"constraints":[{"in_set":{"variable":'
+            '{"id":1,"name_hint":"x"},"values":[' + _deep_tuple_text(100) + "]}}]}}",
+            id="read-as-its-wire-form",
+        ),
+    ],
+)
+def test_from_json_reports_valid_json_too_deep_to_read_as_a_value_error(
+    cls: type[Serializable], text: str
+) -> None:
+    """Test a Rust-backed class refuses JSON nested past its reader's limit.
+
+    The text is valid JSON, so it is not malformed: the payload is refused
+    as a value, as one of another shape is.
+    """
+    with pytest.raises(DeserializationValueError, match="recursion limit exceeded"):
+        cls.from_json(text)
 
 
 # ============================================================================

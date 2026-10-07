@@ -166,16 +166,31 @@ pub(crate) fn read_text(payload: &Bound<'_, PyAny>) -> PyResult<String> {
     })
 }
 
+/// Return whether `error`, from parsing a JSON text, says the text is not
+/// JSON: a syntax error or a truncated text, but not `serde_json`'s
+/// recursion limit, which refuses valid JSON nested deeper than it reads.
+fn is_malformed_json(error: &serde_json::Error) -> bool {
+    (error.is_syntax() || error.is_eof()) && !is_recursion_limit(error)
+}
+
+/// Return whether `error` is `serde_json`'s recursion limit, which it
+/// classifies as a syntax error with no code to match, so it is told apart
+/// by its text.
+fn is_recursion_limit(error: &serde_json::Error) -> bool {
+    error.is_syntax() && error.to_string().starts_with("recursion limit exceeded")
+}
+
 /// Return the wire form `D` of the V2 text `text`, a payload of `cls`.
 ///
 /// # Errors
 ///
 /// Raises `MalformedPayloadError` for text that is not JSON, and
-/// `DeserializationValueError` with serde's text for JSON of another shape.
+/// `DeserializationValueError` with serde's text for JSON of another shape
+/// or nested deeper than `serde_json` reads.
 pub(crate) fn parse<D: DeserializeOwned>(cls: &Bound<'_, PyType>, text: &str) -> PyResult<D> {
     let py = cls.py();
     serde_json::from_str(text).map_err(|error| {
-        if error.is_syntax() || error.is_eof() {
+        if is_malformed_json(&error) {
             MALFORMED_PAYLOAD_ERROR.err(py, ("JSON payload is not valid JSON.".to_owned(),))
         } else {
             DESERIALIZATION_VALUE_ERROR.err(
@@ -235,10 +250,12 @@ pub(crate) fn read_tree(
 ///
 /// # Errors
 ///
-/// Raises `MalformedPayloadError` for text that is not JSON.
+/// Raises `MalformedPayloadError` for text that is not JSON, and
+/// `DeserializationValueError` for JSON nested deeper than `serde_json`
+/// reads.
 pub(crate) fn read_text_tree(cls: &Bound<'_, PyType>, text: &str) -> PyResult<serde_json::Value> {
     serde_json::from_str(text).map_err(|error| {
-        if error.is_syntax() || error.is_eof() {
+        if is_malformed_json(&error) {
             MALFORMED_PAYLOAD_ERROR.err(cls.py(), ("JSON payload is not valid JSON.".to_owned(),))
         } else {
             invalid_payload(cls, &error.to_string())
@@ -261,8 +278,10 @@ pub(crate) fn parse_tree<D: DeserializeOwned>(
 }
 
 /// The deepest nesting of `dict`s and `list`s the reader of a Python payload
-/// accepts, `serde_json`'s own limit for JSON text. V2 payloads are shallow:
-/// an expression is a flat node table.
+/// accepts, about `serde_json`'s own limit for JSON text, which reads 127.
+/// V2 payloads are shallow: an expression is a flat node table, and a
+/// search space's choices, which nest at most the core's
+/// `MAX_CHOICE_DEPTH` levels, take 83 of these at most.
 const MAX_PAYLOAD_DEPTH: usize = 128;
 
 /// Return the JSON value of the Python payload `object`, `depth` levels

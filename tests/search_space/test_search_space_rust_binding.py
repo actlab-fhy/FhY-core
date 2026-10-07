@@ -775,6 +775,37 @@ def test_choices_nested_to_the_cap_round_trip_as_text_and_as_a_dict() -> None:
         assert from_dict.to_json() == text
 
 
+def test_payload_nesting_choices_past_the_cap_is_refused_on_both_paths() -> None:
+    """Test a payload one choice deeper than the core allows is a value error.
+
+    The payload is valid JSON within both readers' limits, so neither path
+    calls it malformed: the core's decoder refuses it before building.
+    """
+    payload = _build_deepest_space().serialize_to_dict()
+    holder_id = Identifier("holder")
+    deeper = {
+        "identifier": Identifier("level_17").serialize_to_dict(),
+        "alternatives": [
+            {
+                "plain": {
+                    "identifier": holder_id.serialize_to_dict(),
+                    "variables": [],
+                    "choices": payload["choices"],
+                    "notes": [],
+                }
+            }
+        ],
+        "notes": [],
+    }
+    payload["choices"] = [deeper]
+    message = f"choice nesting exceeds {MAX_CHOICE_DEPTH} levels"
+
+    with pytest.raises(DeserializationValueError, match=message):
+        Space.deserialize_from_dict(payload)
+    with pytest.raises(DeserializationValueError, match=message):
+        Space.from_json(_canonical_text(payload))
+
+
 def test_choices_nested_past_the_cap_are_refused() -> None:
     """Test a choice one level deeper than the core allows is refused."""
     chain = build_chain(MAX_CHOICE_DEPTH)
