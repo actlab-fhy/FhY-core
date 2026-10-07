@@ -298,8 +298,9 @@ class Space(_rs.Space, Serializable):
     Raises:
         TypeError: If an argument has the wrong type.
         DuplicateNameError: If a name repeats.
-        SearchSpaceError: If a condition or clause names something that is
-            not a decision, or decisions depend on each other in a cycle.
+        SearchSpaceError: If a condition or clause names no decision or
+            something that is not a decision, or decisions depend on each
+            other in a cycle.
         RecursionError: If choices nest deeper than the recursion limit.
 
     """
