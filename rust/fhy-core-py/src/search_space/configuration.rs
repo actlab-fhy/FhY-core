@@ -20,12 +20,14 @@ use crate::term::read_renaming;
 use crate::util::dataclass::hash_value;
 use crate::util::exceptions::DESERIALIZATION_VALUE_ERROR;
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::gc::{Slots, collect_slots};
 use crate::util::pending::with_pending_errors;
 use crate::util::public_class::PublicClass;
 use crate::wire::PyResolver;
 
 use super::arguments::{Seeded, instantiate, take_seed, wrong_argument, wrong_seed};
 use super::choice::PyChoice;
+use super::domain::holds_opaque;
 use super::errors::{configuration_errors_to_py, equivalence_error_to_py};
 use super::space::PySpace;
 use super::wire::{Family, decode_part, refuse_v1, write_part, write_part_json};
@@ -35,7 +37,8 @@ use super::wire::{Family, decode_part, refuse_v1, write_part, write_part_json};
 type Entries = (Vec<(Identifier, Value)>, HashMap<Identifier, Py<PyAny>>);
 
 /// Return the entries `entries` gives, a mapping or an iterable of
-/// `(name, value)` pairs.
+/// `(name, value)` pairs, the slots of their opaque values owned by the
+/// innermost `collect_slots`.
 ///
 /// # Errors
 ///
@@ -76,6 +79,9 @@ pub(crate) struct PyConfiguration {
     space: Py<PySpace>,
     /// The value objects given, by decision name.
     values: HashMap<Identifier, Py<PyAny>>,
+    /// The slots of the opaque values read from `values`, which the
+    /// configuration owns; the other values' are its space's.
+    slots: Slots,
 }
 
 impl PyConfiguration {
@@ -118,14 +124,32 @@ impl PyConfiguration {
         )
     }
 
-    /// Return the configuration with `entries` given on top of its own.
+    /// Return the configuration with the entries `entries` gives on top of
+    /// its own.
+    ///
+    /// The new configuration owns the slots of its opaque values, so a
+    /// value it keeps from `slf` and holds an opaque value is read anew
+    /// from its object and given again beside `entries`: `slf`, which owns
+    /// the slot read before, may be freed first. Giving a held value again
+    /// changes nothing, since every value is checked anew.
     fn with_entries_given<'py>(
         slf: &Bound<'py, Self>,
-        entries: Entries,
+        entries: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = slf.py();
         let this = slf.get();
-        let (core, objects) = entries;
+        let (read, slots) = collect_slots(|| -> PyResult<Entries> {
+            let (mut core, mut objects) = read_entries(Some(entries))?;
+            for (name, object) in &this.values {
+                let is_opaque = this.configuration.value(name).is_some_and(holds_opaque);
+                if is_opaque && !objects.contains_key(name) {
+                    core.push((name.clone(), read_bound_value(object.bind(py))?));
+                    objects.insert(name.clone(), object.clone_ref(py));
+                }
+            }
+            Ok((core, objects))
+        });
+        let (core, objects) = read?;
         let current = this.configuration.clone();
         let configuration = Self::check(py, move |context| current.with_entries(core, context))?;
         let mut values: HashMap<Identifier, Py<PyAny>> = this
@@ -139,8 +163,16 @@ impl PyConfiguration {
             configuration,
             space: this.space.clone_ref(py),
             values,
+            slots,
         }
         .into_python(py)
+    }
+
+    /// Return whether the configuration holds an opaque value.
+    fn holds_opaque(&self) -> bool {
+        self.configuration
+            .entries()
+            .any(|(_, value)| holds_opaque(value))
     }
 
     /// Return the Python object of the value of the decision `name`: the
@@ -186,7 +218,8 @@ impl PyConfiguration {
         let space = space
             .cast::<PySpace>()
             .map_err(|_not_a_space| wrong_argument("Configuration", "space", "a Space", space))?;
-        let (core, values) = read_entries(entries)?;
+        let (read, slots) = collect_slots(|| read_entries(entries));
+        let (core, values) = read?;
         let core_space = space.get().core().clone();
         let configuration = Self::check(py, move |context| {
             Configuration::new(&core_space, core, context)
@@ -195,6 +228,7 @@ impl PyConfiguration {
             configuration,
             space: space.clone().unbind(),
             values,
+            slots,
         })
     }
 
@@ -208,7 +242,7 @@ impl PyConfiguration {
         for value in self.values.values() {
             visit.call(value)?;
         }
-        Ok(())
+        self.slots.traverse(&visit)
     }
 
     /// Register `cls` as the public `Configuration` class.
@@ -326,9 +360,19 @@ impl PyConfiguration {
     }
 
     /// Return the key that identifies the configuration within its space.
-    fn key(&self) -> PyConfigurationKey {
+    ///
+    /// A key of opaque values shares them, so it keeps the configuration,
+    /// which owns their slots or holds the space that does.
+    fn key(slf: &Bound<'_, Self>) -> PyConfigurationKey {
+        let this = slf.get();
+        let holder = if this.holds_opaque() {
+            KeyHolder::Object(slf.clone().into_any().unbind())
+        } else {
+            KeyHolder::Nothing
+        };
         PyConfigurationKey {
-            key: self.configuration.key(),
+            key: this.configuration.key(),
+            holder,
         }
     }
 
@@ -342,8 +386,7 @@ impl PyConfiguration {
         value: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let pair = PyTuple::new(slf.py(), [name, value])?;
-        let entries = read_entries(Some(PyTuple::new(slf.py(), [pair])?.as_any()))?;
-        Self::with_entries_given(slf, entries)
+        Self::with_entries_given(slf, PyTuple::new(slf.py(), [pair])?.as_any())
     }
 
     /// Return the configuration with `entries` in place of or beside its
@@ -354,7 +397,7 @@ impl PyConfiguration {
         slf: &Bound<'py, Self>,
         entries: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        Self::with_entries_given(slf, read_entries(Some(entries))?)
+        Self::with_entries_given(slf, entries)
     }
 
     /// Return whether `other` is a configuration of a structurally
@@ -508,8 +551,50 @@ pub(super) fn configuration_to_python<'py>(
         configuration,
         space: space.clone().unbind(),
         values: HashMap::new(),
+        slots: Slots::default(),
     }
     .into_python(py)
+}
+
+/// What keeps the Python objects of the opaque values of a key, or of a
+/// measurement's key, visible to the cycle collector.
+///
+/// A key shares its configuration's opaque values, whose slots another
+/// object owns, and it cannot read them anew: so it keeps that object, and
+/// visits it, unless it made the slots itself, as a decoded key does.
+pub(super) enum KeyHolder {
+    /// The key holds no opaque value.
+    Nothing,
+    /// The slots the key's own decoding made, which it owns.
+    Slots(Slots),
+    /// The object that owns the slots, or keeps the one that does.
+    Object(Py<PyAny>),
+}
+
+impl KeyHolder {
+    /// Return the holder of a key shared with `holder`, the object that
+    /// holds `self`: the same object, or `holder` for slots it owns.
+    pub(super) fn share(&self, py: Python<'_>, holder: &Bound<'_, PyAny>) -> Self {
+        match self {
+            Self::Nothing => Self::Nothing,
+            Self::Slots(slots) if slots.is_empty() => Self::Nothing,
+            Self::Slots(_) => Self::Object(holder.clone().unbind()),
+            Self::Object(object) => Self::Object(object.clone_ref(py)),
+        }
+    }
+
+    /// Visit what the holder holds.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error the visit returns, which stops the traversal.
+    pub(super) fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        match self {
+            Self::Nothing => Ok(()),
+            Self::Slots(slots) => slots.traverse(visit),
+            Self::Object(object) => visit.call(object),
+        }
+    }
 }
 
 /// The identity of a configuration within its space, backed by the core
@@ -523,22 +608,39 @@ pub(super) fn configuration_to_python<'py>(
 #[pyclass(frozen, module = "fhy_core._rs", name = "ConfigurationKey")]
 pub(crate) struct PyConfigurationKey {
     key: ConfigurationKey,
+    /// What keeps the objects of the key's opaque values visible.
+    holder: KeyHolder,
 }
 
 impl PyConfigurationKey {
-    /// Return the key object of `key`.
-    pub(super) const fn of(key: ConfigurationKey) -> Self {
-        Self { key }
+    /// Return the key object of `key`, its opaque values kept visible by
+    /// `holder`.
+    pub(super) const fn of(key: ConfigurationKey, holder: KeyHolder) -> Self {
+        Self { key, holder }
     }
 
     /// Return the core key.
     pub(super) const fn core(&self) -> &ConfigurationKey {
         &self.key
     }
+
+    /// Return what keeps the objects of the key's opaque values visible.
+    pub(super) const fn holder(&self) -> &KeyHolder {
+        &self.holder
+    }
 }
 
 #[pymethods]
 impl PyConfigurationKey {
+    /// Visit the Python objects the key keeps, for the cycle collector.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.holder.traverse(&visit)
+    }
+
     /// Compare structurally with another key; another type is
     /// `NotImplemented`.
     ///
@@ -594,10 +696,15 @@ impl PyConfigurationKey {
         };
         let data: ConfigurationKeyData =
             serde_json::from_str(text).map_err(|error| invalid(error.to_string()))?;
-        let key = with_pending_errors(|| {
-            data.build(&PyResolver)
-                .map_err(|error| invalid(error.to_string()))
-        })?;
-        Ok(Self { key })
+        let (key, slots) = collect_slots(|| {
+            with_pending_errors(|| {
+                data.build(&PyResolver)
+                    .map_err(|error| invalid(error.to_string()))
+            })
+        });
+        Ok(Self {
+            key: key?,
+            holder: KeyHolder::Slots(slots),
+        })
     }
 }

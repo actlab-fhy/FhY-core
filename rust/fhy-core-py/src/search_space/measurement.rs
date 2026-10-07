@@ -6,15 +6,16 @@
 //! A direction is read as the public `Direction` (a `str` enum) or its
 //! value, and written as the `Direction` member; a status is written as
 //! the `MeasurementStatus` member. A value is an `int` or a `float`; a
-//! `bool` is refused. A measurement holds only the core measurement: its
-//! notes are read into core notes and written as new `Note` objects.
+//! `bool` is refused. A measurement holds the core measurement, its notes
+//! read into core notes and written as new `Note` objects, and what keeps
+//! the objects of its key's opaque values visible to the cycle collector.
 
 use std::cmp::Ordering;
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::pyclass::CompareOp;
+use pyo3::pyclass::{CompareOp, PyTraverseError, PyVisit};
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyMapping, PyString, PyTuple, PyType};
 
 use fhy_core::search_space::wire::MeasurementData;
@@ -23,6 +24,7 @@ use fhy_core::search_space::{Direction, Measurement, MeasurementStatus, Objectiv
 use crate::diagnostic::note_to_python;
 use crate::util::dataclass::hash_value;
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::gc::collect_slots;
 use crate::util::pending::with_pending_errors;
 use crate::util::public_class::PublicClass;
 use crate::util::python::read_type_name;
@@ -31,7 +33,7 @@ use crate::wire::{
 };
 
 use super::arguments::{Seeded, instantiate, read_notes, take_seed, wrong_seed};
-use super::configuration::PyConfigurationKey;
+use super::configuration::{KeyHolder, PyConfigurationKey};
 use super::errors::measurement_error_to_py;
 use super::wire::{refuse_v1, write_part, write_part_json};
 
@@ -317,6 +319,8 @@ impl PyObjective {
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "Measurement")]
 pub(crate) struct PyMeasurement {
     measurement: Measurement,
+    /// What keeps the objects of the key's opaque values visible.
+    holder: KeyHolder,
 }
 
 impl PyMeasurement {
@@ -332,7 +336,8 @@ impl PyMeasurement {
     }
 }
 
-/// Return the object of `measurement`, an instance of `cls`.
+/// Return the object of `measurement`, an instance of `cls`, the objects
+/// of its key's opaque values kept visible by `holder`.
 ///
 /// # Errors
 ///
@@ -341,21 +346,49 @@ impl PyMeasurement {
 fn measurement_of_class<'py>(
     cls: &Bound<'py, PyType>,
     measurement: Measurement,
+    holder: KeyHolder,
 ) -> PyResult<Bound<'py, PyAny>> {
     check_instance(
         cls,
-        instantiate(cls, 0, Seeded::Measurement(PyMeasurement { measurement }))?,
+        instantiate(
+            cls,
+            0,
+            Seeded::Measurement(PyMeasurement {
+                measurement,
+                holder,
+            }),
+        )?,
     )
 }
 
-/// Return the core key of `key`, a `ConfigurationKey`.
+/// Return the measurement `build` decodes, an instance of `cls`, owning
+/// the slots of its key's opaque values.
+///
+/// # Errors
+///
+/// Raises what [`build`] raises, and what building the object raises.
+fn decode_measurement<'py>(
+    cls: &Bound<'py, PyType>,
+    data: MeasurementData,
+) -> PyResult<Bound<'py, PyAny>> {
+    let (measurement, slots) = collect_slots(|| build(cls, || data.build(&PyResolver)));
+    measurement_of_class(cls, measurement?, KeyHolder::Slots(slots))
+}
+
+/// Return the core key of `key`, a `ConfigurationKey`, and the holder of a
+/// measurement sharing it.
 ///
 /// # Errors
 ///
 /// Raises `TypeError` for another object.
-fn read_key(key: &Bound<'_, PyAny>) -> PyResult<fhy_core::search_space::ConfigurationKey> {
+fn read_key(
+    key: &Bound<'_, PyAny>,
+) -> PyResult<(fhy_core::search_space::ConfigurationKey, KeyHolder)> {
     key.cast::<PyConfigurationKey>()
-        .map(|key| key.get().core().clone())
+        .map(|read| {
+            let read = read.get();
+            (read.core().clone(), read.holder().share(key.py(), key))
+        })
         .map_err(|_not_a_key| {
             PyTypeError::new_err(format!(
                 "a measurement's key must be a ConfigurationKey, got {}.",
@@ -459,9 +492,10 @@ impl PyMeasurement {
         values: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = cls.py();
-        let measurement = Measurement::ok(read_key(key)?, read_values(values)?)
+        let (key, holder) = read_key(key)?;
+        let measurement = Measurement::ok(key, read_values(values)?)
             .map_err(|error| measurement_error_to_py(py, &error))?;
-        measurement_of_class(cls, measurement)
+        measurement_of_class(cls, measurement, holder)
     }
 
     /// Return the measurement of a configuration that cannot be realized,
@@ -472,8 +506,9 @@ impl PyMeasurement {
         key: &Bound<'py, PyAny>,
         reason: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let measurement = Measurement::infeasible(read_key(key)?, read_reason(reason)?);
-        measurement_of_class(cls, measurement)
+        let (key, holder) = read_key(key)?;
+        let measurement = Measurement::infeasible(key, read_reason(reason)?);
+        measurement_of_class(cls, measurement, holder)
     }
 
     /// Return the measurement of a configuration that broke, for `reason`,
@@ -484,8 +519,9 @@ impl PyMeasurement {
         key: &Bound<'py, PyAny>,
         reason: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let measurement = Measurement::failed(read_key(key)?, read_reason(reason)?);
-        measurement_of_class(cls, measurement)
+        let (key, holder) = read_key(key)?;
+        let measurement = Measurement::failed(key, read_reason(reason)?);
+        measurement_of_class(cls, measurement, holder)
     }
 
     /// Return the measurement of a configuration that ran out of time.
@@ -494,13 +530,30 @@ impl PyMeasurement {
         cls: &Bound<'py, PyType>,
         key: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        measurement_of_class(cls, Measurement::timeout(read_key(key)?))
+        let (key, holder) = read_key(key)?;
+        measurement_of_class(cls, Measurement::timeout(key), holder)
     }
 
     /// The key of the configuration measured, a `ConfigurationKey`.
     #[getter]
-    fn key(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        Ok(Py::new(py, PyConfigurationKey::of(self.measurement.key().clone()))?.into_any())
+    fn key(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        let this = slf.get();
+        let key = PyConfigurationKey::of(
+            this.measurement.key().clone(),
+            this.holder.share(py, slf.as_any()),
+        );
+        Ok(Py::new(py, key)?.into_any())
+    }
+
+    /// Visit the Python objects the measurement keeps, for the cycle
+    /// collector.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        self.holder.traverse(&visit)
     }
 
     /// How the measurement went, a `MeasurementStatus`.
@@ -586,9 +639,11 @@ impl PyMeasurement {
         slf: &Bound<'py, Self>,
         notes: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let (notes, _) = read_notes(slf.py(), Some(notes), "Measurement.with_notes")?;
+        let py = slf.py();
+        let (notes, _) = read_notes(py, Some(notes), "Measurement.with_notes")?;
         let measurement = slf.get().measurement.clone().with_notes(notes);
-        measurement_of_class(&slf.get_type(), measurement)
+        let holder = slf.get().holder.share(py, slf.as_any());
+        measurement_of_class(&slf.get_type(), measurement, holder)
     }
 
     /// Return whether this measurement dominates `other`, a `Measurement`.
@@ -674,8 +729,7 @@ impl PyMeasurement {
         data: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let data: MeasurementData = parse_tree(cls, read_tree(cls, data)?)?;
-        let measurement = build(cls, || data.build(&PyResolver))?;
-        measurement_of_class(cls, measurement)
+        decode_measurement(cls, data)
     }
 
     /// Return the measurement of the V2 JSON text `payload`, an instance of
@@ -686,8 +740,7 @@ impl PyMeasurement {
         payload: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let data: MeasurementData = parse_tree(cls, read_text_tree(cls, &read_text(payload)?)?)?;
-        let measurement = build(cls, || data.build(&PyResolver))?;
-        measurement_of_class(cls, measurement)
+        decode_measurement(cls, data)
     }
 
     /// Pickle as a call of `from_json` with the V2 text.
