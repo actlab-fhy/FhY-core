@@ -191,7 +191,7 @@ mod variable;
 pub mod wire;
 
 pub use alternative::{Alternative, PlainAlternative};
-pub use choice::Choice;
+pub use choice::{Choice, MAX_CHOICE_DEPTH};
 pub use configuration::{Activity, Configuration, ConfigurationKey};
 pub use domain::{
     ChoiceDomain, Coordinate, DecisionKind, DomainSignature, OrderDomain, StepDomain,

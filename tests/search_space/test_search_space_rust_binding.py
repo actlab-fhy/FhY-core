@@ -10,7 +10,6 @@ import copy
 import gc
 import json
 import pickle
-import sys
 import textwrap
 import weakref
 from collections.abc import Callable
@@ -42,6 +41,7 @@ from fhy_core.serialization import (
     WrappedFamilySerializable,
     serialize_value,
 )
+from fhy_core.symbolic.param import create_natural_param_between
 from fhy_core.traits import FrozenMixin, FrozenMutationError
 from tests.native_modules import run_python
 from tests.v1 import writing_v1
@@ -722,30 +722,104 @@ def test_writing_v1_is_refused() -> None:
 # ===========================================================================
 
 
-@pytest.mark.slow
-def test_choices_nested_to_the_recursion_limit_build() -> None:
-    """Test a chain as deep as the recursion limit builds and compares."""
-    limit = sys.getrecursionlimit()
+MAX_CHOICE_DEPTH = 16
+"""The core's `fhy_core::search_space::MAX_CHOICE_DEPTH`."""
 
-    chain = build_chain(limit)
-    space = Space(choices=(chain,))
+
+def _build_deepest_space() -> Space:
+    """Return a space whose choices nest as deep as the core allows.
+
+    The innermost alternative holds a variable over a bounded integer
+    param, so the payload nests as deep as a realistic space of this
+    depth.
+    """
+    choice = make_choice(
+        "level_1",
+        make_alternative(
+            "leaf",
+            variables=(
+                Variable(
+                    param=create_natural_param_between(1, 8), name=Identifier("tile")
+                ),
+            ),
+        ),
+    )
+    for level in range(2, MAX_CHOICE_DEPTH + 1):
+        choice = make_choice(
+            f"level_{level}", make_alternative(f"holder_{level}", choices=(choice,))
+        )
+    return Space(choices=(choice,))
+
+
+def test_choices_nested_to_the_cap_round_trip_as_text_and_as_a_dict() -> None:
+    """Test the deepest space the core builds reads back through both paths.
+
+    Its payload nests within the limits of both readers: serde_json's for
+    JSON text, and the dict reader's for a payload dict.
+    """
+    space = _build_deepest_space()
+    configuration = Configuration(space, {})
+    holder = space.choices[0].alternatives[0]
 
     assert space.is_structurally_equivalent(space)
+    for value, cls in (
+        (space, Space),
+        (space.choices[0], Choice),
+        (holder, Alternative),
+        (configuration, Configuration),
+    ):
+        text = value.to_json()
+        from_text = cls.from_json(text)
+        from_dict = cls.deserialize_from_dict(value.serialize_to_dict())
+        assert from_text.to_json() == text
+        assert from_dict.to_json() == text
 
 
-@pytest.mark.slow
-def test_choices_nested_deeper_than_the_recursion_limit_are_refused() -> None:
-    """Test one more level than the recursion limit raises `RecursionError`."""
-    limit = sys.getrecursionlimit()
-    chain = build_chain(limit)
+def test_choices_nested_past_the_cap_are_refused() -> None:
+    """Test a choice one level deeper than the core allows is refused."""
+    chain = build_chain(MAX_CHOICE_DEPTH)
     holder = make_alternative("holder", choices=(chain,))
+    top = Identifier("top")
 
-    with pytest.raises(RecursionError) as excinfo:
-        make_choice("top", holder)
+    with pytest.raises(SearchSpaceError) as excinfo:
+        Choice((holder,), name=top)
 
     assert str(excinfo.value) == (
-        f"maximum recursion depth exceeded: the choice is {limit + 1} levels deep"
+        f"the choice {top!r} nests choices more than {MAX_CHOICE_DEPTH} levels deep"
     )
+
+
+@pytest.mark.subprocess
+def test_choices_nested_deeper_than_the_recursion_limit_are_refused() -> None:
+    """Test a choice deeper than a lowered recursion limit raises `RecursionError`.
+
+    The default limit is far above the core's cap, so the limit is lowered
+    in a fresh interpreter.
+    """
+    program = textwrap.dedent(
+        """
+        import sys
+
+        from fhy_core.identifier import Identifier
+        from fhy_core.search_space import Alternative, Choice
+
+        choice = Choice((Alternative(name=Identifier("leaf")),))
+        for _ in range(12):
+            choice = Choice((Alternative(choices=(choice,)),))
+        sys.setrecursionlimit(13)
+        try:
+            Choice((Alternative(choices=(choice,)),))
+        except RecursionError as error:
+            print("refused:", error)
+        """
+    )
+
+    completed = run_python(program)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        "refused: maximum recursion depth exceeded: the choice is 14 levels deep",
+    ]
 
 
 @pytest.mark.slow
@@ -770,10 +844,10 @@ def test_payload_deeper_than_the_recursion_limit_is_refused() -> None:
                 choice = Choice((Alternative(choices=(choice,)),))
             return Space(choices=(choice,))
 
-        deep, shallow = chain(23), chain(12)
+        deep, shallow = chain(14), chain(8)
         deep_dict, deep_text = deep.serialize_to_dict(), deep.to_json()
         shallow_text = shallow.to_json()
-        sys.setrecursionlimit(22)
+        sys.setrecursionlimit(13)
         for read in (
             lambda: Space.deserialize_from_dict(deep_dict),
             lambda: Space.from_json(deep_text),
@@ -791,9 +865,9 @@ def test_payload_deeper_than_the_recursion_limit_is_refused() -> None:
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.splitlines() == [
         "refused: maximum recursion depth exceeded: the payload nests choices "
-        "23 levels deep",
+        "14 levels deep",
         "refused: maximum recursion depth exceeded: the payload nests choices "
-        "23 levels deep",
+        "14 levels deep",
         "decoded: True",
     ]
 

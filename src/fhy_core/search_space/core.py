@@ -237,7 +237,8 @@ class Choice(_rs.Choice, Serializable):
 
     Raises:
         TypeError: If an argument has the wrong type.
-        SearchSpaceError: If there is no alternative.
+        SearchSpaceError: If there is no alternative, or the choice nests
+            choices more than 16 levels deep, itself included.
         DuplicateNameError: If the names the choice holds repeat.
         RecursionError: If choices nest deeper than the recursion limit.
 

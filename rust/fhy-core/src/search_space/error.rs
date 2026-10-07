@@ -8,6 +8,7 @@ use crate::foreign::BoxError;
 use crate::identifier::Identifier;
 use crate::param::AssignmentError;
 
+use super::choice::MAX_CHOICE_DEPTH;
 use super::configuration::Activity;
 use super::domain::Coordinate;
 
@@ -24,6 +25,12 @@ pub enum SpaceError {
     },
     /// A choice has no alternative.
     EmptyChoice {
+        /// The choice's name.
+        choice: Identifier,
+    },
+    /// A choice's sub-choices make it nest more than
+    /// [`MAX_CHOICE_DEPTH`](super::MAX_CHOICE_DEPTH) levels of choices.
+    ChoiceTooDeep {
         /// The choice's name.
         choice: Identifier,
     },
@@ -88,6 +95,10 @@ impl fmt::Display for SpaceError {
         match self {
             Self::DuplicateName { name } => write!(f, "the name {name:?} is used more than once"),
             Self::EmptyChoice { choice } => write!(f, "the choice {choice:?} has no alternative"),
+            Self::ChoiceTooDeep { choice } => write!(
+                f,
+                "the choice {choice:?} nests choices more than {MAX_CHOICE_DEPTH} levels deep"
+            ),
             Self::UnknownConditionTarget { target } => {
                 write!(
                     f,

@@ -72,6 +72,11 @@ fn assert_error_text(error: &(dyn Error + 'static), text: &str, source: Option<&
     "the condition on t::63406 names u::63407, which is the target or under it",
     None
 )]
+#[case::choice_too_deep(
+    SpaceError::ChoiceTooDeep { choice: build_identifier(5, "c") },
+    "the choice c::63405 nests choices more than 16 levels deep",
+    None
+)]
 #[case::empty_condition(
     SpaceError::EmptyCondition { target: build_identifier(6, "t") },
     "the condition on t::63406 names no decision",

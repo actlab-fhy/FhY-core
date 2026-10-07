@@ -20,7 +20,7 @@ use fhy_core::param::{
 use fhy_core::search_space::wire::{ChoiceData, VariableData};
 use fhy_core::search_space::{
     Alternative, Choice, Condition, Configuration, ConfigurationErrors, Forbidden,
-    PlainAlternative, PlainVariable, Space, Variable,
+    PlainAlternative, PlainVariable, Space, SpaceError, Variable,
 };
 use fhy_core::solver::{GroundSimplifier, Solver};
 use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
@@ -166,6 +166,28 @@ pub(crate) fn bare_alternative(name: &Identifier) -> Part<dyn Alternative> {
 /// Panics if the choice is refused.
 pub(crate) fn choice_of(name: &Identifier, alternatives: Vec<Part<dyn Alternative>>) -> Choice {
     Choice::new(name.clone(), alternatives).expect("the choice is valid")
+}
+
+/// Return the choice nesting `depth` levels of choices, one alternative
+/// each, the innermost alternative holding `leaf_variables`; or the
+/// refusal of the outermost level, which alone may be refused.
+///
+/// # Panics
+///
+/// Panics if a level below the outermost is refused, or `depth` is zero.
+pub(crate) fn build_choice_chain(
+    depth: usize,
+    leaf_variables: Vec<Part<dyn Variable>>,
+) -> Result<Choice, SpaceError> {
+    assert!(depth > 0, "a chain has at least one choice");
+    let leaf = plain_alternative(&Identifier::new("leaf"), leaf_variables, Vec::new());
+    let mut choice = Choice::new(Identifier::new("level"), vec![leaf]);
+    for _ in 1..depth {
+        let inner = choice.expect("an inner level is within the cap");
+        let holder = plain_alternative(&Identifier::new("holder"), Vec::new(), vec![inner]);
+        choice = Choice::new(Identifier::new("level"), vec![holder]);
+    }
+    choice
 }
 
 /// Return the space `name` of the top-level `variables` and `choices`,

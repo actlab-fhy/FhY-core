@@ -12,7 +12,7 @@ use fhy_core::param::{
 use fhy_core::search_space::wire::{AlternativeData, ConfigurationData, SpaceData, VariableData};
 use fhy_core::search_space::{
     Choice, Condition, Configuration, ConfigurationError, ConfigurationErrors, ConfigurationKey,
-    PlainAlternative, PlainVariable, Space, SpaceError, Variable,
+    MAX_CHOICE_DEPTH, PlainAlternative, PlainVariable, Space, SpaceError, Variable,
 };
 use fhy_core::solver::Solver;
 use rstest::rstest;
@@ -24,8 +24,9 @@ use crate::support::constraint::int;
 use crate::support::param::{at_least, at_most, in_set, ints};
 use crate::support::search_space::{
     ImplementorResolver, REALIZATION, Realization, TILE_KNOB, TileKnob, bare_alternative,
-    categorical, choice_of, chooses, chosen, condition, configure, forbidden, ground_solver,
-    int_param, int_variable, natural_param, plain_alternative, plain_variable, space_of,
+    build_choice_chain, categorical, choice_of, chooses, chosen, condition, configure, forbidden,
+    ground_solver, int_param, int_variable, natural_param, plain_alternative, plain_variable,
+    space_of,
 };
 use crate::support::serde::{check_serde_round_trip, restored};
 
@@ -540,6 +541,25 @@ fn complete_configuration_round_trips() {
 
     assert!(configuration.is_complete());
     check_serde_round_trip(&configuration).expect("round trips");
+}
+
+/// Test the deepest space `Choice::new` builds, its innermost alternative
+/// holding a bounded integer variable, round-trips through JSON text,
+/// within serde_json's recursion limit, and through postcard, alone and
+/// in a configuration.
+#[test]
+fn space_with_choices_nested_to_the_cap_round_trips() {
+    let leaf = plain_variable(
+        &Identifier::new("tile"),
+        crate::support::search::bounded_param(1, 8),
+    );
+    let choice = build_choice_chain(MAX_CHOICE_DEPTH, vec![leaf]).expect("within the cap");
+    let space = space_of(&Identifier::new("deep"), Vec::new(), vec![choice.clone()]);
+    let configuration = configure(&space, []);
+
+    check_serde_round_trip(&choice).expect("the choice round trips");
+    check_serde_round_trip(&space).expect("the space round trips");
+    check_serde_round_trip(&configuration).expect("the configuration round trips");
 }
 
 // -- foreign parts ----------------------------------------------------------

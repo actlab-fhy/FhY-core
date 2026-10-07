@@ -138,7 +138,9 @@ pub(super) fn recursion_limit(py: Python<'_>) -> PyResult<usize> {
 ///
 /// The core compares, hashes, serializes and drops a value recursively,
 /// once per level of choices, so a value deeper than Python itself would
-/// recurse is refused, as a deep provenance is.
+/// recurse is refused, as a deep provenance is. The core itself refuses a
+/// choice deeper than its `MAX_CHOICE_DEPTH`, so this refusal is reached
+/// only under a recursion limit lowered below that.
 ///
 /// # Errors
 ///

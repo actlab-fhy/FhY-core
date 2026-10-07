@@ -15,13 +15,28 @@ use super::equivalence::{
 };
 use super::error::{EquivalenceError, SpaceError};
 
+/// The deepest a [`Choice`] nests choices, itself included: a choice holds
+/// sub-choices under its alternatives at most this many levels deep, so a
+/// [`Space`](super::Space)'s choices do too.
+///
+/// The core compares, hashes, serializes and drops a choice recursively,
+/// once per level, and its wire form nests five levels of maps and lists
+/// per level of choices (`{"identifier", "alternatives": [{"plain":
+/// {.., "choices": [..]}}]}`). At this depth the choices of the deepest
+/// payload, a configuration's or an alternative's, nest 83 levels, which
+/// leaves 44 of serde_json's 127 to the innermost alternative's own
+/// variables and their params, a bounded integer variable taking 11.
+pub const MAX_CHOICE_DEPTH: usize = 16;
+
 /// A named decision among one or more [`Alternative`]s, in order.
 ///
 /// A configuration gives a choice the name of the alternative it chooses.
 /// Every name the choice holds is distinct: its own, its alternatives',
 /// their bound identifiers, and the names of their variables and
-/// sub-choices at every depth. Building one reads each alternative's
-/// [`bound_identifiers`](Alternative::bound_identifiers) once.
+/// sub-choices at every depth. Its choices nest at most
+/// [`MAX_CHOICE_DEPTH`] levels, itself included. Building one reads each
+/// alternative's [`bound_identifiers`](Alternative::bound_identifiers)
+/// once.
 ///
 /// Cloning one shares it. `==` and `Hash` compare the name, the
 /// alternatives (through their [`eq_part`](Alternative::eq_part)) and the
@@ -37,6 +52,8 @@ struct ChoiceInner {
     notes: Vec<Note>,
     /// Every name the choice holds, in canonical order.
     labels: Vec<Identifier>,
+    /// The levels of choices the choice nests, itself included.
+    depth: usize,
 }
 
 /// Return the first of `labels`, in order, that an earlier one equals.
@@ -52,6 +69,8 @@ impl Choice {
     /// # Errors
     ///
     /// In order: [`SpaceError::EmptyChoice`] for no alternative;
+    /// [`SpaceError::ChoiceTooDeep`] for sub-choices that make the choice
+    /// nest more than [`MAX_CHOICE_DEPTH`] levels;
     /// [`SpaceError::Hook`] for an alternative whose
     /// [`bound_identifiers`](Alternative::bound_identifiers) fails; and
     /// [`SpaceError::DuplicateName`] naming the first name, in canonical
@@ -62,6 +81,15 @@ impl Choice {
     ) -> Result<Self, SpaceError> {
         if alternatives.is_empty() {
             return Err(SpaceError::EmptyChoice { choice: name });
+        }
+        let depth = 1 + alternatives
+            .iter()
+            .flat_map(|alternative| alternative.get().choices())
+            .map(|choice| choice.0.depth)
+            .max()
+            .unwrap_or(0);
+        if depth > MAX_CHOICE_DEPTH {
+            return Err(SpaceError::ChoiceTooDeep { choice: name });
         }
         let mut labels = vec![name.clone()];
         for alternative in &alternatives {
@@ -83,6 +111,7 @@ impl Choice {
             alternatives,
             notes: Vec::new(),
             labels,
+            depth,
         })))
     }
 

@@ -111,6 +111,9 @@ impl<'a> Decision<'a> {
 /// A search space: top-level variables and choices, the conditions on when
 /// each decision is active, and the forbidden combinations of values.
 ///
+/// Its choices nest at most [`MAX_CHOICE_DEPTH`](super::MAX_CHOICE_DEPTH)
+/// levels, which [`Choice::new`] checks.
+///
 /// Building one checks, in order, that:
 ///
 /// 1. every name it holds is distinct: its own, and every decision's,

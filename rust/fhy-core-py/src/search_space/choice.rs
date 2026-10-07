@@ -66,7 +66,8 @@ impl PyChoice {
     /// `None`) among `alternatives`, with `notes`.
     ///
     /// Raises `TypeError` for an argument of the wrong type,
-    /// `SearchSpaceError` for no alternative, `DuplicateNameError` for
+    /// `SearchSpaceError` for no alternative or for choices nested more
+    /// than the core's `MAX_CHOICE_DEPTH` levels, `DuplicateNameError` for
     /// names that repeat, the exception an alternative's
     /// `extension_bound_identifiers` raises, and `RecursionError` for
     /// choices nested deeper than the recursion limit.

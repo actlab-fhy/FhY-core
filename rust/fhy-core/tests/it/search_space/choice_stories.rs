@@ -12,12 +12,13 @@ use std::borrow::Cow;
 use fhy_core::diagnostic::Note;
 use fhy_core::foreign::{BoxError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
-use fhy_core::search_space::{Alternative, Choice, SpaceError, Variable};
+use fhy_core::search_space::{Alternative, Choice, MAX_CHOICE_DEPTH, SpaceError, Variable};
 use rstest::rstest;
 
 use crate::support::hashing::hash_of;
 use crate::support::search_space::{
-    bare_alternative, choice_of, compare_alpha_both_ways, int_variable, plain_alternative,
+    bare_alternative, build_choice_chain, choice_of, compare_alpha_both_ways, int_variable,
+    plain_alternative,
 };
 
 /// An alternative that binds the identifiers it is given, or fails to
@@ -334,6 +335,43 @@ fn choice_new_names_the_first_repeat_in_canonical_order() {
     );
 
     assert_eq!(find_duplicate_name(result), first);
+}
+
+#[test]
+fn choice_new_accepts_choices_nested_to_the_cap() {
+    let choice = build_choice_chain(MAX_CHOICE_DEPTH, Vec::new());
+
+    choice.expect("a chain as deep as the cap builds");
+}
+
+#[test]
+fn choice_new_refuses_choices_nested_past_the_cap() {
+    let inner = build_choice_chain(MAX_CHOICE_DEPTH, Vec::new()).expect("within the cap");
+    let name = Identifier::new("top");
+
+    let result = Choice::new(
+        name.clone(),
+        vec![plain_alternative(
+            &Identifier::new("holder"),
+            Vec::new(),
+            vec![inner],
+        )],
+    );
+
+    let Err(SpaceError::ChoiceTooDeep { choice }) = &result else {
+        panic!("expected ChoiceTooDeep, got {result:?}");
+    };
+    assert_eq!(choice, &name);
+}
+
+#[test]
+fn choice_new_reports_an_empty_choice_before_its_depth() {
+    let result = Choice::new(Identifier::new("c"), Vec::new());
+
+    assert!(
+        matches!(result, Err(SpaceError::EmptyChoice { .. })),
+        "{result:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
