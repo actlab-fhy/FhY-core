@@ -24,8 +24,10 @@ use super::error::{EquivalenceError, SpaceError};
 /// per level of choices (`{"identifier", "alternatives": [{"plain":
 /// {.., "choices": [..]}}]}`). At this depth the choices of the deepest
 /// payload, a configuration's or an alternative's, nest 83 levels, which
-/// leaves 44 of serde_json's 127 to the innermost alternative's own
+/// leaves 44 of `serde_json`'s 127 to the innermost alternative's own
 /// variables and their params, a bounded integer variable taking 11.
+/// Decoding refuses a payload whose choices nest deeper, in every format
+/// (see [`wire`](super::wire)).
 pub const MAX_CHOICE_DEPTH: usize = 16;
 
 /// A named decision among one or more [`Alternative`]s, in order.

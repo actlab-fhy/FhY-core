@@ -1,6 +1,7 @@
 //! Tests for the serde form of variables, alternatives, choices, spaces and
 //! configurations (`fhy_core::search_space::wire`).
 
+use fhy_core::constraint::wire::MAX_VALUE_DEPTH;
 use fhy_core::constraint::{ConstraintError, Value};
 use fhy_core::diagnostic::Note;
 use fhy_core::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part};
@@ -9,10 +10,13 @@ use fhy_core::param::{
     AssignmentError, CategoricalDomain, IntegerDomain, Param, ParamContext, ParamDomain,
     ParamEvent, ParamObserver, Sign, ZeroInclusion,
 };
-use fhy_core::search_space::wire::{AlternativeData, ConfigurationData, SpaceData, VariableData};
+use fhy_core::search_space::wire::{
+    AlternativeData, ChoiceData, ConfigurationData, ConfigurationKeyData, MeasurementData,
+    SpaceData, VariableData,
+};
 use fhy_core::search_space::{
     Choice, Condition, Configuration, ConfigurationError, ConfigurationErrors, ConfigurationKey,
-    MAX_CHOICE_DEPTH, PlainAlternative, PlainVariable, Space, SpaceError, Variable,
+    MAX_CHOICE_DEPTH, Measurement, PlainAlternative, PlainVariable, Space, SpaceError, Variable,
 };
 use fhy_core::solver::Solver;
 use rstest::rstest;
@@ -29,6 +33,7 @@ use crate::support::search_space::{
     space_of,
 };
 use crate::support::serde::{check_serde_round_trip, restored};
+use crate::support::stack::run_on_stack;
 
 // -- helpers ----------------------------------------------------------------
 
@@ -545,7 +550,7 @@ fn complete_configuration_round_trips() {
 
 /// Test the deepest space `Choice::new` builds, its innermost alternative
 /// holding a bounded integer variable, round-trips through JSON text,
-/// within serde_json's recursion limit, and through postcard, alone and
+/// within `serde_json`'s recursion limit, and through postcard, alone and
 /// in a configuration.
 #[test]
 fn space_with_choices_nested_to_the_cap_round_trips() {
@@ -811,6 +816,52 @@ fn a_space_payload_refuses_an_unknown_field(#[case] pointer: &str) {
         error.to_string().contains("unknown field `extra`"),
         "{error}"
     );
+}
+
+#[rstest]
+#[case::choice("/choices/0")]
+#[case::alternative("/choices/0/alternatives/0/plain")]
+#[case::sub_choice("/choices/0/alternatives/0/plain/choices/0")]
+fn a_space_payload_refuses_an_unknown_field_in_its_choices(#[case] pointer: &str) {
+    let value = add_extra_field(
+        serde_json::to_value(build_rich().space).expect("encodes"),
+        pointer,
+    );
+
+    let error =
+        serde_json::from_value::<SpaceData>(value).expect_err("an unknown field is refused");
+
+    assert!(
+        error.to_string().contains("unknown field `extra`"),
+        "{error}"
+    );
+}
+
+#[rstest]
+#[case::choice_missing_its_notes(
+    r#"{"identifier":{"id":63720,"name_hint":"c"},"alternatives":[]}"#,
+    "missing field `notes`"
+)]
+#[case::choice_repeating_its_notes(
+    r#"{"identifier":{"id":63720,"name_hint":"c"},"alternatives":[],"notes":[],"notes":[]}"#,
+    "duplicate field `notes`"
+)]
+#[case::alternative_missing_its_choices(
+    r#"{"identifier":{"id":63720,"name_hint":"c"},"alternatives":[{"plain":{"identifier":{"id":63721,"name_hint":"a"},"variables":[],"notes":[]}}],"notes":[]}"#,
+    "missing field `choices`"
+)]
+#[case::alternative_repeating_its_choices(
+    r#"{"identifier":{"id":63720,"name_hint":"c"},"alternatives":[{"plain":{"identifier":{"id":63721,"name_hint":"a"},"variables":[],"choices":[],"choices":[],"notes":[]}}],"notes":[]}"#,
+    "duplicate field `choices`"
+)]
+#[case::unknown_alternative_kind(
+    r#"{"identifier":{"id":63720,"name_hint":"c"},"alternatives":[{"other":{}}],"notes":[]}"#,
+    "unknown variant `other`, expected `plain` or `foreign`"
+)]
+fn a_choice_payload_of_another_shape_is_refused(#[case] text: &str, #[case] expected: &str) {
+    let error = serde_json::from_str::<ChoiceData>(text).expect_err("the payload is refused");
+
+    assert!(error.to_string().contains(expected), "{error}");
 }
 
 #[rstest]
@@ -1086,4 +1137,173 @@ fn keys_of_relabeled_configurations_stay_equal_after_a_round_trip() {
 fn configuration_key_refuses_an_unknown_entry() {
     serde_json::from_str::<ConfigurationKey>(r#"{"entries":[{"chosen":{}}]}"#)
         .expect_err("an unknown entry is refused");
+}
+
+// -- decoding depth ---------------------------------------------------------
+
+/// Stack size of the threads the deep decodes run on: room for the levels
+/// a decoder accepts, far too little for one recursing once per level of
+/// an input [`DEEP_INPUT`] levels deep.
+const DECODE_STACK_BYTES: usize = 256 << 10;
+
+/// Nesting depth of the inputs the decoders must refuse without
+/// recursing through them.
+const DEEP_INPUT: usize = 20_000;
+
+/// Return the postcard bytes of a key whose one entry is `depth` nested
+/// one-element tuples around a bound position, written by hand so no deep
+/// value is built or dropped.
+fn nested_key_bytes(depth: usize) -> Vec<u8> {
+    // Postcard writes a variant as its index and a sequence as its length,
+    // both varints: one entry, `Value` is entry variant 3, `Tuple` is key
+    // value variant 2 and `Bound` variant 1, at position 0.
+    let mut bytes = Vec::with_capacity(2 * depth + 4);
+    bytes.extend([1, 3]);
+    for _ in 0..depth {
+        bytes.extend([2, 1]);
+    }
+    bytes.extend([1, 0]);
+    bytes
+}
+
+/// Return the postcard bytes of a choice nesting `depth` levels of
+/// choices, one plain alternative each, written by hand so no deep value
+/// is built or dropped.
+fn nested_choice_bytes(depth: usize) -> Vec<u8> {
+    let identifier = postcard::to_allocvec(&restored(63_700, "c")).expect("encodes");
+    // A choice is its identifier, its alternatives and its notes; a plain
+    // alternative (variant 0) its identifier, variables, choices and notes.
+    let mut opening = identifier.clone();
+    opening.extend([1, 0]);
+    opening.extend(&identifier);
+    opening.push(0);
+    let mut bytes = Vec::new();
+    for _ in 0..depth - 1 {
+        bytes.extend(&opening);
+        bytes.push(1);
+    }
+    bytes.extend(&opening);
+    bytes.extend([0, 0, 0]);
+    for _ in 0..depth - 1 {
+        bytes.extend([0, 0]);
+    }
+    bytes
+}
+
+/// Return the JSON tree of a choice nesting `depth` levels of choices, one
+/// plain alternative each.
+fn nested_choice_tree(depth: usize) -> serde_json::Value {
+    let identifier = json!({"id": 63_701, "name_hint": "c"});
+    (0..depth)
+        .fold(None, |inner: Option<serde_json::Value>, _| {
+            Some(json!({
+                "identifier": identifier,
+                "alternatives": [{"plain": {
+                    "identifier": identifier,
+                    "variables": [],
+                    "choices": inner.into_iter().collect::<Vec<_>>(),
+                    "notes": [],
+                }}],
+                "notes": [],
+            }))
+        })
+        .expect("a chain has at least one choice")
+}
+
+/// Test a key or a measurement nested far deeper than a value may be is
+/// refused from postcard, which has no recursion limit of its own, rather
+/// than overflowing the stack.
+#[test]
+fn a_postcard_key_nested_20000_deep_is_refused() {
+    let refused = run_on_stack(DECODE_STACK_BYTES, || {
+        let bytes = nested_key_bytes(DEEP_INPUT);
+        [
+            postcard::from_bytes::<ConfigurationKey>(&bytes).err(),
+            postcard::from_bytes::<ConfigurationKeyData>(&bytes).err(),
+            postcard::from_bytes::<Measurement>(&bytes).err(),
+            postcard::from_bytes::<MeasurementData>(&bytes).err(),
+        ]
+        .map(|error| matches!(error, Some(postcard::Error::SerdeDeCustom)))
+    });
+
+    assert_eq!(refused, [true; 4]);
+}
+
+/// Test a key value nests as deep as a value may and no deeper.
+#[test]
+fn a_key_nested_128_deep_decodes_and_129_is_refused() {
+    postcard::from_bytes::<ConfigurationKey>(&nested_key_bytes(MAX_VALUE_DEPTH))
+        .expect("128 levels decode");
+    let error = postcard::from_bytes::<ConfigurationKey>(&nested_key_bytes(MAX_VALUE_DEPTH + 1))
+        .expect_err("129 levels are refused");
+    assert!(matches!(error, postcard::Error::SerdeDeCustom), "{error:?}");
+
+    // A JSON text this deep exceeds serde_json's own recursion limit first,
+    // so the tree is decoded from a `serde_json::Value`, which has none.
+    let value = (0..=MAX_VALUE_DEPTH).fold(
+        json!({"bound": {"position": 0}}),
+        |value, _| json!({"tuple": [value]}),
+    );
+    let error = serde_json::from_value::<ConfigurationKey>(json!({"entries": [{"value": value}]}))
+        .expect_err("too deep");
+    assert_eq!(error.to_string(), "value nesting exceeds 128 levels");
+}
+
+/// Test a choice, a space, a configuration or an alternative whose choices
+/// nest far deeper than a choice may is refused from postcard rather than
+/// overflowing the stack.
+#[test]
+fn a_postcard_choice_nested_20000_deep_is_refused() {
+    let refused = run_on_stack(DECODE_STACK_BYTES, || {
+        let choice = nested_choice_bytes(DEEP_INPUT);
+        let identifier = postcard::to_allocvec(&restored(63_702, "s")).expect("encodes");
+        // A space is its identifier, variables, then choices; a
+        // configuration starts with its space; a plain alternative is its
+        // identifier, variables, then choices.
+        let mut space = identifier.clone();
+        space.extend([0, 1]);
+        space.extend(&choice);
+        let mut alternative = vec![0];
+        alternative.extend(&identifier);
+        alternative.extend([0, 1]);
+        alternative.extend(&choice);
+        [
+            postcard::from_bytes::<Choice>(&choice).err(),
+            postcard::from_bytes::<ChoiceData>(&choice).err(),
+            postcard::from_bytes::<Space>(&space).err(),
+            postcard::from_bytes::<SpaceData>(&space).err(),
+            postcard::from_bytes::<Configuration>(&space).err(),
+            postcard::from_bytes::<ConfigurationData>(&space).err(),
+            postcard::from_bytes::<PlainAlternative>(&alternative[1..]).err(),
+            postcard::from_bytes::<AlternativeData>(&alternative).err(),
+        ]
+        .map(|error| matches!(error, Some(postcard::Error::SerdeDeCustom)))
+    });
+
+    assert_eq!(refused, [true; 8]);
+}
+
+/// Test a choice payload nests as deep as a choice may and no deeper, and
+/// the refusal names the cap.
+#[test]
+fn a_choice_payload_nested_past_the_cap_is_refused_with_the_depth_message() {
+    let at_cap = nested_choice_bytes(MAX_CHOICE_DEPTH);
+    postcard::from_bytes::<ChoiceData>(&at_cap).expect("the cap decodes");
+    let error = postcard::from_bytes::<ChoiceData>(&nested_choice_bytes(MAX_CHOICE_DEPTH + 1))
+        .expect_err("past the cap");
+    assert!(matches!(error, postcard::Error::SerdeDeCustom), "{error:?}");
+
+    let error = serde_json::from_value::<ChoiceData>(nested_choice_tree(MAX_CHOICE_DEPTH + 1))
+        .expect_err("past the cap");
+    assert_eq!(error.to_string(), "choice nesting exceeds 16 levels");
+    let space = json!({
+        "identifier": {"id": 63_703, "name_hint": "s"},
+        "variables": [],
+        "choices": [nested_choice_tree(MAX_CHOICE_DEPTH + 1)],
+        "conditions": [],
+        "forbidden": [],
+        "notes": [],
+    });
+    let error = serde_json::from_value::<SpaceData>(space).expect_err("past the cap");
+    assert_eq!(error.to_string(), "choice nesting exceeds 16 levels");
 }

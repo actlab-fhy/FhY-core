@@ -35,13 +35,23 @@
 //! solver holding the
 //! [`GroundSimplifier`], so its
 //! conditions' equations evaluate.
+//!
+//! Choices nest through their alternatives, and a key's values through
+//! their tuples and sets, and serde recurses once per level of either, so
+//! decoding refuses, in every format, a choice whose choices nest more
+//! than [`MAX_CHOICE_DEPTH`] levels, with "choice nesting exceeds 16
+//! levels", and a key value inside more than [`MAX_VALUE_DEPTH`] nested
+//! tuples or sets, with "value nesting exceeds 128 levels", before
+//! reading their insides.
 
-use serde::de::{self, Deserializer};
+use std::fmt;
+
+use serde::de::{self, DeserializeSeed, Deserializer, VariantAccess};
 use serde::ser::{self, Serializer};
 use serde::{Deserialize, Serialize};
 
 use crate::constraint::OpaqueValue;
-use crate::constraint::wire::{ConstraintSystemData, ValueData};
+use crate::constraint::wire::{ConstraintSystemData, MAX_VALUE_DEPTH, ValueData};
 use crate::diagnostic::Note;
 use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part, Resolve};
 use crate::identifier::Identifier;
@@ -50,7 +60,7 @@ use crate::param::wire::{ParamData, ParamResolver};
 use crate::solver::{GroundSimplifier, Solver};
 
 use super::alternative::{Alternative, PlainAlternative};
-use super::choice::Choice;
+use super::choice::{Choice, MAX_CHOICE_DEPTH};
 use super::configuration::{Configuration, ConfigurationKey, KeyEntry, KeyValue};
 use super::error::MeasurementError;
 use super::measurement::{Measurement, MeasurementStatus, Objective};
@@ -158,19 +168,26 @@ impl VariableData {
 
 /// The wire form of an alternative, a [`PlainAlternative`] or another
 /// implementation's [`Foreign`] part.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Decoding refuses sub-choices nested more than [`MAX_CHOICE_DEPTH`]
+/// levels.
+#[derive(Debug, Clone, Serialize)]
 #[serde(transparent)]
 pub struct AlternativeData(AlternativeRepr);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Decodes through [`AlternativeSeed`], so its sub-choices' nesting is
+/// bounded.
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename = "Alternative", rename_all = "snake_case")]
 enum AlternativeRepr {
     Plain(PlainAlternativeRepr),
     Foreign(Foreign),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename = "PlainAlternative", deny_unknown_fields)]
+/// Decodes through [`PlainAlternativeSeed`], so its sub-choices' nesting
+/// is bounded.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename = "PlainAlternative")]
 struct PlainAlternativeRepr {
     identifier: Identifier,
     variables: Vec<VariableData>,
@@ -267,8 +284,11 @@ impl AlternativeData {
 }
 
 /// The wire form of a [`Choice`], its foreign parts unresolved.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename = "Choice", deny_unknown_fields)]
+///
+/// Decoding refuses a choice whose choices nest more than
+/// [`MAX_CHOICE_DEPTH`] levels, itself included.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename = "Choice")]
 pub struct ChoiceData {
     identifier: Identifier,
     alternatives: Vec<AlternativeData>,
@@ -492,6 +512,309 @@ impl ConfigurationData {
     }
 }
 
+/// The names of [`AlternativeRepr`]'s variants, in declaration order.
+const ALTERNATIVE_VARIANTS: &[&str] = &["plain", "foreign"];
+
+/// The variant tags of [`AlternativeRepr`].
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AlternativeTag {
+    Plain,
+    Foreign,
+}
+
+/// The names of [`ChoiceData`]'s fields, in declaration order.
+const CHOICE_FIELDS: &[&str] = &["identifier", "alternatives", "notes"];
+
+/// The fields of [`ChoiceData`].
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "snake_case")]
+enum ChoiceField {
+    Identifier,
+    Alternatives,
+    Notes,
+}
+
+/// The names of [`PlainAlternativeRepr`]'s fields, in declaration order.
+const PLAIN_ALTERNATIVE_FIELDS: &[&str] = &["identifier", "variables", "choices", "notes"];
+
+/// The fields of [`PlainAlternativeRepr`].
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "snake_case")]
+enum PlainAlternativeField {
+    Identifier,
+    Variables,
+    Choices,
+    Notes,
+}
+
+/// Decodes a sequence, each element through the seed it holds.
+#[derive(Clone, Copy)]
+struct SequenceSeed<S>(S);
+
+impl<'de, S: DeserializeSeed<'de> + Copy> DeserializeSeed<'de> for SequenceSeed<S> {
+    type Value = Vec<S::Value>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de, S: DeserializeSeed<'de> + Copy> de::Visitor<'de> for SequenceSeed<S> {
+    type Value = Vec<S::Value>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a sequence")
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        // A size hint comes from the input, so it only bounds the first
+        // allocation.
+        let mut elements = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096));
+        while let Some(element) = seq.next_element_seed(self.0)? {
+            elements.push(element);
+        }
+        Ok(elements)
+    }
+}
+
+/// Decodes a [`ChoiceData`] at level `depth` of choices, counting from 1,
+/// refusing one past [`MAX_CHOICE_DEPTH`].
+#[derive(Clone, Copy)]
+struct ChoiceSeed {
+    depth: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for ChoiceSeed {
+    type Value = ChoiceData;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<ChoiceData, D::Error> {
+        if self.depth > MAX_CHOICE_DEPTH {
+            return Err(de::Error::custom(format_args!(
+                "choice nesting exceeds {MAX_CHOICE_DEPTH} levels"
+            )));
+        }
+        deserializer.deserialize_struct("Choice", CHOICE_FIELDS, self)
+    }
+}
+
+impl<'de> de::Visitor<'de> for ChoiceSeed {
+    type Value = ChoiceData;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("struct Choice")
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<ChoiceData, A::Error> {
+        let expected = &"struct Choice with 3 elements";
+        let identifier = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, expected))?;
+        let alternatives = seq
+            .next_element_seed(SequenceSeed(AlternativeSeed { depth: self.depth }))?
+            .ok_or_else(|| de::Error::invalid_length(1, expected))?;
+        let notes = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(2, expected))?;
+        Ok(ChoiceData {
+            identifier,
+            alternatives,
+            notes,
+        })
+    }
+
+    fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<ChoiceData, A::Error> {
+        let (mut identifier, mut alternatives, mut notes) = (None, None, None);
+        while let Some(field) = map.next_key()? {
+            match field {
+                ChoiceField::Identifier => {
+                    if identifier.is_some() {
+                        return Err(de::Error::duplicate_field("identifier"));
+                    }
+                    identifier = Some(map.next_value()?);
+                }
+                ChoiceField::Alternatives => {
+                    if alternatives.is_some() {
+                        return Err(de::Error::duplicate_field("alternatives"));
+                    }
+                    alternatives =
+                        Some(map.next_value_seed(SequenceSeed(AlternativeSeed {
+                            depth: self.depth,
+                        }))?);
+                }
+                ChoiceField::Notes => {
+                    if notes.is_some() {
+                        return Err(de::Error::duplicate_field("notes"));
+                    }
+                    notes = Some(map.next_value()?);
+                }
+            }
+        }
+        Ok(ChoiceData {
+            identifier: identifier.ok_or_else(|| de::Error::missing_field("identifier"))?,
+            alternatives: alternatives.ok_or_else(|| de::Error::missing_field("alternatives"))?,
+            notes: notes.ok_or_else(|| de::Error::missing_field("notes"))?,
+        })
+    }
+}
+
+/// Decodes `{"identifier", "alternatives", "notes"}`, refusing choices
+/// nested more than [`MAX_CHOICE_DEPTH`] levels.
+impl<'de> Deserialize<'de> for ChoiceData {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ChoiceSeed { depth: 1 }.deserialize(deserializer)
+    }
+}
+
+/// Decodes an [`AlternativeData`] of a choice at level `depth` of
+/// choices, 0 for an alternative on its own.
+#[derive(Clone, Copy)]
+struct AlternativeSeed {
+    depth: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for AlternativeSeed {
+    type Value = AlternativeData;
+
+    fn deserialize<D: Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<AlternativeData, D::Error> {
+        deserializer.deserialize_enum("Alternative", ALTERNATIVE_VARIANTS, self)
+    }
+}
+
+impl<'de> de::Visitor<'de> for AlternativeSeed {
+    type Value = AlternativeData;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("enum Alternative")
+    }
+
+    fn visit_enum<A: de::EnumAccess<'de>>(self, data: A) -> Result<AlternativeData, A::Error> {
+        let (tag, variant) = data.variant::<AlternativeTag>()?;
+        Ok(AlternativeData(match tag {
+            AlternativeTag::Plain => AlternativeRepr::Plain(
+                variant.newtype_variant_seed(PlainAlternativeSeed { depth: self.depth })?,
+            ),
+            AlternativeTag::Foreign => AlternativeRepr::Foreign(variant.newtype_variant()?),
+        }))
+    }
+}
+
+/// Decodes the tagged alternative, refusing sub-choices nested more than
+/// [`MAX_CHOICE_DEPTH`] levels.
+impl<'de> Deserialize<'de> for AlternativeData {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        AlternativeSeed { depth: 0 }.deserialize(deserializer)
+    }
+}
+
+/// Decodes a [`PlainAlternativeRepr`] of a choice at level `depth` of
+/// choices, 0 for an alternative on its own: its sub-choices are at the
+/// next level.
+#[derive(Clone, Copy)]
+struct PlainAlternativeSeed {
+    depth: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for PlainAlternativeSeed {
+    type Value = PlainAlternativeRepr;
+
+    fn deserialize<D: Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<PlainAlternativeRepr, D::Error> {
+        deserializer.deserialize_struct("PlainAlternative", PLAIN_ALTERNATIVE_FIELDS, self)
+    }
+}
+
+impl<'de> de::Visitor<'de> for PlainAlternativeSeed {
+    type Value = PlainAlternativeRepr;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("struct PlainAlternative")
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(
+        self,
+        mut seq: A,
+    ) -> Result<PlainAlternativeRepr, A::Error> {
+        let expected = &"struct PlainAlternative with 4 elements";
+        let identifier = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, expected))?;
+        let variables = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(1, expected))?;
+        let choices = seq
+            .next_element_seed(SequenceSeed(ChoiceSeed {
+                depth: self.depth + 1,
+            }))?
+            .ok_or_else(|| de::Error::invalid_length(2, expected))?;
+        let notes = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(3, expected))?;
+        Ok(PlainAlternativeRepr {
+            identifier,
+            variables,
+            choices,
+            notes,
+        })
+    }
+
+    fn visit_map<A: de::MapAccess<'de>>(
+        self,
+        mut map: A,
+    ) -> Result<PlainAlternativeRepr, A::Error> {
+        let (mut identifier, mut variables, mut choices, mut notes) = (None, None, None, None);
+        while let Some(field) = map.next_key()? {
+            match field {
+                PlainAlternativeField::Identifier => {
+                    if identifier.is_some() {
+                        return Err(de::Error::duplicate_field("identifier"));
+                    }
+                    identifier = Some(map.next_value()?);
+                }
+                PlainAlternativeField::Variables => {
+                    if variables.is_some() {
+                        return Err(de::Error::duplicate_field("variables"));
+                    }
+                    variables = Some(map.next_value()?);
+                }
+                PlainAlternativeField::Choices => {
+                    if choices.is_some() {
+                        return Err(de::Error::duplicate_field("choices"));
+                    }
+                    choices = Some(map.next_value_seed(SequenceSeed(ChoiceSeed {
+                        depth: self.depth + 1,
+                    }))?);
+                }
+                PlainAlternativeField::Notes => {
+                    if notes.is_some() {
+                        return Err(de::Error::duplicate_field("notes"));
+                    }
+                    notes = Some(map.next_value()?);
+                }
+            }
+        }
+        Ok(PlainAlternativeRepr {
+            identifier: identifier.ok_or_else(|| de::Error::missing_field("identifier"))?,
+            variables: variables.ok_or_else(|| de::Error::missing_field("variables"))?,
+            choices: choices.ok_or_else(|| de::Error::missing_field("choices"))?,
+            notes: notes.ok_or_else(|| de::Error::missing_field("notes"))?,
+        })
+    }
+}
+
+/// Decodes `{"identifier", "variables", "choices", "notes"}`, refusing
+/// sub-choices nested more than [`MAX_CHOICE_DEPTH`] levels.
+impl<'de> Deserialize<'de> for PlainAlternativeRepr {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        PlainAlternativeSeed { depth: 0 }.deserialize(deserializer)
+    }
+}
+
 /// Serializes as `{"identifier", "param", "notes"}`.
 impl Serialize for PlainVariable {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -614,13 +937,89 @@ enum KeyEntryRepr {
     Value(KeyValueRepr),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Decodes through [`KeyValueSeed`], so its nesting is bounded.
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename = "KeyValue", rename_all = "snake_case")]
 enum KeyValueRepr {
     Leaf(ValueData),
     Bound { position: usize },
     Tuple(Vec<KeyValueRepr>),
     FrozenSet(Vec<KeyValueRepr>),
+}
+
+/// The names of [`KeyValueRepr`]'s variants, in declaration order.
+const KEY_VALUE_VARIANTS: &[&str] = &["leaf", "bound", "tuple", "frozen_set"];
+
+/// The variant tags of [`KeyValueRepr`].
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum KeyValueTag {
+    Leaf,
+    Bound,
+    Tuple,
+    FrozenSet,
+}
+
+/// The fields of [`KeyValueRepr::Bound`], decoded as the variant's one
+/// field: a struct variant and a newtype variant holding the struct read
+/// alike in every format.
+#[derive(Deserialize)]
+#[serde(rename = "Bound")]
+struct BoundRepr {
+    position: usize,
+}
+
+/// Decodes a [`KeyValueRepr`] inside `depth` tuples or sets, refusing one
+/// inside more than [`MAX_VALUE_DEPTH`].
+#[derive(Clone, Copy)]
+struct KeyValueSeed {
+    depth: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for KeyValueSeed {
+    type Value = KeyValueRepr;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<KeyValueRepr, D::Error> {
+        if self.depth > MAX_VALUE_DEPTH {
+            return Err(de::Error::custom(format_args!(
+                "value nesting exceeds {MAX_VALUE_DEPTH} levels"
+            )));
+        }
+        deserializer.deserialize_enum("KeyValue", KEY_VALUE_VARIANTS, self)
+    }
+}
+
+impl<'de> de::Visitor<'de> for KeyValueSeed {
+    type Value = KeyValueRepr;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("enum KeyValue")
+    }
+
+    fn visit_enum<A: de::EnumAccess<'de>>(self, data: A) -> Result<KeyValueRepr, A::Error> {
+        let (tag, variant) = data.variant::<KeyValueTag>()?;
+        let elements = SequenceSeed(Self {
+            depth: self.depth + 1,
+        });
+        Ok(match tag {
+            KeyValueTag::Leaf => KeyValueRepr::Leaf(variant.newtype_variant()?),
+            KeyValueTag::Bound => KeyValueRepr::Bound {
+                position: variant.newtype_variant::<BoundRepr>()?.position,
+            },
+            KeyValueTag::Tuple => KeyValueRepr::Tuple(variant.newtype_variant_seed(elements)?),
+            KeyValueTag::FrozenSet => {
+                KeyValueRepr::FrozenSet(variant.newtype_variant_seed(elements)?)
+            }
+        })
+    }
+}
+
+/// Decodes the key value's shape, refusing one nested deeper than
+/// [`MAX_VALUE_DEPTH`].
+impl<'de> Deserialize<'de> for KeyValueRepr {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        KeyValueSeed { depth: 0 }.deserialize(deserializer)
+    }
 }
 
 impl ConfigurationKeyData {
