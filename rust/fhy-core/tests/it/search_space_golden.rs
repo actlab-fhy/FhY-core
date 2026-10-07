@@ -8,8 +8,8 @@
 //! The corpus is recorded by
 //! `rust/fhy-core/tests/golden/record_search_space_cases.py` and committed
 //! at `rust/fhy-core/tests/golden/search_space_cases.json`. A case's answers
-//! agree with the oracle's unless it names the divergence that changes
-//! them.
+//! agree with the oracle's exactly when it names no divergence: an untagged
+//! case that differs, and a tagged one that agrees, are both reported.
 
 use std::collections::HashMap;
 
@@ -273,18 +273,20 @@ fn replay_case(case: &Json) -> Vec<String> {
         }
     }
 
-    if case["divergence"].is_null() {
-        let sides_agree = ["left", "right"].into_iter().all(|side| {
-            case[side].is_null() || classify_outcome(&oracle[side]) == classify_outcome(&port[side])
-        });
-        if !sides_agree
-            || oracle.get("structural") != port.get("structural")
-            || oracle.get("alpha") != port.get("alpha")
-        {
-            problems.push(format!(
-                "{name}: names no divergence, but the oracle answers {oracle} and the port {port}"
-            ));
-        }
+    let sides_agree = ["left", "right"].into_iter().all(|side| {
+        case[side].is_null() || classify_outcome(&oracle[side]) == classify_outcome(&port[side])
+    });
+    let agrees = sides_agree
+        && oracle.get("structural") == port.get("structural")
+        && oracle.get("alpha") == port.get("alpha");
+    match (case["divergence"].as_str(), agrees) {
+        (None, false) => problems.push(format!(
+            "{name}: names no divergence, but the oracle answers {oracle} and the port {port}"
+        )),
+        (Some(tag), true) => problems.push(format!(
+            "{name}: names the divergence {tag}, but the port answers as the oracle does: {port}"
+        )),
+        _ => {}
     }
     problems
 }
@@ -313,6 +315,30 @@ fn every_committed_case_replays_as_recorded() {
     for probe in PROBES {
         assert!(names.contains(&probe), "the corpus lacks the probe {probe}");
     }
+}
+
+/// Test a case that names a divergence but answers as the oracle does is
+/// reported, as a hand-edited corpus might hold: the tag explains nothing.
+#[test]
+fn a_tagged_case_agreeing_with_the_oracle_is_reported() {
+    let document: Json = serde_json::from_str(GOLDEN_JSON).expect("the corpus is JSON");
+    let mut case = document["cases"]
+        .as_array()
+        .expect("a list of cases")
+        .iter()
+        .find(|case| case["divergence"].is_null())
+        .expect("the corpus holds an untagged case")
+        .clone();
+    assert!(replay_case(&case).is_empty(), "the untagged case replays");
+
+    case["divergence"] = Json::from("type-strict-values");
+    let problems = replay_case(&case);
+
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].contains("names the divergence type-strict-values"),
+        "{problems:?}"
+    );
 }
 
 #[test]
