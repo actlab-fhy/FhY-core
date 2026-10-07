@@ -783,7 +783,7 @@ def test_payload_nesting_choices_past_the_cap_is_refused_on_both_paths() -> None
     """
     payload = _build_deepest_space().serialize_to_dict()
     holder_id = Identifier("holder")
-    deeper = {
+    deeper: dict[str, Any] = {
         "identifier": Identifier("level_17").serialize_to_dict(),
         "alternatives": [
             {
