@@ -404,3 +404,93 @@ def test_oracle_registry_refusals(site: pathlib.Path) -> None:  # noqa: F811
     )
 
     assert output == ["ValueError", "ValueError"]
+
+
+def test_cycles_through_the_kinds_are_collected(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test cycles through a kind's Python parts are freed by `gc.collect()`.
+
+    An `AxisAlternative` holding a Python subclass's variable that points
+    back at it, and a `TiledVariable` over a param whose opaque value
+    points back at it.
+    """
+    output = _run(
+        site,
+        _FOREIGN_PARTS
+        + textwrap.dedent(
+            """
+        import gc
+        import weakref
+
+        def collects(build):
+            watched = weakref.ref(build())
+            gc.collect()
+            return watched() is None
+
+        def through_an_axis_alternative():
+            box = []
+            variable = HeldVariable(
+                box=box,
+                param=create_categorical_param(frozenset({1, 2})),
+                name=Identifier("held"),
+            )
+            box.append(
+                aggregate.AxisAlternative(
+                    (Identifier("i"),), (variable,), Identifier("realized")
+                )
+            )
+            return variable
+
+        def through_a_tiled_variable():
+            value = Rank(1)
+            value.owner = aggregate.TiledVariable(
+                create_categorical_param(frozenset({value, Rank(2)})),
+                (Identifier("i"),),
+                Identifier("tile"),
+            )
+            return value
+
+        print(collects(through_an_axis_alternative))
+        print(collects(through_a_tiled_variable))
+        """
+        ),
+    )
+
+    assert output == ["True", "True"]
+
+
+_AGGREGATE_NOT_TRACKED = {
+    "Tagger": "holds no Python object",
+    "KindRegistrar": "holds no Python object",
+    "OracleRegistrar": "holds no Python object",
+    "CountingOracle": "holds only its count, no Python object",
+}
+"""The aggregate's classes that do not take part in GC, each with the reason."""
+
+
+def test_every_aggregate_class_that_holds_objects_takes_part_in_gc(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test each class of the aggregate that holds Python objects has
+    `Py_TPFLAGS_HAVE_GC`, as `tests/test_gc_cycles.py` tests `fhy_core`'s."""
+    output = _run(
+        site,
+        f"""
+        not_tracked = {sorted(_AGGREGATE_NOT_TRACKED)!r}
+        classes = {{
+            name: value
+            for name, value in vars(aggregate).items()
+            if isinstance(value, type)
+            and value.__module__ == "fhy_example_aggregate"
+        }}
+        print(set(not_tracked) <= classes.keys())
+        print(sorted(
+            name
+            for name, cls in classes.items()
+            if name not in not_tracked and not cls.__flags__ & (1 << 14)
+        ))
+        """,
+    )
+
+    assert output == ["True", "[]"]

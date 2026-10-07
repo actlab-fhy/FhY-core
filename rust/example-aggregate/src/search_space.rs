@@ -10,12 +10,15 @@
 //!
 //! Each writes its foreign part as JSON text of its own shape and resolves
 //! it back, decoding the parts it holds (a param, variables) with the
-//! binding's resolver and context it is handed. `KindRegistrar` registers
+//! binding's resolver and context it is handed. Each class keeps the Python
+//! objects it was built from, and the slots of the Python-defined parts it
+//! read, and visits them for the cycle collector. `KindRegistrar` registers
 //! kinds again on purpose, so the tests see the registry's refusals.
 
 use std::borrow::Cow;
 
 use pyo3::prelude::*;
+use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyTuple, PyType};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +30,7 @@ use fhy_core::search_space::wire::{SearchSpaceResolver, VariableData};
 use fhy_core::search_space::{Alternative, Variable};
 use fhy_core::term::AlphaRenaming;
 use fhy_core_py::convert;
+use fhy_core_py::util::gc::{Slots, collect_slots};
 
 /// The kind of [`TiledVariable`].
 const TILED_VARIABLE: &str = "example.tiled_variable";
@@ -231,6 +235,10 @@ fn identifiers_to_python<'py>(
 #[pyclass(frozen, module = "fhy_example_aggregate", name = "TiledVariable")]
 struct PyTiledVariable {
     variable: Part<dyn Variable>,
+    /// The `Param` object the variable was built from, which owns the
+    /// slots of its Python-defined parts; none for a decoded variable,
+    /// whose slots its decoding's object owns.
+    param: Option<Py<PyAny>>,
 }
 
 impl PyTiledVariable {
@@ -258,7 +266,17 @@ impl PyTiledVariable {
                 param: convert::param_from_python(param)?,
                 index_symbols: read_identifiers(index_symbols)?,
             }),
+            param: Some(param.clone().unbind()),
         })
+    }
+
+    /// Visit the Python objects the object holds, for the cycle collector.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.param)
     }
 
     #[getter]
@@ -291,6 +309,7 @@ fn tiled_variable_to_python<'py>(
         py,
         PyTiledVariable {
             variable: variable.clone(),
+            param: None,
         },
     )?
     .into_any())
@@ -300,6 +319,13 @@ fn tiled_variable_to_python<'py>(
 #[pyclass(frozen, module = "fhy_example_aggregate", name = "AxisAlternative")]
 struct PyAxisAlternative {
     alternative: Part<dyn Alternative>,
+    /// The `Variable` objects the alternative was built from; none for a
+    /// decoded alternative, whose objects are built on demand.
+    variables: Option<Py<PyTuple>>,
+    /// The slots of the variables read from Python subclasses' instances,
+    /// which the alternative owns: the parts keep the instances where no
+    /// traversal sees them.
+    slots: Slots,
 }
 
 impl PyAxisAlternative {
@@ -321,17 +347,37 @@ impl PyAxisAlternative {
         variables: &Bound<'_, PyAny>,
         name: &Bound<'_, PyAny>,
     ) -> PyResult<Self> {
-        let variables = variables
-            .try_iter()?
-            .map(|variable| convert::search_space::variable_from_python(&variable?))
-            .collect::<PyResult<Vec<_>>>()?;
+        let objects = PyTuple::new(
+            variables.py(),
+            variables.try_iter()?.collect::<PyResult<Vec<_>>>()?,
+        )?;
+        // Read inside a collection, so the alternative owns the slot of
+        // each Python subclass's instance it keeps.
+        let (parts, slots) = collect_slots(|| {
+            objects
+                .iter()
+                .map(|variable| convert::search_space::variable_from_python(&variable))
+                .collect::<PyResult<Vec<_>>>()
+        });
         Ok(Self {
             alternative: Part::new(AxisAlternative {
                 name: convert::identifier_from_python(name)?,
-                variables,
+                variables: parts?,
                 axes: read_identifiers(axes)?,
             }),
+            variables: Some(objects.unbind()),
+            slots,
         })
+    }
+
+    /// Visit the Python objects the object holds, for the cycle collector.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.variables)?;
+        self.slots.traverse(&visit)
     }
 
     #[getter]
@@ -346,6 +392,9 @@ impl PyAxisAlternative {
 
     #[getter]
     fn variables<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        if let Some(objects) = &self.variables {
+            return Ok(objects.bind(py).clone());
+        }
         let objects = self
             .axis()
             .variables
@@ -374,6 +423,8 @@ fn axis_alternative_to_python<'py>(
         py,
         PyAxisAlternative {
             alternative: alternative.clone(),
+            variables: None,
+            slots: Slots::default(),
         },
     )?
     .into_any())

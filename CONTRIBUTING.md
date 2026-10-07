@@ -414,7 +414,9 @@ function is handed the binding's resolver of the payload, as a
 `&dyn SearchSpaceResolver`, and the `ParamContext` it is decoded under, and
 builds the parts its own part holds (a param, variables, choices) with
 both, so a Python subclass's variable or an opaque value inside it decodes
-too.
+too. A class that keeps a Python-defined part reads it inside
+`util::gc::collect_slots`, keeps the `Slots` and the objects it was given,
+and visits them from its `__traverse__`, as `rust/example-aggregate` does.
 Its `util` module is the public surface for writing a Rust-backed class the
 way `fhy_core`'s are written, which `fhy_core`'s own classes use and a
 downstream `-py` crate builds on:
