@@ -29,6 +29,14 @@
 //!   object of a part of the kind, and `resolve` builds a part from its
 //!   foreign part, the inverse of its `to_foreign`.
 //!
+//! `resolve` is handed the binding's resolver of the payload being decoded,
+//! as a [`SearchSpaceResolver`], and the [`ParamContext`] it is decoded
+//! under. A kind whose parts hold other parts (a variable, a choice, a
+//! param, whose values or domain may be Python-defined) builds their wire
+//! forms with these two, so each nested part is decoded as the binding
+//! decodes its own: a Python subclass's variable, an opaque value or a
+//! registered kind alike, under the same context.
+//!
 //! The registry is append-only module state of the extension: a kind, or
 //! a class, is registered once and never replaced.
 //!
@@ -59,12 +67,28 @@
 //!         resolve_tiled_variable,
 //!     )
 //! }
+//!
+//! fn resolve_tiled_variable(
+//!     foreign: &Foreign,
+//!     parts: &dyn SearchSpaceResolver,
+//!     context: &ParamContext<'_>,
+//! ) -> Result<Part<dyn Variable>, ForeignError> {
+//!     let data: TiledVariableData = serde_json::from_str(foreign.data())
+//!         .map_err(|error| failed(foreign, error))?;
+//!     let param = data
+//!         .param
+//!         .build(parts, context)
+//!         .map_err(|error| failed(foreign, error))?;
+//!     Ok(Part::new(TiledVariable::new(data.identifier, param)))
+//! }
 //! ```
 
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 use fhy_core::foreign::{Foreign, ForeignError, Part};
+use fhy_core::param::ParamContext;
+use fhy_core::search_space::wire::SearchSpaceResolver;
 use fhy_core::search_space::{Alternative, Choice, SearchOracle, StepDomain, Variable};
 
 /// Read an object of a registered `Variable` kind's class as its part.
@@ -74,8 +98,14 @@ pub type VariableFromPython = fn(&Bound<'_, PyAny>) -> PyResult<Part<dyn Variabl
 pub type VariableToPython =
     for<'py> fn(Python<'py>, &Part<dyn Variable>) -> PyResult<Bound<'py, PyAny>>;
 
-/// Resolve a foreign part of a registered `Variable` kind.
-pub type VariableResolver = fn(&Foreign) -> Result<Part<dyn Variable>, ForeignError>;
+/// Resolve a foreign part of a registered `Variable` kind, the foreign
+/// parts it holds resolved by the binding's resolver of the payload, under
+/// the context the payload is decoded in.
+pub type VariableResolver = fn(
+    &Foreign,
+    &dyn SearchSpaceResolver,
+    &ParamContext<'_>,
+) -> Result<Part<dyn Variable>, ForeignError>;
 
 /// Read an object of a registered `Alternative` kind's class as its part.
 pub type AlternativeFromPython = fn(&Bound<'_, PyAny>) -> PyResult<Part<dyn Alternative>>;
@@ -84,8 +114,14 @@ pub type AlternativeFromPython = fn(&Bound<'_, PyAny>) -> PyResult<Part<dyn Alte
 pub type AlternativeToPython =
     for<'py> fn(Python<'py>, &Part<dyn Alternative>) -> PyResult<Bound<'py, PyAny>>;
 
-/// Resolve a foreign part of a registered `Alternative` kind.
-pub type AlternativeResolver = fn(&Foreign) -> Result<Part<dyn Alternative>, ForeignError>;
+/// Resolve a foreign part of a registered `Alternative` kind, the foreign
+/// parts it holds resolved by the binding's resolver of the payload, under
+/// the context the payload is decoded in.
+pub type AlternativeResolver = fn(
+    &Foreign,
+    &dyn SearchSpaceResolver,
+    &ParamContext<'_>,
+) -> Result<Part<dyn Alternative>, ForeignError>;
 
 /// Return the core part of the `Variable` object `object`.
 ///

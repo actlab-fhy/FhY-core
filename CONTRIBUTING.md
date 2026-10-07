@@ -409,7 +409,12 @@ Its `convert::search_space` module converts the objects of
 kinds a downstream crate defines (`register_variable_kind`,
 `register_alternative_kind`: the kind, its `#[pyclass]`, and the functions
 that read an object, build an object and resolve a foreign part), which the
-binding then reads, writes and decodes as it does its own.
+binding then reads, writes and decodes as it does its own. The resolve
+function is handed the binding's resolver of the payload, as a
+`&dyn SearchSpaceResolver`, and the `ParamContext` it is decoded under, and
+builds the parts its own part holds (a param, variables, choices) with
+both, so a Python subclass's variable or an opaque value inside it decodes
+too.
 Its `util` module is the public surface for writing a Rust-backed class the
 way `fhy_core`'s are written, which `fhy_core`'s own classes use and a
 downstream `-py` crate builds on:

@@ -2,10 +2,12 @@
 //! the foreign parts they hold, and the depth check of a payload before it
 //! reaches the core.
 //!
-//! [`PyResolver`] resolves a foreign variable or alternative by its type
-//! id: a registered downstream Rust kind's resolver first, then the Python
-//! registry, whose class decodes the data into a subclass instance that
-//! becomes an adapter.
+//! [`PartResolver`] resolves a foreign variable or alternative by its type
+//! id: a registered downstream Rust kind's resolver first, handed the
+//! resolver itself and the context the payload is decoded under, then the
+//! Python registry, whose class decodes the data into a subclass instance
+//! that becomes an adapter. Every other part it resolves as [`PyResolver`]
+//! does.
 //!
 //! The core decodes a space recursively, once per level of choices, so a
 //! payload is refused (`RecursionError`) when its choices nest deeper than
@@ -20,8 +22,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 use serde::Serialize;
 
+use fhy_core::constraint::{CustomConstraint, OpaqueValue};
 use fhy_core::foreign::{BuildError, Foreign, ForeignError, Part, Resolve};
-use fhy_core::param::ParamContext;
+use fhy_core::param::{CustomDomain, ParamContext};
 use fhy_core::search_space::wire::{
     AlternativeData, ChoiceData, ConfigurationData, SpaceData, VariableData,
 };
@@ -45,11 +48,47 @@ use super::kinds::{alternative_kind, variable_kind};
 use super::space::space_to_python;
 use super::variable::{try_read_variable, variable_to_python};
 
-impl Resolve<Part<dyn Variable>> for PyResolver {
+/// The resolver of the foreign parts of a search-space payload decoded
+/// under `context`.
+///
+/// A registered downstream kind's resolver is handed this resolver and
+/// `context`, so the parts its own parts hold are decoded as the binding's
+/// are, under the same context.
+#[derive(Clone, Copy)]
+pub(super) struct PartResolver<'a, 'c> {
+    context: &'a ParamContext<'c>,
+}
+
+impl<'a, 'c> PartResolver<'a, 'c> {
+    /// Return the resolver of a payload decoded under `context`.
+    pub(super) const fn new(context: &'a ParamContext<'c>) -> Self {
+        Self { context }
+    }
+}
+
+impl Resolve<Part<dyn OpaqueValue>> for PartResolver<'_, '_> {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
+        PyResolver.resolve(foreign)
+    }
+}
+
+impl Resolve<Part<dyn CustomConstraint>> for PartResolver<'_, '_> {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomConstraint>, ForeignError> {
+        PyResolver.resolve(foreign)
+    }
+}
+
+impl Resolve<Part<dyn CustomDomain>> for PartResolver<'_, '_> {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomDomain>, ForeignError> {
+        PyResolver.resolve(foreign)
+    }
+}
+
+impl Resolve<Part<dyn Variable>> for PartResolver<'_, '_> {
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Variable>, ForeignError> {
         Python::attach(|py| {
             match variable_kind(py, foreign.type_id()) {
-                Ok(Some(entry)) => return (entry.resolve)(foreign),
+                Ok(Some(entry)) => return (entry.resolve)(foreign, self, self.context),
                 Ok(None) => {}
                 Err(error) => return Err(record_foreign_failure(py, foreign.type_id(), error)),
             }
@@ -63,11 +102,11 @@ impl Resolve<Part<dyn Variable>> for PyResolver {
     }
 }
 
-impl Resolve<Part<dyn Alternative>> for PyResolver {
+impl Resolve<Part<dyn Alternative>> for PartResolver<'_, '_> {
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Alternative>, ForeignError> {
         Python::attach(|py| {
             match alternative_kind(py, foreign.type_id()) {
-                Ok(Some(entry)) => return (entry.resolve)(foreign),
+                Ok(Some(entry)) => return (entry.resolve)(foreign, self, self.context),
                 Ok(None) => {}
                 Err(error) => return Err(record_foreign_failure(py, foreign.type_id(), error)),
             }
@@ -194,30 +233,43 @@ pub(super) fn decode_part<'py>(
     let object = match family {
         Family::Variable => {
             let data: VariableData = parse_tree(cls, tree)?;
-            let part = build_in_context(cls, |context| data.build(&PyResolver, context))?;
+            let part = build_in_context(cls, |context| {
+                data.build(&PartResolver::new(context), context)
+            })?;
             variable_to_python(py, &part)?
         }
         Family::Alternative => {
             let data: AlternativeData = parse_tree(cls, tree)?;
-            let part = build_in_context(cls, |context| data.build(&PyResolver, context))?;
+            let part = build_in_context(cls, |context| {
+                data.build(&PartResolver::new(context), context)
+            })?;
             alternative_to_python(py, &part)?
         }
         Family::Choice => {
             let data: ChoiceData = parse_tree(cls, tree)?;
-            let (choice, slots) =
-                collect_slots(|| build_in_context(cls, |context| data.build(&PyResolver, context)));
+            let (choice, slots) = collect_slots(|| {
+                build_in_context(cls, |context| {
+                    data.build(&PartResolver::new(context), context)
+                })
+            });
             choice_to_python(py, &choice?, slots)?
         }
         Family::Space => {
             let data: SpaceData = parse_tree(cls, tree)?;
-            let (space, slots) =
-                collect_slots(|| build_in_context(cls, |context| data.build(&PyResolver, context)));
+            let (space, slots) = collect_slots(|| {
+                build_in_context(cls, |context| {
+                    data.build(&PartResolver::new(context), context)
+                })
+            });
             space_to_python(py, &space?, slots)?
         }
         Family::Configuration => {
             let data: ConfigurationData = parse_tree(cls, tree)?;
-            let (configuration, slots) =
-                collect_slots(|| build_in_context(cls, |context| data.build(&PyResolver, context)));
+            let (configuration, slots) = collect_slots(|| {
+                build_in_context(cls, |context| {
+                    data.build(&PartResolver::new(context), context)
+                })
+            });
             let configuration = configuration?;
             let space = space_to_python(py, configuration.space(), slots)?;
             configuration_to_python(&space, configuration)?

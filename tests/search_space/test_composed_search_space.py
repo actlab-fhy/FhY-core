@@ -168,6 +168,94 @@ def test_a_foreign_kind_decodes_as_a_variable(site: pathlib.Path) -> None:  # no
     ]
 
 
+_FOREIGN_PARTS = """
+from fhy_core.serialization import Serializable, register_serializable
+
+
+@register_serializable(type_id="tests.composed.rank")
+class Rank(Serializable):
+    def __init__(self, value):
+        self.value = value
+
+    def __eq__(self, other):
+        return isinstance(other, Rank) and self.value == other.value
+
+    def __hash__(self):
+        return hash(self.value)
+
+    def serialize_to_dict(self):
+        return {"value": self.value}
+
+    @classmethod
+    def deserialize_from_dict(cls, data):
+        return cls(data["value"])
+
+
+@register_serializable(type_id="tests.composed.held_variable")
+class HeldVariable(Variable):
+    def __init__(self, *, box=None, **fields):
+        super().__init__(**fields)
+        self.box = box
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data):
+        base = Variable.deserialize_data_from_dict(data)
+        return cls(param=base.param, name=base.name, notes=base.notes)
+
+
+def ranked_param():
+    return create_categorical_param(frozenset({Rank(1), Rank(2)}))
+"""
+
+
+def test_a_kind_holding_foreign_parts_round_trips(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test a kind's resolver decodes the foreign parts its own parts hold.
+
+    An `AxisAlternative` holding a variable whose param has opaque values,
+    and one holding a Python subclass's variable, decode through the
+    binding's resolver and the context the space is decoded under.
+    """
+    output = _run(
+        site,
+        _FOREIGN_PARTS
+        + textwrap.dedent(
+            """
+        def round_trip(variable):
+            realized = aggregate.AxisAlternative(
+                (Identifier("i"),), (variable,), Identifier("realized")
+            )
+            choice = Choice((realized,), name=Identifier("layout"))
+            space = Space(choices=(choice,), name=Identifier("program"))
+            text = space.to_json()
+            decoded = Space.from_json(text)
+            (decoded_realized,) = decoded.choices[0].alternatives
+            (decoded_variable,) = decoded_realized.variables
+            print(decoded.to_json() == text, type(decoded_variable).__name__)
+            print(decoded.is_structurally_equivalent(space))
+
+        round_trip(Variable(param=ranked_param(), name=Identifier("ranked")))
+        round_trip(
+            HeldVariable(
+                param=create_categorical_param(frozenset({1, 2})),
+                name=Identifier("held"),
+            )
+        )
+        """
+        ),
+    )
+
+    assert output == [
+        "True",
+        "Variable",
+        "True",
+        "True",
+        "HeldVariable",
+        "True",
+    ]
+
+
 def test_configuration_chooses_a_kind(site: pathlib.Path) -> None:  # noqa: F811
     """Test a configuration's alternative is the kind's object, its key shared."""
     output = _run(

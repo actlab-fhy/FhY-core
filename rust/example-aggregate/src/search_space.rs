@@ -9,8 +9,9 @@
 //!   that binds its axes, shaped like MOGA-VM's `RealizationOption`.
 //!
 //! Each writes its foreign part as JSON text of its own shape and resolves
-//! it back. `KindRegistrar` registers kinds again on purpose, so the tests
-//! see the registry's refusals.
+//! it back, decoding the parts it holds (a param, variables) with the
+//! binding's resolver and context it is handed. `KindRegistrar` registers
+//! kinds again on purpose, so the tests see the registry's refusals.
 
 use std::borrow::Cow;
 
@@ -18,14 +19,12 @@ use pyo3::prelude::*;
 use pyo3::types::{PyTuple, PyType};
 use serde::{Deserialize, Serialize};
 
-use fhy_core::constraint::{CustomConstraint, OpaqueValue};
-use fhy_core::foreign::{BoxError, Foreign, ForeignError, ForeignPart, NoForeign, Part, Resolve};
+use fhy_core::foreign::{BoxError, Foreign, ForeignError, ForeignPart, Part};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::wire::ParamData;
-use fhy_core::param::{CustomDomain, Param, ParamContext};
-use fhy_core::search_space::wire::VariableData;
+use fhy_core::param::{Param, ParamContext};
+use fhy_core::search_space::wire::{SearchSpaceResolver, VariableData};
 use fhy_core::search_space::{Alternative, Variable};
-use fhy_core::solver::Solver;
 use fhy_core::term::AlphaRenaming;
 use fhy_core_py::convert;
 
@@ -166,56 +165,18 @@ impl Alternative for AxisAlternative {
     }
 }
 
-/// The resolver of the foreign parts the two kinds' data holds: their own
-/// kinds, and nothing else.
-struct ExampleResolver;
-
-impl Resolve<Part<dyn Variable>> for ExampleResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Variable>, ForeignError> {
-        if foreign.type_id() == TILED_VARIABLE {
-            resolve_tiled_variable(foreign)
-        } else {
-            NoForeign.resolve(foreign)
-        }
-    }
-}
-
-impl Resolve<Part<dyn Alternative>> for ExampleResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Alternative>, ForeignError> {
-        if foreign.type_id() == AXIS_ALTERNATIVE {
-            resolve_axis_alternative(foreign)
-        } else {
-            NoForeign.resolve(foreign)
-        }
-    }
-}
-
-impl Resolve<Part<dyn CustomDomain>> for ExampleResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomDomain>, ForeignError> {
-        NoForeign.resolve(foreign)
-    }
-}
-
-impl Resolve<Part<dyn CustomConstraint>> for ExampleResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomConstraint>, ForeignError> {
-        NoForeign.resolve(foreign)
-    }
-}
-
-impl Resolve<Part<dyn OpaqueValue>> for ExampleResolver {
-    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
-        NoForeign.resolve(foreign)
-    }
-}
-
-/// Resolve a foreign `TiledVariable`.
-fn resolve_tiled_variable(foreign: &Foreign) -> Result<Part<dyn Variable>, ForeignError> {
+/// Resolve a foreign `TiledVariable`, its param's parts resolved by `parts`
+/// under `context`.
+fn resolve_tiled_variable(
+    foreign: &Foreign,
+    parts: &dyn SearchSpaceResolver,
+    context: &ParamContext<'_>,
+) -> Result<Part<dyn Variable>, ForeignError> {
     let data: TiledVariableData =
         serde_json::from_str(foreign.data()).map_err(|error| failed(TILED_VARIABLE, error))?;
-    let solver = Solver::new();
     let param = data
         .param
-        .build(&ExampleResolver, &ParamContext::new(&solver))
+        .build(parts, context)
         .map_err(|error| failed(TILED_VARIABLE, error))?;
     Ok(Part::new(TiledVariable {
         name: data.identifier,
@@ -224,16 +185,19 @@ fn resolve_tiled_variable(foreign: &Foreign) -> Result<Part<dyn Variable>, Forei
     }))
 }
 
-/// Resolve a foreign `AxisAlternative`.
-fn resolve_axis_alternative(foreign: &Foreign) -> Result<Part<dyn Alternative>, ForeignError> {
+/// Resolve a foreign `AxisAlternative`, its variables' parts, whichever
+/// kind they are, resolved by `parts` under `context`.
+fn resolve_axis_alternative(
+    foreign: &Foreign,
+    parts: &dyn SearchSpaceResolver,
+    context: &ParamContext<'_>,
+) -> Result<Part<dyn Alternative>, ForeignError> {
     let data: AxisAlternativeData =
         serde_json::from_str(foreign.data()).map_err(|error| failed(AXIS_ALTERNATIVE, error))?;
-    let solver = Solver::new();
-    let context = ParamContext::new(&solver);
     let variables = data
         .variables
         .into_iter()
-        .map(|variable| variable.build(&ExampleResolver, &context))
+        .map(|variable| variable.build(parts, context))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| failed(AXIS_ALTERNATIVE, error))?;
     Ok(Part::new(AxisAlternative {
