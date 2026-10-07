@@ -83,8 +83,9 @@
 //! 6. `to_foreign` gives a part that the implementation's resolver turns
 //!    back into an equivalent value.
 //! 7. A variable's `search_domain`, when it offers one, holds exactly the
-//!    values its param's domain admits, before the param's constraints, in
-//!    an order that is the same for the value's life.
+//!    values its param's domain admits, before the param's constraints
+//!    other than an integer domain's bounds, in an order that is the same
+//!    for the value's life.
 //!
 //! # Searching
 //!

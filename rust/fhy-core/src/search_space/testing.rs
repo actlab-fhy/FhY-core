@@ -26,21 +26,30 @@
 //!   value of the kind structurally equivalent to the sample.
 //!
 //! - clause 7, [`ContractClause::SearchDomain`]: a variable's
-//!   [`search_domain`](super::Variable::search_domain), where it offers one
-//!   and its param's domain is finite, holds exactly the values that domain
-//!   admits, and is the same on a second call.
+//!   [`search_domain`](super::Variable::search_domain) is the same on a
+//!   second call and, where it offers one and the core derives a finite
+//!   domain from the param (the members of a categorical, ordinal or
+//!   permutation domain, or the integers an integer domain's bound
+//!   constraints enclose), holds exactly the derived domain's values,
+//!   whatever the two domains' shapes; an integer domain whose bounds
+//!   enclose none admits no domain at all. Two domains of at most `2^16`
+//!   values each are compared as sets of values;
+//!   larger ones only when of one shape, a choice's values or an order's
+//!   elements in any order, or a strided domain's runs as given.
 //!
 //! Clause 5, that every identifier the data binds is declared, cannot be
 //! checked from outside the implementation.
 
 use std::any::TypeId;
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
+
+use num_bigint::BigUint;
 
 use crate::constraint::Value;
 use crate::foreign::{BoxError, Foreign, ForeignError, Part, Resolve};
 use crate::identifier::Identifier;
-use crate::param::ParamDomain;
 use crate::term::AlphaRenaming;
 
 use super::alternative::{Alternative, PlainAlternative};
@@ -48,7 +57,7 @@ use super::choice::first_repeat;
 use super::domain::StepDomain;
 use super::equivalence::{alternative_labels, enter_frame};
 use super::error::EquivalenceError;
-use super::step::{ParamStepDomain, param_step_domain};
+use super::step::{ParamStepDomain, first_coordinate, next_coordinate, param_step_domain};
 use super::variable::{PlainVariable, Variable};
 
 /// A clause of the implementor contract, numbered as the
@@ -276,14 +285,12 @@ impl Sample for Part<dyn Variable> {
         let Some(offered) = first else {
             return Ok(());
         };
-        let is_listed = matches!(
-            part.param().domain(),
-            ParamDomain::Categorical(_) | ParamDomain::Ordinal(_) | ParamDomain::Permutation(_)
-        );
-        let ParamStepDomain::Finite(derived) = param_step_domain(part.param()) else {
-            return Ok(());
+        let is_faithful = match param_step_domain(part.param()) {
+            ParamStepDomain::Finite(derived) => hold_same_values(&offered, &derived),
+            ParamStepDomain::Empty => false,
+            ParamStepDomain::Unbounded | ParamStepDomain::Unknown => true,
         };
-        if is_listed && !hold_same_values(&offered, &derived) {
+        if !is_faithful {
             return Err(violation(
                 ContractClause::SearchDomain,
                 kind,
@@ -294,9 +301,18 @@ impl Sample for Part<dyn Variable> {
     }
 }
 
-/// Return whether `left` and `right` are of one shape and hold the same
-/// values or elements, in any order.
+/// The most values a domain may hold for [`hold_same_values`] to list them.
+const LISTED_DOMAIN_SIZE: u32 = 1 << 16;
+
+/// Return whether `left` and `right` hold the same values: listed and
+/// compared as sets when each holds at most [`LISTED_DOMAIN_SIZE`],
+/// whatever their shapes; otherwise of one shape, with the same values or
+/// elements in any order, or the same strided runs.
 fn hold_same_values(left: &StepDomain, right: &StepDomain) -> bool {
+    let limit = BigUint::from(LISTED_DOMAIN_SIZE);
+    if left.cardinality() <= limit && right.cardinality() <= limit {
+        return list_values(left) == list_values(right);
+    }
     let same = |left: &[Value], right: &[Value]| {
         left.len() == right.len() && left.iter().all(|value| right.contains(value))
     };
@@ -307,8 +323,20 @@ fn hold_same_values(left: &StepDomain, right: &StepDomain) -> bool {
         (StepDomain::Order(left), StepDomain::Order(right)) => {
             same(left.elements(), right.elements())
         }
+        (StepDomain::Strided(left), StepDomain::Strided(right)) => left == right,
         _ => false,
     }
+}
+
+/// Return the values `domain` holds, as a set.
+fn list_values(domain: &StepDomain) -> HashSet<Value> {
+    let mut values = HashSet::new();
+    let mut coordinate = Some(first_coordinate(domain));
+    while let Some(current) = coordinate {
+        values.extend(domain.value_at(&current));
+        coordinate = next_coordinate(|next| domain.contains(next), &current);
+    }
+    values
 }
 
 impl Sample for Part<dyn Alternative> {

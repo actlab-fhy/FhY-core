@@ -104,8 +104,9 @@ pub trait Variable: ForeignPart {
     ///
     /// An implementation whose param has a custom domain offers one here.
     /// It must hold exactly the values the param's domain admits, before
-    /// its constraints, in an order that is the same for the value's life
-    /// (contract clause 7). The default derives it.
+    /// its constraints other than an integer domain's bounds, in an order
+    /// that is the same for the value's life (contract clause 7). The
+    /// default derives it.
     ///
     /// # Errors
     ///

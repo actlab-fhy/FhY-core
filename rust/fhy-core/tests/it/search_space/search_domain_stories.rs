@@ -346,7 +346,8 @@ mod conformance {
     use fhy_core::identifier::Identifier;
     use fhy_core::param::Param;
     use fhy_core::search_space::testing::{ContractClause, check_variable_conformance};
-    use fhy_core::search_space::{ChoiceDomain, StepDomain, Variable};
+    use fhy_core::search_space::{ChoiceDomain, StepDomain, StridedDomain, StridedRun, Variable};
+    use num_bigint::{BigInt, BigUint};
     use rstest::rstest;
     use serde::{Deserialize, Serialize};
 
@@ -364,6 +365,9 @@ mod conformance {
         Narrower,
         /// A different domain on every call.
         Unstable,
+        /// Exactly the param's values, as a strided run rather than the
+        /// choice of values the param's domain derives.
+        Strided,
         /// No domain: the param's is derived.
         Derived,
     }
@@ -444,6 +448,11 @@ mod conformance {
                         vec![int(1), int(2), int(3)]
                     }
                 }
+                Offer::Strided => {
+                    let run =
+                        StridedRun::new(BigInt::from(1), BigInt::from(4), BigUint::from(1_u8))?;
+                    return Ok(Some(StepDomain::from(StridedDomain::new(vec![run])?)));
+                }
             };
             Ok(Some(StepDomain::from(ChoiceDomain::new(values)?)))
         }
@@ -468,10 +477,11 @@ mod conformance {
     }
 
     /// Test a variable offering exactly its param's values, or none, keeps
-    /// clause 7.
+    /// clause 7, whatever the shape of the domain it offers.
     #[rstest]
     #[case::faithful(Offer::Faithful)]
     #[case::derived(Offer::Derived)]
+    #[case::strided(Offer::Strided)]
     fn a_faithful_or_derived_search_domain_conforms(#[case] offer: Offer) {
         let samples = [Domained::part(offer), Domained::part(offer)];
 
@@ -495,6 +505,38 @@ mod conformance {
         assert!(
             violation.to_string().contains("breaks clause 7"),
             "{violation}"
+        );
+    }
+
+    /// Test a variable over the integers its bounds enclose, `[1, 3]`, is
+    /// held to them: offering them conforms, offering fewer breaks
+    /// clause 7.
+    #[rstest]
+    #[case::faithful(Offer::Faithful, true)]
+    #[case::strided(Offer::Strided, true)]
+    #[case::narrower(Offer::Narrower, false)]
+    fn a_bounded_integer_variables_search_domain_is_checked(
+        #[case] offer: Offer,
+        #[case] conforms: bool,
+    ) {
+        let build = || {
+            Domained::build(
+                Identifier::new("bounded"),
+                crate::support::search::bounded_param(1, 3),
+                offer,
+            )
+        };
+        let samples = [build(), build()];
+
+        let result = check_variable_conformance(&samples, &DomainedResolver);
+
+        assert_eq!(
+            result.map_err(|violation| violation.clause()),
+            if conforms {
+                Ok(())
+            } else {
+                Err(ContractClause::SearchDomain)
+            }
         );
     }
 }
