@@ -5,11 +5,13 @@ use std::error::Error;
 
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::{
-    Activity, Coordinate, EmptyKind, ReplayError, StepDomainError, TraceError,
+    Activity, ConfigurationErrors, Coordinate, EmptyKind, ReplayError, StepDomainError, TraceError,
 };
 use rstest::rstest;
 
+use crate::support::constraint::int;
 use crate::support::error_text::test_error;
+use crate::support::search_space::{int_variable, space_of, try_configure};
 use crate::support::serde::restored;
 
 /// Return the identifier `name` at the fixed id `id`, so a table's text can
@@ -75,7 +77,7 @@ fn step_domain_error_text(#[case] error: StepDomainError, #[case] text: &str) {
 #[rstest]
 #[case::domain(
     TraceError::Domain(StepDomainError::EmptyChoice),
-    "the step's domain is invalid: a choice domain needs at least one value",
+    "the step's domain is invalid",
     Some("a choice domain needs at least one value")
 )]
 #[case::unknown_decision(
@@ -203,8 +205,45 @@ fn trace_error_text(#[case] error: TraceError, #[case] text: &str, #[case] sourc
 #[case::trace(
     ReplayError::Trace(Box::new(TraceError::NoSpace)),
     "a static step needs a recorder over a space",
-    Some("a static step needs a recorder over a space")
+    None
+)]
+#[case::trace_with_a_source(
+    ReplayError::Trace(Box::new(TraceError::Domain(StepDomainError::EmptyChoice))),
+    "the step's domain is invalid",
+    Some("a choice domain needs at least one value")
 )]
 fn replay_error_text(#[case] error: ReplayError, #[case] text: &str, #[case] source: Option<&str>) {
     assert_error_text(&error, text, source);
+}
+
+/// Return the errors refusing a configuration of a one-variable space that
+/// names a decision the space lacks.
+fn build_configuration_errors() -> ConfigurationErrors {
+    let x = build_identifier(11, "x");
+    let space = space_of(
+        &build_identifier(12, "s"),
+        vec![int_variable(&x, &[1])],
+        vec![],
+    );
+    try_configure(&space, [(build_identifier(13, "ghost"), int(1))])
+        .expect_err("the entry names no decision")
+}
+
+/// Test a run's and a replay's configuration refusals are transparent:
+/// each writes the configuration's text and forwards its source, so a
+/// reporter walking the chain prints the text once.
+#[test]
+fn configuration_refusals_are_transparent() {
+    let text = "the configuration is invalid: ghost::63613 is not a decision of the space";
+
+    assert_error_text(
+        &TraceError::Configuration(build_configuration_errors()),
+        text,
+        None,
+    );
+    assert_error_text(
+        &ReplayError::Configuration(build_configuration_errors()),
+        text,
+        None,
+    );
 }

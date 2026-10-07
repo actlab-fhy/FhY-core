@@ -474,6 +474,8 @@ pub enum TraceError {
     },
     /// The run's configuration refused a value for a reason other than its
     /// admissibility: an undecided or failing condition or clause.
+    ///
+    /// Transparent: it writes the errors' text and forwards their source.
     Configuration(ConfigurationErrors),
     /// A realizing recorder finished before every decision its
     /// configuration assigns was asked.
@@ -498,7 +500,7 @@ pub enum TraceError {
 impl fmt::Display for TraceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Domain(error) => write!(f, "the step's domain is invalid: {error}"),
+            Self::Domain(_) => f.write_str("the step's domain is invalid"),
             Self::UnknownDecision { name } => write!(f, "{name:?} is not a decision of the space"),
             Self::AlreadyDecided { name } => {
                 write!(f, "the decision {name:?} was decided already in this run")
@@ -557,7 +559,7 @@ impl Error for TraceError {
         match self {
             Self::Domain(error) => Some(error),
             Self::Oracle { source, .. } | Self::Hook { source, .. } => Some(&**source),
-            Self::Configuration(errors) => Some(errors),
+            Self::Configuration(errors) => errors.source(),
             _ => None,
         }
     }
@@ -617,8 +619,12 @@ pub enum ReplayError {
         decision: Identifier,
     },
     /// The configuration the steps describe is refused.
+    ///
+    /// Transparent: it writes the errors' text and forwards their source.
     Configuration(ConfigurationErrors),
     /// Building a step failed.
+    ///
+    /// Transparent: it writes the error's text and forwards its source.
     Trace(Box<TraceError>),
 }
 
@@ -673,8 +679,8 @@ impl fmt::Display for ReplayError {
 impl Error for ReplayError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Configuration(errors) => Some(errors),
-            Self::Trace(error) => Some(&**error),
+            Self::Configuration(errors) => errors.source(),
+            Self::Trace(error) => error.source(),
             _ => None,
         }
     }
