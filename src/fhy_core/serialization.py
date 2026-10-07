@@ -955,6 +955,14 @@ def register_serializable(
             without changing the class' canonical `_SERIALIZATION_CLASS_TYPE_ID`.
             If False (default), `type_id` is treated as the canonical id: it will be
             set on the class (if not already set) and must match if already set.
+
+    Raises:
+        SerializationError: If another class is registered under the type id,
+            if a ``Variable`` or ``Alternative`` kind a downstream Rust crate
+            defines is registered under it (decoding asks the kinds first, so
+            the class could not read its own payloads back), or if the class
+            already has a different canonical type id. The class and the
+            registry are left unchanged.
     """
 
     def _wrapper(c: type[_T]) -> type[_T]:
@@ -969,6 +977,16 @@ def register_serializable(
             raise SerializationError(
                 f'Duplicate registration for type_id "{ty_id}": '
                 f"{_TYPE_REGISTRY[ty_id]} already registered; refusing to override."
+            )
+
+        from . import _rs  # noqa: PLC0415  # the extension imports this module
+
+        kind_class = _rs.get_search_space_kind_class(ty_id)
+        if kind_class is not None:
+            raise SerializationError(
+                f'Duplicate registration for type_id "{ty_id}": '
+                f"{kind_class} already registered as a Rust search-space kind; "
+                "refusing to override."
             )
 
         if type_id is not None and not alias:

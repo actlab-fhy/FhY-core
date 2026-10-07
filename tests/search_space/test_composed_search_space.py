@@ -340,6 +340,122 @@ def test_a_kind_registered_after_import_is_a_virtual_subclass(
     assert output == ["True"]
 
 
+def test_a_kind_is_refused_a_serializable_class_s_type_id(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test a kind cannot take a type id a Python class is registered under.
+
+    Decoding tries a kind before the Python registry, so a class whose type
+    id a kind took would write payloads it cannot read back. A refused
+    registration leaves the registry unchanged.
+    """
+    completed = run_python(
+        _PRELUDE
+        + textwrap.dedent(
+            """
+            from fhy_core.serialization import register_serializable
+
+            variable = aggregate.KindRegistrar.register_variable
+            alternative = aggregate.KindRegistrar.register_alternative
+
+            @register_serializable(type_id="example.python_first")
+            class PythonFirst(Variable):
+                pass
+
+            class Other:
+                pass
+
+            for attempt in (
+                lambda: variable(_rs, "example.python_first", Other),
+                lambda: alternative(_rs, "example.python_first", Other),
+                lambda: alternative(_rs, "search_space.space", Other),
+                lambda: variable(_rs, "search_space.variable", Other),
+            ):
+                try:
+                    attempt()
+                except ValueError as error:
+                    print(error)
+            print(_rs.get_search_space_kind_class("example.python_first"))
+            variable(_rs, "example.free", Other)
+            print(_rs.get_search_space_kind_class("example.free") is Other)
+            """
+        ),
+        python_path=[site],
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        'the Variable kind "example.python_first" cannot be registered: '
+        "it is the type id of the serializable class PythonFirst",
+        'the Alternative kind "example.python_first" cannot be registered: '
+        "it is the type id of the serializable class PythonFirst",
+        'the Alternative kind "search_space.space" cannot be registered: '
+        "it is the type id of the serializable class Space",
+        'the Variable kind "search_space.variable" cannot be registered: '
+        "it is the plain variable's kind",
+        "None",
+        "True",
+    ]
+
+
+def test_a_serializable_class_is_refused_a_kind_s_type_id(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test `register_serializable` refuses a type id a kind is registered under.
+
+    The refusal is a `SerializationError` worded as a duplicate
+    registration, and leaves both the class and the registry untouched; a
+    kind's own payloads still decode.
+    """
+    completed = run_python(
+        _PRELUDE
+        + textwrap.dedent(
+            """
+            from fhy_core import serialization
+            from fhy_core.serialization import SerializationError, register_serializable
+
+            class Clash(Variable):
+                pass
+
+            class AliasClash(Alternative):
+                pass
+
+            for attempt in (
+                lambda: register_serializable(type_id="example.tiled_variable")(Clash),
+                lambda: register_serializable(
+                    AliasClash, type_id="example.axis_alternative", alias=True
+                ),
+            ):
+                try:
+                    attempt()
+                except SerializationError as error:
+                    print(error)
+            print("_SERIALIZATION_CLASS_TYPE_ID" in Clash.__dict__)
+            print("example.tiled_variable" in serialization._TYPE_REGISTRY)
+            print("example.axis_alternative" in serialization._TYPE_REGISTRY)
+            space, _, _, tiled = realized_space()
+            decoded = Space.from_json(space.to_json())
+            print(type(decoded.choices[0].alternatives[0].variables[0]).__name__)
+            """
+        ),
+        python_path=[site],
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        'Duplicate registration for type_id "example.tiled_variable": '
+        "<class 'fhy_example_aggregate.TiledVariable'> already registered as a "
+        "Rust search-space kind; refusing to override.",
+        'Duplicate registration for type_id "example.axis_alternative": '
+        "<class 'fhy_example_aggregate.AxisAlternative'> already registered as a "
+        "Rust search-space kind; refusing to override.",
+        "False",
+        "False",
+        "False",
+        "TiledVariable",
+    ]
+
+
 def test_a_registered_oracle_answers_a_recorder_and_counts_its_steps(
     site: pathlib.Path,  # noqa: F811
 ) -> None:

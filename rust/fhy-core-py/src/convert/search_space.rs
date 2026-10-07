@@ -40,6 +40,15 @@
 //! The registry is append-only module state of the extension: a kind, or
 //! a class, is registered once and never replaced.
 //!
+//! A kind's type id is never also the type id of a class of Python's
+//! serialization framework (`register_serializable`), since decoding asks
+//! the kinds first and the class could not read its own payloads back.
+//! Whichever registration comes second is refused: registering a kind
+//! under a type id a Python class holds raises `ValueError`, and
+//! `register_serializable` under a kind's type id raises
+//! `SerializationError`. An aggregate registers its kinds before any
+//! Python class is registered, so it is the Python class that is refused.
+//!
 //! # Oracles and step domains
 //!
 //! A downstream Rust oracle registers its `#[pyclass]` with
@@ -195,9 +204,11 @@ pub fn choice_to_python<'py>(py: Python<'py>, choice: &Choice) -> PyResult<Bound
 ///
 /// # Errors
 ///
-/// Raises `ValueError` if `kind` is the plain variable's kind or registered
-/// already, or `class` is registered for a kind already; `RuntimeError` if
-/// `module` holds no `fhy_core` binding; and what registering `class` as a
+/// Raises `ValueError` if `kind` is the plain variable's kind, registered
+/// already, or the type id a class of Python's serialization framework is
+/// registered under (`register_serializable`), or `class` is registered for
+/// a kind already; `RuntimeError` if `module` holds no `fhy_core` binding;
+/// and what reading the framework's registry or registering `class` as a
 /// virtual subclass of the public `Variable` raises.
 pub fn register_variable_kind(
     module: &Bound<'_, PyModule>,

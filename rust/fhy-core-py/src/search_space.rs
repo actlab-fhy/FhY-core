@@ -57,8 +57,8 @@ pub(crate) use domain::{
     step_domain_to_python,
 };
 pub(crate) use kinds::{
-    KIND_REGISTRY_ATTRIBUTE, PyKindRegistry, register_alternative_kind, register_oracle_kind,
-    register_variable_kind,
+    KIND_REGISTRY_ATTRIBUTE, PyKindRegistry, get_search_space_kind_class,
+    register_alternative_kind, register_oracle_kind, register_variable_kind,
 };
 pub(crate) use measurement::{PyMeasurement, PyObjective};
 pub(crate) use oracle::{PyExhaustiveOracle, PyPendingStep, PyRandomOracle, PyReplayOracle};

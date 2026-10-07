@@ -2789,6 +2789,10 @@ def check_param_bounds_are_ordered(
     is_upper_inclusive: bool,
 ) -> None: ...
 
+# The kind registry of `fhy_core.search_space`, held in the extension's
+# module state.
+def get_search_space_kind_class(type_id: str) -> type | None: ...
+
 class Variable:
     def __init__(self, *_args: object, **_kwargs: object) -> None: ...
     def _initialize(

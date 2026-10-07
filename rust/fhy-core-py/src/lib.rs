@@ -366,7 +366,7 @@ fn register_part_3(module: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Add the classes of the `search_space` module.
+/// Add the classes and functions of the `search_space` module.
 fn register_part_4(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<search_space::PyAlternativeBase>()?;
     module.add_class::<search_space::PyChoice>()?;
@@ -390,5 +390,9 @@ fn register_part_4(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<search_space::PyTrace>()?;
     module.add_class::<search_space::PyObjective>()?;
     module.add_class::<search_space::PyMeasurement>()?;
+    module.add_function(wrap_pyfunction!(
+        search_space::get_search_space_kind_class,
+        module
+    )?)?;
     Ok(())
 }

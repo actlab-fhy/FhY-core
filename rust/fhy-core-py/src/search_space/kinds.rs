@@ -16,15 +16,23 @@
 //! never replaced or removed. No Rust `static` holds a kind: the binding
 //! reaches the registry through a write-once import cache of the module
 //! attribute, as it does the verification registry.
+//!
+//! A `Variable` or `Alternative` kind and a class of Python's
+//! serialization framework never share a type id: decoding asks the kinds
+//! first, so a class whose type id a kind took would write payloads it
+//! cannot read back. Whichever registration comes second is refused. A
+//! kind is refused here, when `register_serializable` holds a class under
+//! its type id; a class is refused by `register_serializable`, which asks
+//! [`get_search_space_kind_class`].
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
-use pyo3::types::PyType;
+use pyo3::types::{PyDict, PyType};
 
 use fhy_core::search_space::{PlainAlternative, PlainVariable};
 
@@ -35,6 +43,14 @@ use crate::convert::search_space::{
 
 /// The attribute of `fhy_core._rs` that holds the kind registry.
 pub(crate) const KIND_REGISTRY_ATTRIBUTE: &str = "_search_space_kinds";
+
+/// The module of Python's serialization framework, whose registry of type
+/// ids a kind must not share a type id with.
+const SERIALIZATION_MODULE: &str = "fhy_core.serialization";
+
+/// The attribute of [`SERIALIZATION_MODULE`] that maps each registered type
+/// id to its class.
+const SERIALIZATION_REGISTRY_ATTRIBUTE: &str = "_TYPE_REGISTRY";
 
 /// One registered kind of a family: its class and its three functions.
 pub(super) struct KindEntry<FromPython, ToPython, Resolver> {
@@ -153,13 +169,24 @@ enum Refusal {
     KindRegistered,
     /// The class is registered for a kind already.
     ClassRegistered,
+    /// A class of Python's serialization framework is registered under
+    /// the kind's type id.
+    SerializableTypeId,
 }
 
 impl Refusal {
     /// Return the error of the refusal to register the kind `kind` of
-    /// `family` for `class`. Reading the class's name may call Python, so
-    /// this is never called under the lock.
-    fn into_error(self, family: &str, kind: &str, class: &Bound<'_, PyType>) -> PyErr {
+    /// `family` for `class`, where `serializable` is the class of Python's
+    /// serialization framework registered under `kind`, if any. Reading a
+    /// class's name may call Python, so this is never called under the
+    /// lock.
+    fn into_error(
+        self,
+        family: &str,
+        kind: &str,
+        class: &Bound<'_, PyType>,
+        serializable: Option<&Bound<'_, PyAny>>,
+    ) -> PyErr {
         match self {
             Self::BuiltIn => refuse(
                 family,
@@ -168,6 +195,14 @@ impl Refusal {
             ),
             Self::KindRegistered => refuse(family, kind, "it is registered already"),
             Self::ClassRegistered => refuse_class(family, kind, class),
+            Self::SerializableTypeId => refuse(
+                family,
+                kind,
+                &format!(
+                    "it is the type id of the serializable class {}",
+                    serializable.map_or_else(|| "?".to_owned(), read_qualname)
+                ),
+            ),
         }
     }
 }
@@ -250,6 +285,57 @@ pub(super) fn alternative_kind(
     Ok(registry(py)?.get().current().alternative(kind).cloned())
 }
 
+/// Return the class of the `Variable` or `Alternative` kind registered
+/// under the type id `type_id`, or `None`.
+///
+/// `register_serializable` asks this before it registers a class, and
+/// refuses a type id a kind holds.
+///
+/// # Errors
+///
+/// Raises what importing the registry raises.
+#[pyfunction]
+pub(crate) fn get_search_space_kind_class(
+    py: Python<'_>,
+    type_id: &str,
+) -> PyResult<Option<Py<PyType>>> {
+    let state = registry(py)?.get().current();
+    let class = state
+        .variable(type_id)
+        .map(|entry| &entry.class)
+        .or_else(|| state.alternative(type_id).map(|entry| &entry.class));
+    Ok(class.map(|class| class.clone_ref(py)))
+}
+
+/// Return the class Python's serialization framework registered under the
+/// type id `kind`, or `None` when none is or the framework is not imported
+/// yet.
+///
+/// The framework is looked up in `sys.modules`, never imported: an
+/// aggregate registers its kinds while `fhy_core` is being imported, before
+/// any class is registered, and a class registered after a kind is refused
+/// by `register_serializable` instead. It calls Python, so it is never
+/// called under the kind registry's lock.
+///
+/// # Errors
+///
+/// Raises what reading `sys.modules` or the registry raises.
+fn serializable_class_of<'py>(py: Python<'py>, kind: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
+    let modules = py
+        .import(pyo3::intern!(py, "sys"))?
+        .getattr(pyo3::intern!(py, "modules"))?;
+    let Some(module) = modules.cast::<PyDict>()?.get_item(SERIALIZATION_MODULE)? else {
+        return Ok(None);
+    };
+    let registry = match module.getattr(SERIALIZATION_REGISTRY_ATTRIBUTE) {
+        Ok(registry) => registry,
+        // A module still being imported may not have defined it yet.
+        Err(error) if error.is_instance_of::<PyAttributeError>(py) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    registry.cast::<PyDict>()?.get_item(kind)
+}
+
 /// Return the kind registry of `fhy_core._rs`.
 ///
 /// # Errors
@@ -292,14 +378,23 @@ fn refuse(family: &str, kind: &str, reason: &str) -> PyErr {
 
 /// Return the error of a class registered for a kind already.
 fn refuse_class(family: &str, kind: &str, class: &Bound<'_, PyType>) -> PyErr {
-    let name = class
-        .qualname()
-        .map_or_else(|_| "?".to_owned(), |name| name.to_string());
     refuse(
         family,
         kind,
-        &format!("the class {name} is registered for a kind already"),
+        &format!(
+            "the class {} is registered for a kind already",
+            read_qualname(class.as_any())
+        ),
     )
+}
+
+/// Return the qualified name of the class `class`, or `?` if it has none.
+fn read_qualname(class: &Bound<'_, PyAny>) -> String {
+    class
+        .cast::<PyType>()
+        .ok()
+        .and_then(|class| class.qualname().ok())
+        .map_or_else(|| "?".to_owned(), |name| name.to_string())
 }
 
 /// Register `class` as a virtual subclass of the public class `public`,
@@ -319,9 +414,11 @@ fn register_virtual_subclass(
 ///
 /// # Errors
 ///
-/// Raises `ValueError` for a built-in kind, a kind registered already or a
-/// class registered already, `RuntimeError` for a module without
-/// `fhy_core`'s binding, and what registering the virtual subclass raises.
+/// Raises `ValueError` for a built-in kind, a kind registered already, a
+/// class registered already or a kind that is the type id of a class of
+/// Python's serialization framework, `RuntimeError` for a module without
+/// `fhy_core`'s binding, and what reading the framework's registry or
+/// registering the virtual subclass raises.
 pub(crate) fn register_variable_kind(
     module: &Bound<'_, PyModule>,
     kind: &str,
@@ -331,6 +428,7 @@ pub(crate) fn register_variable_kind(
     resolve: VariableResolver,
 ) -> PyResult<()> {
     let registry = registry_of(module)?;
+    let serializable = serializable_class_of(module.py(), kind)?;
     let updated = registry.get().update(|state| {
         if kind == PlainVariable::KIND {
             return Err(Refusal::BuiltIn);
@@ -340,6 +438,9 @@ pub(crate) fn register_variable_kind(
         }
         if state.holds_class(class) {
             return Err(Refusal::ClassRegistered);
+        }
+        if serializable.is_some() {
+            return Err(Refusal::SerializableTypeId);
         }
         let mut variables = state.variables.clone();
         variables.insert(
@@ -357,7 +458,8 @@ pub(crate) fn register_variable_kind(
             oracles: state.oracles.clone(),
         })
     });
-    updated.map_err(|refusal| refusal.into_error("Variable", kind, class))?;
+    updated
+        .map_err(|refusal| refusal.into_error("Variable", kind, class, serializable.as_ref()))?;
     register_virtual_subclass(super::variable::registered_public_class(module.py()), class)
 }
 
@@ -376,6 +478,7 @@ pub(crate) fn register_alternative_kind(
     resolve: AlternativeResolver,
 ) -> PyResult<()> {
     let registry = registry_of(module)?;
+    let serializable = serializable_class_of(module.py(), kind)?;
     let updated = registry.get().update(|state| {
         if kind == PlainAlternative::KIND {
             return Err(Refusal::BuiltIn);
@@ -385,6 +488,9 @@ pub(crate) fn register_alternative_kind(
         }
         if state.holds_class(class) {
             return Err(Refusal::ClassRegistered);
+        }
+        if serializable.is_some() {
+            return Err(Refusal::SerializableTypeId);
         }
         let mut alternatives = state.alternatives.clone();
         alternatives.insert(
@@ -402,7 +508,8 @@ pub(crate) fn register_alternative_kind(
             oracles: state.oracles.clone(),
         })
     });
-    updated.map_err(|refusal| refusal.into_error("Alternative", kind, class))?;
+    updated
+        .map_err(|refusal| refusal.into_error("Alternative", kind, class, serializable.as_ref()))?;
     register_virtual_subclass(
         super::alternative::registered_public_class(module.py()),
         class,
@@ -461,5 +568,5 @@ pub(crate) fn register_oracle_kind(
             oracles,
         })
     });
-    updated.map_err(|refusal| refusal.into_error("oracle", kind, class))
+    updated.map_err(|refusal| refusal.into_error("oracle", kind, class, None))
 }

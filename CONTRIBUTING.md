@@ -637,8 +637,15 @@ a `Mutex<Arc<_>>` of one map per family from a kind to its class and
 functions (`rust/fhy-core-py/src/search_space/kinds.rs`). A downstream crate
 registers through `convert::search_space`, each kind and each class once; a
 registration swaps in a new state whole, and the lock is never held across
-a call into Python. The core crate stays free of all four, as of all global
-state beyond identity.
+a call into Python. A `Variable` or `Alternative` kind and a Python class
+registered with `register_serializable` never share a type id, since
+decoding asks the kinds first: whichever registration comes second is
+refused. Registering a kind reads `fhy_core.serialization`'s registry
+from `sys.modules` before it takes the lock, and refuses a type id a class
+is registered under with `ValueError`; `register_serializable` asks
+`fhy_core._rs.get_search_space_kind_class` and refuses a kind's type id
+with `SerializationError`. The core crate stays free of all four, as of all
+global state beyond identity.
 
 The rest of the binding's state is thread-local and lives only for one
 call:
