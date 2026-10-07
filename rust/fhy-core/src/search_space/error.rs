@@ -44,6 +44,12 @@ pub enum SpaceError {
         /// The choice's name.
         choice: Identifier,
     },
+    /// A condition names no decision: its constraints name no identifier,
+    /// so nothing decides when its target is active.
+    EmptyCondition {
+        /// The condition's target.
+        target: Identifier,
+    },
     /// A condition names its target or a decision under the target's
     /// alternatives.
     ConditionReferencesSubtree {
@@ -96,6 +102,9 @@ impl fmt::Display for SpaceError {
                 "an equation names the choice {choice:?}, which conditions and forbidden \
                  clauses name only in set constraints"
             ),
+            Self::EmptyCondition { target } => {
+                write!(f, "the condition on {target:?} names no decision")
+            }
             Self::ConditionReferencesSubtree { target, name } => write!(
                 f,
                 "the condition on {target:?} names {name:?}, which is the target or under it"

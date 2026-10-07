@@ -38,10 +38,11 @@
 //! every decision it names is active and assigned, and the configuration
 //! must then violate it.
 //!
-//! A condition or a forbidden clause names a choice only in a set
-//! constraint, `choice in {a, b}`, whose members are alternatives' names;
-//! an equation names variables only. [`Space::new`] refuses an equation
-//! that names a choice.
+//! A condition or a forbidden clause names at least one decision, and
+//! names a choice only in a set constraint, `choice in {a, b}`, whose
+//! members are alternatives' names; an equation names variables only.
+//! [`Space::new`] refuses one that names no decision and an equation that
+//! names a choice.
 //!
 //! # Equivalence
 //!

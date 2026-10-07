@@ -72,6 +72,11 @@ fn assert_error_text(error: &(dyn Error + 'static), text: &str, source: Option<&
     "the condition on t::63406 names u::63407, which is the target or under it",
     None
 )]
+#[case::empty_condition(
+    SpaceError::EmptyCondition { target: build_identifier(6, "t") },
+    "the condition on t::63406 names no decision",
+    None
+)]
 #[case::empty_forbidden(
     SpaceError::EmptyForbidden { index: 2 },
     "the forbidden clause 2 names no decision",

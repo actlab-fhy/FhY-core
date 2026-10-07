@@ -136,6 +136,11 @@ impl Configuration {
     }
 
     /// Return the configuration of `space` assigning nothing.
+    ///
+    /// It is valid by construction: [`Space::new`] refuses a condition or
+    /// a forbidden clause that names no decision, so with every decision
+    /// unassigned none of them is evaluated, and the context, which only
+    /// evaluation reads, is never asked.
     pub(super) fn empty(space: &Space) -> Self {
         let solver = Solver::new();
         check(
@@ -145,7 +150,10 @@ impl Configuration {
             &ParamContext::new(&solver),
             ValueCheck::New,
         )
-        .expect("a configuration assigning nothing evaluates no constraint, so is valid")
+        .expect(
+            "every condition and forbidden clause names a decision, so a configuration \
+             assigning nothing evaluates none of them and is valid",
+        )
     }
 
     /// Return this configuration with the decision `name` given `value`,

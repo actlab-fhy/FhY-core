@@ -24,9 +24,9 @@ use super::variable::Variable;
 /// constraints [`when`](Self::when) holds, read under the values of the
 /// decisions it names.
 ///
-/// A condition names a choice only in a set constraint whose members are
-/// the choice's alternatives' names, and names no decision under its
-/// target. [`Space::new`] checks both. `==` and `Hash` compare the target
+/// A condition names at least one decision, names a choice only in a set
+/// constraint whose members are the choice's alternatives' names, and
+/// names no decision under its target. [`Space::new`] checks these. `==` and `Hash` compare the target
 /// and the constraints.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Condition {
@@ -116,10 +116,10 @@ impl<'a> Decision<'a> {
 /// 1. every name it holds is distinct: its own, and every decision's,
 ///    alternative's and bound identifier's at every depth, read in
 ///    canonical order;
-/// 2. each condition's target is a decision; every identifier the
-///    condition names is a decision outside the target's subtree (the
-///    target and everything under its alternatives); and none of its
-///    equations names a choice;
+/// 2. each condition's target is a decision; the condition names at
+///    least one decision, and every identifier it names is a decision
+///    outside the target's subtree (the target and everything under its
+///    alternatives); and none of its equations names a choice;
 /// 3. each forbidden clause names at least one decision, only decisions,
 ///    and no choice in an equation;
 /// 4. no decision depends on itself, a decision depending on its choice
@@ -205,7 +205,8 @@ impl Space {
     /// [`SpaceError::DuplicateName`]; for each condition in order,
     /// [`SpaceError::UnknownConditionTarget`],
     /// [`SpaceError::UnknownReference`],
-    /// [`SpaceError::EquationOverChoice`] and
+    /// [`SpaceError::EquationOverChoice`],
+    /// [`SpaceError::EmptyCondition`] and
     /// [`SpaceError::ConditionReferencesSubtree`]; for each forbidden
     /// clause in order, [`SpaceError::EmptyForbidden`],
     /// [`SpaceError::UnknownReference`] and
@@ -523,7 +524,8 @@ fn lay_out(variables: &[Part<dyn Variable>], choices: &[Choice]) -> Vec<Node> {
 }
 
 /// Return each decision's gathered conditions, by canonical position,
-/// checking each condition's target and the names it refers to.
+/// checking each condition's target and the names it refers to, at least
+/// one.
 fn gather_conditions(
     conditions: Vec<Condition>,
     positions: &HashMap<Identifier, usize>,
@@ -537,6 +539,11 @@ fn gather_conditions(
             });
         };
         let references = find_references(&condition.when, positions, nodes)?;
+        if references.is_empty() {
+            return Err(SpaceError::EmptyCondition {
+                target: condition.target,
+            });
+        }
         let subtree = target..nodes[target].subtree_end;
         if let Some(&inside) = references
             .iter()

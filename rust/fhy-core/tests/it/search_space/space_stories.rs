@@ -23,7 +23,7 @@ use rstest::rstest;
 
 use crate::support::constraint::{Failing, FailingHook, TestCustom, int};
 use crate::support::hashing::hash_of;
-use crate::support::param::{at_least, in_set, less_than};
+use crate::support::param::{at_least, in_set, less_than, literal};
 use crate::support::search_space::{
     Realization, bare_alternative, categorical_where, choice_of, chooses, condition, forbidden,
     int_param, int_variable, plain_alternative, plain_variable, space_of, system,
@@ -586,6 +586,48 @@ fn space_new_refuses_a_condition_naming_no_decision(#[case] which: &str) {
         panic!("expected UnknownReference, got {error:?}");
     };
     assert_eq!(Some(name), referenced.as_ref());
+}
+
+#[rstest]
+#[case::no_constraint("empty")]
+#[case::a_closed_equation("closed")]
+fn space_new_refuses_a_condition_naming_nothing(#[case] which: &str) {
+    let mut expected = None;
+    let error = refuse_hierarchy(
+        |n| {
+            expected = Some(n.v2.clone());
+            let constraints = match which {
+                "empty" => Vec::new(),
+                "closed" => vec![Constraint::from(EquationConstraint::new(
+                    literal(5).equals(literal(5)),
+                ))],
+                _ => unreachable!("unknown case {which}"),
+            };
+            vec![
+                condition(&n.v1, [in_set(&n.v2, [int(1)])]),
+                condition(&n.v2, constraints),
+            ]
+        },
+        |_| Vec::new(),
+    );
+
+    let SpaceError::EmptyCondition { target } = &error else {
+        panic!("expected EmptyCondition, got {error:?}");
+    };
+    assert_eq!(Some(target), expected.as_ref());
+}
+
+#[test]
+fn space_new_checks_a_condition_target_before_whether_it_names_anything() {
+    let error = refuse_hierarchy(
+        |_| vec![condition(&Identifier::new("no_target"), [])],
+        |_| Vec::new(),
+    );
+
+    assert!(
+        matches!(error, SpaceError::UnknownConditionTarget { .. }),
+        "got {error:?}"
+    );
 }
 
 #[test]

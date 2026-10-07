@@ -365,6 +365,24 @@ def test_condition_naming_an_unknown_decision_is_refused() -> None:
     assert str(excinfo.value) == f"{ghost!r} is not a decision of the space"
 
 
+def test_condition_naming_no_decision_is_refused() -> None:
+    """Test a condition whose constraints name nothing is refused, not run."""
+    tiling = build_tiling_space()
+    closed = EquationConstraint(LiteralExpression(5).equals(LiteralExpression(5)))
+    condition = Condition(tiling.unroll.name, (closed,))
+
+    with pytest.raises(SearchSpaceError) as excinfo:
+        Space(
+            variables=(tiling.unroll,),
+            choices=(tiling.layout,),
+            conditions=(condition,),
+        )
+
+    assert str(excinfo.value) == (
+        f"the condition on {tiling.unroll.name!r} names no decision"
+    )
+
+
 def test_equation_naming_a_choice_is_refused() -> None:
     """Test an equation over a choice is refused when the space is built."""
     tiling = build_tiling_space()
