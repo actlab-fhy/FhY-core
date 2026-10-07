@@ -264,11 +264,6 @@ pub(super) fn do_variables_correspond(
 
 /// Return whether the alternatives correspond under `renaming`, which
 /// pairs every name they hold.
-///
-/// They must bind as many identifiers: the frame pairs the names in
-/// canonical order, so only then does it pair each one's bound
-/// identifiers with the other's, whatever the implementation's hook
-/// answers.
 pub(super) fn do_alternatives_correspond(
     left: &dyn Alternative,
     right: &dyn Alternative,
@@ -279,15 +274,6 @@ pub(super) fn do_alternatives_correspond(
         || left.variables().len() != right.variables().len()
         || left.choices().len() != right.choices().len()
     {
-        return Ok(false);
-    }
-    let bound = |alternative: &dyn Alternative| {
-        alternative
-            .bound_identifiers()
-            .map(|bound| bound.len())
-            .map_err(EquivalenceError::Extension)
-    };
-    if bound(left)? != bound(right)? {
         return Ok(false);
     }
     for (left, right) in left.variables().iter().zip(right.variables()) {
@@ -306,6 +292,14 @@ pub(super) fn do_alternatives_correspond(
 
 /// Return whether the choices correspond under `renaming`, which pairs
 /// every name they hold.
+///
+/// Each alternative must hold as many names as the other's at its
+/// position: the frame pairs the names in canonical order, so only then
+/// does it pair each alternative's bound identifiers with the other's,
+/// whatever the implementation's hook answers. With the alternatives'
+/// variables and sub-choices compared below, two alternatives then bind
+/// as many identifiers. The counts are the ones read when the choices were
+/// built, so comparing asks no hook for them.
 pub(super) fn do_choices_correspond(
     left: &Choice,
     right: &Choice,
@@ -313,7 +307,7 @@ pub(super) fn do_choices_correspond(
 ) -> Result<bool, EquivalenceError> {
     if left.notes() != right.notes()
         || left.alternatives().len() != right.alternatives().len()
-        || left.labels().len() != right.labels().len()
+        || left.alternative_widths() != right.alternative_widths()
     {
         return Ok(false);
     }

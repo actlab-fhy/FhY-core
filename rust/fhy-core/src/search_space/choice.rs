@@ -54,6 +54,8 @@ struct ChoiceInner {
     notes: Vec<Note>,
     /// Every name the choice holds, in canonical order.
     labels: Vec<Identifier>,
+    /// How many of `labels` each alternative holds, in order.
+    alternative_widths: Vec<usize>,
     /// The levels of choices the choice nests, itself included.
     depth: usize,
 }
@@ -94,14 +96,15 @@ impl Choice {
             return Err(SpaceError::ChoiceTooDeep { choice: name });
         }
         let mut labels = vec![name.clone()];
+        let mut alternative_widths = Vec::with_capacity(alternatives.len());
         for alternative in &alternatives {
             let alternative = alternative.get();
-            labels.extend(
-                alternative_labels(alternative).map_err(|source| SpaceError::Hook {
-                    alternative: alternative.name().clone(),
-                    source,
-                })?,
-            );
+            let own = alternative_labels(alternative).map_err(|source| SpaceError::Hook {
+                alternative: alternative.name().clone(),
+                source,
+            })?;
+            alternative_widths.push(own.len());
+            labels.extend(own);
         }
         if let Some(repeated) = first_repeat(&labels) {
             return Err(SpaceError::DuplicateName {
@@ -113,6 +116,7 @@ impl Choice {
             alternatives,
             notes: Vec::new(),
             labels,
+            alternative_widths,
             depth,
         })))
     }
@@ -147,6 +151,13 @@ impl Choice {
     /// then each alternative's.
     pub(super) fn labels(&self) -> &[Identifier] {
         &self.0.labels
+    }
+
+    /// Return how many names each alternative holds, in order: its name,
+    /// bound identifiers, variables' names and sub-choices' names, read
+    /// when the choice was built.
+    pub(super) fn alternative_widths(&self) -> &[usize] {
+        &self.0.alternative_widths
     }
 
     /// Return whether `other` is the same choice up to identity: equal
