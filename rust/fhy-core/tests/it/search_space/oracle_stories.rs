@@ -612,6 +612,18 @@ fn exhaustive_oracle_is_backtrack_is_false_for_other_failures() {
     assert!(!ExhaustiveOracle::is_backtrack(&error));
 }
 
+/// Test a dead branch is a backtrack or a dead end, and nothing else.
+#[test]
+fn exhaustive_oracle_is_dead_branch_takes_a_dead_end() {
+    let dead_end = TraceError::DeadEnd {
+        decision: Identifier::new("n"),
+    };
+
+    assert!(ExhaustiveOracle::is_dead_branch(&dead_end));
+    assert!(!ExhaustiveOracle::is_backtrack(&dead_end));
+    assert!(!ExhaustiveOracle::is_dead_branch(&TraceError::NoSpace));
+}
+
 /// Test a stream that changes a replayed step's domain between runs is
 /// refused: it is not deterministic.
 #[test]

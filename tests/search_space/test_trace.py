@@ -21,6 +21,7 @@ from fhy_core.search_space import (
     CardinalityKind,
     ChoiceDomain,
     Configuration,
+    DeadEndError,
     ExhaustiveOracle,
     InadmissibleAnswerError,
     NotEnumerableError,
@@ -40,7 +41,10 @@ from fhy_core.search_space import (
     Variable,
 )
 from fhy_core.serialization import Serializable
-from fhy_core.symbolic.param import create_natural_param
+from fhy_core.symbolic.param import (
+    create_integer_param_with_lower_bound,
+    create_natural_param,
+)
 
 from .conftest import (
     build_complete_configuration,
@@ -1459,6 +1463,17 @@ def test_cardinality_of_an_unbounded_variable_names_it() -> None:
     assert cardinality.kind is CardinalityKind.UNBOUNDED
     assert cardinality.count is None
     assert cardinality.decision == unbounded.name
+
+
+def test_variable_whose_bounds_enclose_no_integer_has_no_configuration() -> None:
+    """Test an empty bounded interval counts none and samples to a dead end."""
+    empty = create_integer_param_with_lower_bound(5).add_upper_bound_constraint(3)
+    space = Space(variables=(Variable(param=empty, name=Identifier("n")),))
+
+    assert space.cardinality() == Cardinality(CardinalityKind.EXACT, 0, None)
+    assert list(space.enumerate()) == []
+    with pytest.raises(DeadEndError):
+        space.sample(RandomOracle(seed=0))
 
 
 def test_enumerate_yields_each_configuration_once() -> None:

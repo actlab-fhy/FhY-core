@@ -10,7 +10,9 @@ use num_bigint::{BigInt, BigUint};
 
 use crate::constraint::{Member, MemberKind, Value};
 use crate::identifier::Identifier;
-use crate::param::{Param, ParamContext, ParamDomain, effective_interval};
+use crate::param::{
+    IntervalError, Param, ParamBuildError, ParamContext, ParamDomain, effective_interval,
+};
 
 use super::configuration::Configuration;
 use super::domain::{
@@ -24,6 +26,9 @@ use super::space::Decision;
 pub(super) enum ParamStepDomain {
     /// A finite domain.
     Finite(StepDomain),
+    /// No value: an integer domain whose bounds enclose no integer. A step
+    /// over it is a dead end, and it counts no configuration.
+    Empty,
     /// An unbounded integer or a real domain.
     Unbounded,
     /// A custom domain.
@@ -43,7 +48,8 @@ pub(super) fn decision_kind(decision: Decision<'_>) -> DecisionKind {
 /// # Errors
 ///
 /// Returns [`TraceError::Hook`] for a failing
-/// [`search_domain`](super::Variable::search_domain), and
+/// [`search_domain`](super::Variable::search_domain),
+/// [`TraceError::DeadEnd`] for a variable whose param admits no value, and
 /// [`TraceError::NotEnumerable`] for a variable with no finite domain.
 pub(super) fn decision_domain(decision: Decision<'_>) -> Result<StepDomain, TraceError> {
     match decision {
@@ -68,6 +74,9 @@ pub(super) fn decision_domain(decision: Decision<'_>) -> Result<StepDomain, Trac
             }
             match param_step_domain(part.param()) {
                 ParamStepDomain::Finite(domain) => Ok(domain),
+                ParamStepDomain::Empty => Err(TraceError::DeadEnd {
+                    decision: part.name().clone(),
+                }),
                 ParamStepDomain::Unbounded | ParamStepDomain::Unknown => {
                     Err(TraceError::NotEnumerable {
                         decision: part.name().clone(),
@@ -80,7 +89,8 @@ pub(super) fn decision_domain(decision: Decision<'_>) -> Result<StepDomain, Trac
 
 /// Return the domain `param`'s values offer a step: its categories or
 /// ordinal values, the orderings of its permutation members, or the
-/// integers of its interval when both ends are bounded.
+/// integers of its interval when both ends are bounded, none when they
+/// enclose no integer.
 pub(super) fn param_step_domain(param: &Param) -> ParamStepDomain {
     let values = |members: &[Member]| members.iter().map(member_value).collect::<Vec<_>>();
     let finite = |domain: Result<StepDomain, _>| {
@@ -116,7 +126,8 @@ pub(super) fn are_bounds(param: &Param) -> bool {
 }
 
 /// Return the strided run over the integers `param`'s bound constraints
-/// and its sign enclose, if both ends are bounded.
+/// and its sign enclose, if both ends are bounded: empty when the bounds,
+/// or a lower bound above an upper, enclose none.
 fn interval_domain(
     param: &Param,
     is_non_negative: bool,
@@ -129,8 +140,12 @@ fn interval_domain(
         .filter(|constraint| effective_interval(slice::from_ref(*constraint), variable).is_ok())
         .cloned()
         .collect();
-    let Ok(interval) = effective_interval(&bounds, variable) else {
-        return ParamStepDomain::Unbounded;
+    let interval = match effective_interval(&bounds, variable) {
+        Ok(interval) => interval,
+        Err(IntervalError::Build(ParamBuildError::EmptyInterval(_))) => {
+            return ParamStepDomain::Empty;
+        }
+        Err(_) => return ParamStepDomain::Unbounded,
     };
     let implied = is_non_negative.then(|| BigInt::from(u8::from(!is_zero_included)));
     let lower = match (interval.min, implied) {
@@ -140,6 +155,9 @@ fn interval_domain(
     let (Some(lower), Some(upper)) = (lower, interval.max) else {
         return ParamStepDomain::Unbounded;
     };
+    if lower > upper {
+        return ParamStepDomain::Empty;
+    }
     StridedRun::new(lower, upper + 1, BigUint::from(1_u8))
         .and_then(|run| StridedDomain::new(vec![run]))
         .map_or(ParamStepDomain::Unbounded, |domain| {

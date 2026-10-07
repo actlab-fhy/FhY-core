@@ -83,7 +83,7 @@ class NotEnumerableError(TraceError):
 
 @register_error
 class DeadEndError(TraceError):
-    """A step has no admissible value."""
+    """A step has no admissible value, or its variable's param admits none."""
 
 
 @register_error

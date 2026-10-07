@@ -98,7 +98,8 @@ impl Space {
     /// Return the complete configurations of the space, each once, in
     /// lexicographic order of their coordinates in decision order.
     ///
-    /// A decision with no finite domain yields one
+    /// A variable whose param admits no value ends its branch with no
+    /// configuration. A decision with no finite domain yields one
     /// [`TraceError::NotEnumerable`] and ends the enumeration.
     #[must_use]
     pub fn enumerate<'s, 'c>(&'s self, context: &'s ParamContext<'c>) -> Enumeration<'s, 'c> {
@@ -250,7 +251,7 @@ impl Iterator for Enumeration<'_, '_> {
             self.is_done = !self.oracle.advance();
             match result {
                 Ok(recorded) => return recorded.into_parts().1.map(Ok),
-                Err(error) if ExhaustiveOracle::is_backtrack(&error) => {}
+                Err(error) if ExhaustiveOracle::is_dead_branch(&error) => {}
                 Err(error) => {
                     self.is_done = true;
                     return Some(Err(error));
@@ -491,8 +492,8 @@ fn completes(
     for _ in 0..COMPLETION_BUDGET {
         match walk(space, |_| true, &mut oracle, context) {
             Ok(_) => return Ok(true),
-            Err(TraceError::Inadmissible { .. } | TraceError::DeadEnd { .. }) => return Ok(false),
-            Err(error) if ExhaustiveOracle::is_backtrack(&error) => {}
+            Err(TraceError::Inadmissible { .. }) => return Ok(false),
+            Err(error) if ExhaustiveOracle::is_dead_branch(&error) => {}
             Err(error) => return Err(error),
         }
         if !oracle.rest.advance() {

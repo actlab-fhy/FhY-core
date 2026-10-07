@@ -62,21 +62,30 @@ enum Count {
 }
 
 impl Count {
-    /// Return the product of `counts`, each at least one when finite: an
-    /// unknown factor makes it unknown, else an unbounded one unbounded.
+    /// Return the product of `counts`: zero when a finite factor is zero,
+    /// since every configuration takes a value of each; else an unknown
+    /// factor makes it unknown, else an unbounded one unbounded.
     fn product(counts: impl IntoIterator<Item = Self>) -> Self {
         let mut product = BigUint::from(1_u8);
+        let mut unknown = None;
         let mut unbounded = None;
         for count in counts {
             match count {
+                Self::Finite(count) if count == BigUint::ZERO => return Self::Finite(count),
                 Self::Finite(count) => product *= count,
-                Self::Unknown(decision) => return Self::Unknown(decision),
+                Self::Unknown(decision) => {
+                    unknown.get_or_insert(decision);
+                }
                 Self::Unbounded(decision) => {
                     unbounded.get_or_insert(decision);
                 }
             }
         }
-        unbounded.map_or(Self::Finite(product), Self::Unbounded)
+        match (unknown, unbounded) {
+            (Some(decision), _) => Self::Unknown(decision),
+            (None, Some(decision)) => Self::Unbounded(decision),
+            (None, None) => Self::Finite(product),
+        }
     }
 
     /// Return the sum of `counts`, as [`product`](Self::product) combines.
@@ -96,10 +105,26 @@ impl Count {
     }
 }
 
+/// How a relaxation counts a variable whose param admits no value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmptyVariable {
+    /// As no value, so the counts are of complete configurations.
+    Empty,
+    /// As one value every configuration refuses, so that a configuration
+    /// leaving the variable inactive keeps its relaxed points: the counts
+    /// a uniform draw decodes.
+    Refused,
+}
+
 /// Return the relaxed count of the decision at `position`: a variable's
-/// domain's, or a choice's sum over its alternatives of the product of
-/// their decisions'.
-fn count_relaxed(space: &Space, tree: &Tree, position: usize) -> Result<Count, TraceError> {
+/// domain's, an empty variable's as `empty` says, or a choice's sum over
+/// its alternatives of the product of their decisions'.
+fn count_relaxed(
+    space: &Space,
+    tree: &Tree,
+    position: usize,
+    empty: EmptyVariable,
+) -> Result<Count, TraceError> {
     match space.decision_at(position) {
         Decision::Choice(_) => {
             let alternatives = tree.children[position]
@@ -107,7 +132,7 @@ fn count_relaxed(space: &Space, tree: &Tree, position: usize) -> Result<Count, T
                 .map(|children| {
                     children
                         .iter()
-                        .map(|&child| count_relaxed(space, tree, child))
+                        .map(|&child| count_relaxed(space, tree, child, empty))
                         .collect::<Result<Vec<_>, _>>()
                         .map(Count::product)
                 })
@@ -116,12 +141,16 @@ fn count_relaxed(space: &Space, tree: &Tree, position: usize) -> Result<Count, T
         }
         decision @ Decision::Variable(variable) => match decision_domain(decision) {
             Ok(domain) => Ok(Count::Finite(domain.cardinality())),
+            Err(TraceError::DeadEnd { .. }) => Ok(Count::Finite(match empty {
+                EmptyVariable::Empty => BigUint::ZERO,
+                EmptyVariable::Refused => BigUint::from(1_u8),
+            })),
             Err(TraceError::NotEnumerable { decision }) => {
                 Ok(match param_step_domain(variable.get().param()) {
                     ParamStepDomain::Unknown => Count::Unknown(decision),
-                    ParamStepDomain::Finite(_) | ParamStepDomain::Unbounded => {
-                        Count::Unbounded(decision)
-                    }
+                    ParamStepDomain::Finite(_)
+                    | ParamStepDomain::Empty
+                    | ParamStepDomain::Unbounded => Count::Unbounded(decision),
                 })
             }
             Err(error) => Err(error),
@@ -129,7 +158,8 @@ fn count_relaxed(space: &Space, tree: &Tree, position: usize) -> Result<Count, T
     }
 }
 
-/// Return the relaxed counts of every decision, by canonical position.
+/// Return the relaxed counts of every decision, by canonical position, an
+/// empty variable counted as one refused value.
 ///
 /// # Errors
 ///
@@ -137,12 +167,14 @@ fn count_relaxed(space: &Space, tree: &Tree, position: usize) -> Result<Count, T
 /// domain, and [`TraceError::Hook`].
 fn count_every_relaxed(space: &Space, tree: &Tree) -> Result<Vec<BigUint>, TraceError> {
     (0..space.decision_count())
-        .map(|position| match count_relaxed(space, tree, position)? {
-            Count::Finite(count) => Ok(count),
-            Count::Unbounded(decision) | Count::Unknown(decision) => {
-                Err(TraceError::NotEnumerable { decision })
-            }
-        })
+        .map(
+            |position| match count_relaxed(space, tree, position, EmptyVariable::Refused)? {
+                Count::Finite(count) => Ok(count),
+                Count::Unbounded(decision) | Count::Unknown(decision) => {
+                    Err(TraceError::NotEnumerable { decision })
+                }
+            },
+        )
         .collect()
 }
 
@@ -220,7 +252,8 @@ fn decode(
 
 /// Return the configuration of `space` the relaxed `point` gives, and the
 /// number of relaxed points that give it, or `None` when a value or a
-/// forbidden clause refuses it.
+/// forbidden clause refuses it, or it activates a variable whose param
+/// admits no value.
 fn apply(
     space: &Space,
     counts: &[BigUint],
@@ -236,7 +269,11 @@ fn apply(
         let node = space.decision_at(position);
         let name = node.name();
         if configuration.activity(name) == Some(Activity::Active) {
-            let domain = decision_domain(node)?;
+            let domain = match decision_domain(node) {
+                Ok(domain) => domain,
+                Err(TraceError::DeadEnd { .. }) => return Ok(None),
+                Err(error) => return Err(error),
+            };
             let Some(value) = domain.value_at(coordinate) else {
                 return Ok(None);
             };
@@ -271,7 +308,7 @@ pub(super) fn count_space(
             let counts = component
                 .tops
                 .iter()
-                .map(|&top| count_relaxed(space, &tree, top))
+                .map(|&top| count_relaxed(space, &tree, top, EmptyVariable::Empty))
                 .collect::<Result<Vec<_>, _>>()?;
             match Count::product(counts) {
                 Count::Finite(count) => Cardinality::Exact(count),
@@ -423,7 +460,7 @@ fn count_by_enumeration(
         );
         match result {
             Ok(_) => found += 1_u8,
-            Err(error) if ExhaustiveOracle::is_backtrack(&error) => {}
+            Err(error) if ExhaustiveOracle::is_dead_branch(&error) => {}
             Err(TraceError::NotEnumerable { decision }) => {
                 return Ok(classify_unenumerable(space, decision));
             }

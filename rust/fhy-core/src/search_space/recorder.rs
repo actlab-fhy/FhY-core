@@ -85,7 +85,8 @@ impl Recorder {
     /// [`TraceError::UnknownDecision`]; [`TraceError::AlreadyDecided`];
     /// [`TraceError::NotActive`] for a decision that is inactive or
     /// pending; [`TraceError::NotEnumerable`] or [`TraceError::Hook`] when
-    /// its domain cannot be built; [`TraceError::Oracle`];
+    /// its domain cannot be built, and [`TraceError::DeadEnd`] for a
+    /// variable whose param admits no value; [`TraceError::Oracle`];
     /// [`TraceError::CoordinateOutOfDomain`]; [`TraceError::Inadmissible`];
     /// and [`TraceError::Configuration`].
     pub fn decide(

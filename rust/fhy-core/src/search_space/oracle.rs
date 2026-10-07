@@ -512,6 +512,16 @@ impl ExhaustiveOracle {
         matches!(error, TraceError::Oracle { source, .. } if source.is::<Backtrack>())
     }
 
+    /// Return whether `error` stopped a run this oracle answers at a branch
+    /// with no configuration, so that the run moves on to the next path:
+    /// this oracle's backtrack, or the [`DeadEnd`](TraceError::DeadEnd) of
+    /// a variable whose param admits no value, which is found before the
+    /// oracle is asked. The oracle itself never answers with a dead end.
+    #[must_use]
+    pub fn is_dead_branch(error: &TraceError) -> bool {
+        Self::is_backtrack(error) || matches!(error, TraceError::DeadEnd { .. })
+    }
+
     /// Return the answer to `step`: the path's coordinate at this position
     /// or after it, or the first admissible coordinate of a new position.
     fn answer(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {

@@ -254,7 +254,8 @@ impl PySpaceEnumeration {
     ///
     /// Raises `NotEnumerableError` for a variable with no finite domain,
     /// which ends the enumeration, and `RuntimeError` when asked from
-    /// inside its own step.
+    /// inside its own step. A variable whose param admits no value ends
+    /// its branch with no configuration.
     fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         let mut state = match self.state.try_lock() {
             Ok(state) => state,
@@ -283,7 +284,7 @@ impl PySpaceEnumeration {
                             .map(|configuration| Some(configuration.unbind()));
                     }
                 }
-                Err(error) if ExhaustiveOracle::is_backtrack(&error) => {}
+                Err(error) if ExhaustiveOracle::is_dead_branch(&error) => {}
                 Err(error) => {
                     state.is_done = true;
                     return Err(trace_error_to_py(py, error));

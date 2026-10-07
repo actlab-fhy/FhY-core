@@ -452,7 +452,8 @@ pub enum TraceError {
         /// The answer.
         coordinate: Coordinate,
     },
-    /// A step has no admissible value.
+    /// A step has no admissible value, or its variable's param admits
+    /// none: an integer domain whose bounds enclose no integer.
     DeadEnd {
         /// The decision's name, or the dynamic step's subject.
         decision: Identifier,
