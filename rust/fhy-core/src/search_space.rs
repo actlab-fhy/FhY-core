@@ -40,9 +40,10 @@
 //!
 //! A condition or a forbidden clause names at least one decision, and
 //! names a choice only in a set constraint, `choice in {a, b}`, whose
-//! members are alternatives' names; an equation names variables only.
-//! [`Space::new`] refuses one that names no decision and an equation that
-//! names a choice.
+//! members are the choice's alternatives' names; an equation names
+//! variables only. [`Space::new`] refuses one that names no decision, an
+//! equation that names a choice, and a member that is none of the
+//! choice's alternatives' names, such as a misspelled one.
 //!
 //! # Equivalence
 //!

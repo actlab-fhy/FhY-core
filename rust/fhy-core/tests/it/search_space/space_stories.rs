@@ -685,6 +685,38 @@ fn space_new_refuses_an_equation_naming_a_choice_in_a_condition() {
 }
 
 #[rstest]
+#[case::a_misspelled_name_in_a_condition("misspelled", true)]
+#[case::another_choices_alternative_in_a_condition("other_choice", true)]
+#[case::a_number_in_a_forbidden_clause("number", false)]
+fn space_new_refuses_a_set_constraint_over_a_choice_naming_no_alternative_of_it(
+    #[case] which: &str,
+    #[case] is_condition: bool,
+) {
+    let mut expected = None;
+    let mut build = |n: &Names| {
+        let member = match which {
+            "misspelled" => Value::Identifier(Identifier::new("bogus")),
+            "other_choice" => Value::Identifier(n.a1.clone()),
+            "number" => int(1),
+            _ => unreachable!("unknown case {which}"),
+        };
+        expected = Some((n.c2.clone(), member.clone()));
+        in_set(&n.c2, [member])
+    };
+    let error = if is_condition {
+        refuse_hierarchy(|n| vec![condition(&n.v1, [build(n)])], |_| Vec::new())
+    } else {
+        refuse_hierarchy(|_| Vec::new(), |n| vec![forbidden([build(n)])])
+    };
+
+    let SpaceError::UnknownAlternative { choice, value } = &error else {
+        panic!("expected UnknownAlternative, got {error:?}");
+    };
+    let (expected_choice, expected_value) = expected.expect("the closure ran");
+    assert_eq!((choice, value), (&expected_choice, &expected_value));
+}
+
+#[rstest]
 #[case::the_target_itself("itself")]
 #[case::a_variable_under_the_target("child")]
 #[case::a_choice_under_the_target("sub_choice")]

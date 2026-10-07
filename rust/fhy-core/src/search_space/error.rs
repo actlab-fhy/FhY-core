@@ -51,6 +51,15 @@ pub enum SpaceError {
         /// The choice's name.
         choice: Identifier,
     },
+    /// A set constraint of a condition or a forbidden clause over a choice
+    /// holds a member that is not the identifier value of one of the
+    /// choice's alternatives' names.
+    UnknownAlternative {
+        /// The choice's name.
+        choice: Identifier,
+        /// The member.
+        value: Value,
+    },
     /// A condition names no decision: its constraints name no identifier,
     /// so nothing decides when its target is active.
     EmptyCondition {
@@ -115,6 +124,9 @@ impl fmt::Display for SpaceError {
             ),
             Self::EmptyCondition { target } => {
                 write!(f, "the condition on {target:?} names no decision")
+            }
+            Self::UnknownAlternative { choice, value } => {
+                write!(f, "the choice {choice:?} has no alternative {value}")
             }
             Self::ConditionReferencesSubtree { target, name } => write!(
                 f,

@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::constraint::{Constraint, ConstraintSystem};
+use crate::constraint::{Constraint, ConstraintSystem, Value};
 use crate::diagnostic::Note;
 use crate::foreign::Part;
 use crate::identifier::Identifier;
@@ -18,6 +18,7 @@ use crate::term::{AlphaEquivalence, AlphaRenaming};
 use super::choice::{Choice, first_repeat};
 use super::equivalence::{is_space_alpha_equivalent, is_space_structurally_equivalent};
 use super::error::{EquivalenceError, SpaceError};
+use super::step::member_value;
 use super::variable::Variable;
 
 /// When the decision [`target`](Self::target) is active: while the
@@ -25,8 +26,9 @@ use super::variable::Variable;
 /// decisions it names.
 ///
 /// A condition names at least one decision, names a choice only in a set
-/// constraint whose members are the choice's alternatives' names, and
-/// names no decision under its target. [`Space::new`] checks these. `==` and `Hash` compare the target
+/// constraint whose members are the identifier values of the choice's
+/// alternatives' names, and names no decision under its target.
+/// [`Space::new`] checks these. `==` and `Hash` compare the target
 /// and the constraints.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Condition {
@@ -61,8 +63,8 @@ impl Condition {
 ///
 /// A positive rule `p` across decisions is written as the forbidden clause
 /// `not p`. A forbidden clause names a choice only in a set constraint
-/// whose members are the choice's alternatives' names, and names at least
-/// one decision. [`Space::new`] checks both. `==` and `Hash` compare the
+/// whose members are the identifier values of the choice's alternatives'
+/// names, and names at least one decision. [`Space::new`] checks both. `==` and `Hash` compare the
 /// constraints.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Forbidden {
@@ -122,9 +124,12 @@ impl<'a> Decision<'a> {
 /// 2. each condition's target is a decision; the condition names at
 ///    least one decision, and every identifier it names is a decision
 ///    outside the target's subtree (the target and everything under its
-///    alternatives); and none of its equations names a choice;
+///    alternatives); none of its equations names a choice; and each of
+///    its set constraints over a choice holds only its alternatives'
+///    names;
 /// 3. each forbidden clause names at least one decision, only decisions,
-///    and no choice in an equation;
+///    no choice in an equation, and only a choice's alternatives' names in
+///    a set constraint over it;
 /// 4. no decision depends on itself, a decision depending on its choice
 ///    and on every decision its condition names.
 ///
@@ -209,13 +214,17 @@ impl Space {
     /// [`SpaceError::UnknownConditionTarget`],
     /// [`SpaceError::UnknownReference`],
     /// [`SpaceError::EquationOverChoice`],
+    /// [`SpaceError::UnknownAlternative`],
     /// [`SpaceError::EmptyCondition`] and
     /// [`SpaceError::ConditionReferencesSubtree`]; for each forbidden
     /// clause in order, [`SpaceError::EmptyForbidden`],
-    /// [`SpaceError::UnknownReference`] and
-    /// [`SpaceError::EquationOverChoice`]; then
+    /// [`SpaceError::UnknownReference`],
+    /// [`SpaceError::EquationOverChoice`] and
+    /// [`SpaceError::UnknownAlternative`]; then
     /// [`SpaceError::CyclicDependency`]. Within one condition or clause,
-    /// the names it refers to are checked in the order of their ids.
+    /// the names it refers to are checked in the order of their ids, and
+    /// its set constraints over choices in its order, each member in the
+    /// set's.
     /// [`SpaceError::Constraint`] reports a custom constraint whose scope
     /// or key fails.
     pub fn new(
@@ -645,8 +654,9 @@ fn free_identifiers(system: &ConstraintSystem) -> Result<HashSet<Identifier>, Sp
 }
 
 /// Return the canonical positions of the decisions `system` names, in the
-/// order of their ids, refusing a name that is no decision and an equation
-/// that names a choice.
+/// order of their ids, refusing a name that is no decision, an equation
+/// that names a choice, and a set constraint over a choice holding a
+/// member that is none of its alternatives' names.
 fn find_references(
     system: &ConstraintSystem,
     positions: &HashMap<Identifier, usize>,
@@ -680,6 +690,28 @@ fn find_references(
         return Err(SpaceError::EquationOverChoice {
             choice: choice.clone(),
         });
+    }
+    for constraint in system.constraints() {
+        let Constraint::Set(set) = constraint else {
+            continue;
+        };
+        let Some(&position) = positions.get(set.variable()) else {
+            continue;
+        };
+        let NodePart::Choice(choice) = &nodes[position].part else {
+            continue;
+        };
+        for member in set.members() {
+            let value = member_value(member);
+            let is_alternative = matches!(&value, Value::Identifier(name)
+                if choice.alternatives().iter().any(|alternative| alternative.get().name() == name));
+            if !is_alternative {
+                return Err(SpaceError::UnknownAlternative {
+                    choice: choice.name().clone(),
+                    value,
+                });
+            }
+        }
     }
     Ok(references)
 }

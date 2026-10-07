@@ -383,6 +383,26 @@ def test_condition_naming_no_decision_is_refused() -> None:
     )
 
 
+def test_set_constraint_naming_no_alternative_of_its_choice_is_refused() -> None:
+    """Test a misspelled alternative in a condition on a choice is refused."""
+    tiling = build_tiling_space()
+    condition = Condition(
+        tiling.unroll.name,
+        (InSetConstraint(tiling.layout.name, {Identifier("bogus")}),),
+    )
+
+    with pytest.raises(SearchSpaceError) as excinfo:
+        Space(
+            variables=(tiling.unroll,),
+            choices=(tiling.layout,),
+            conditions=(condition,),
+        )
+
+    assert str(excinfo.value) == (
+        f"the choice {tiling.layout.name!r} has no alternative bogus"
+    )
+
+
 def test_equation_naming_a_choice_is_refused() -> None:
     """Test an equation over a choice is refused when the space is built."""
     tiling = build_tiling_space()

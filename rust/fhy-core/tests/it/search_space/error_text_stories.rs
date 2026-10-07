@@ -67,6 +67,11 @@ fn assert_error_text(error: &(dyn Error + 'static), text: &str, source: Option<&
      in set constraints",
     None
 )]
+#[case::unknown_alternative(
+    SpaceError::UnknownAlternative { choice: build_identifier(5, "c"), value: int(3) },
+    "the choice c::63405 has no alternative 3",
+    None
+)]
 #[case::condition_references_subtree(
     SpaceError::ConditionReferencesSubtree { target: build_identifier(6, "t"), name: build_identifier(7, "u") },
     "the condition on t::63406 names u::63407, which is the target or under it",
