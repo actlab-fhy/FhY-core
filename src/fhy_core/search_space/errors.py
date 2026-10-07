@@ -23,7 +23,11 @@ from fhy_core.utils.override import override
 
 @register_error
 class SearchSpaceError(ValueError):
-    """A search space, a choice or an alternative cannot be built."""
+    """The base of the search-space errors.
+
+    Raised itself when a search space, a choice or an alternative cannot be
+    built.
+    """
 
 
 @register_error
