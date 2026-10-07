@@ -30,6 +30,7 @@ from fhy_core.search_space import (
     ConfigurationKey,
     DuplicateNameError,
     Forbidden,
+    RandomOracle,
     SearchSpaceError,
     Space,
     Variable,
@@ -43,6 +44,7 @@ from fhy_core.serialization import (
     register_serializable,
     serialize_value,
 )
+from fhy_core.symbolic.constraint import NotInSetConstraint
 from fhy_core.symbolic.param import create_natural_param_between
 from fhy_core.traits import FrozenMixin, FrozenMutationError
 from fhy_core.utils.override import override
@@ -368,6 +370,42 @@ def test_keys_compare_again_once_a_value_comparison_stopped_raising(
     assert left == right
     assert not left != right
     assert {left: "measured"}.get(right) == "measured"
+
+
+class _CountingVariable(Variable[Any]):
+    """A variable counting the calls of its search-domain hook."""
+
+    calls: ClassVar[int] = 0
+
+    @override
+    def extension_search_domain(self) -> None:
+        _CountingVariable.calls += 1
+
+
+def test_no_hook_is_called_once_a_value_comparison_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a subclass's hook is not called while an exception is pending.
+
+    Sampling `counted` first evaluates its condition, whose value comparison
+    raises: the exception is pending from then on, and the condition, which
+    answers as if the values differed, leaves `counted` active.
+    """
+    touchy = Variable(param=categorical(_Touchy(1)), name=Identifier("touchy"))
+    counted = _CountingVariable(param=categorical(), name=Identifier("counted"))
+    space = Space(
+        variables=(touchy, counted),
+        conditions=(
+            Condition(counted.name, (NotInSetConstraint(touchy.name, {_Touchy(1)}),)),
+        ),
+    )
+    monkeypatch.setattr(_Touchy, "explodes", True)
+    monkeypatch.setattr(_CountingVariable, "calls", 0)
+
+    with pytest.raises(Explosion, match="touchy"):
+        space.sample(RandomOracle(seed=0))
+
+    assert _CountingVariable.calls == 0
 
 
 def test_key_is_restored_from_its_wire_text_only() -> None:

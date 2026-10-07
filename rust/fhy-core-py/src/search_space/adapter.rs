@@ -17,7 +17,11 @@
 //!
 //! An exception a hook raises is the hook's error, boxed, and the entry
 //! point raises it as the same object; `KeyboardInterrupt` too. A result of
-//! the wrong type is a `TypeError` naming the class and the hook. `==` and
+//! the wrong type is a `TypeError` naming the class and the hook. Once an
+//! exception is pending ([`has_pending_error`]), a hook answers its
+//! fallback without calling Python, as a Python-defined constraint's do:
+//! `false` for an equivalence, the param's own domain for a search domain,
+//! and no identifiers for the bound ones. `==` and
 //! `hash` on the part are the instance's identity, and its foreign part is
 //! its type id and its `serialize_data_to_dict()` text.
 
@@ -40,6 +44,7 @@ use crate::identifier::{is_python_identifier, restore_identifier};
 use crate::term::renaming_to_python;
 use crate::util::foreign::read_foreign;
 use crate::util::gc::Slot;
+use crate::util::pending::has_pending_error;
 use crate::util::python::read_type_name;
 
 use super::alternative::PyAlternativeBase;
@@ -97,13 +102,17 @@ impl Instance {
     }
 
     /// Return what `other`'s instance's `hook` answers about `self`'s,
-    /// called with `arguments` after `other`'s object.
+    /// called with `arguments` after `other`'s object; once an exception is
+    /// pending, `false`, without calling Python.
     fn ask_bool(
         &self,
         other: &Self,
         hook: &str,
         renaming: Option<&AlphaRenaming>,
     ) -> Result<bool, BoxError> {
+        if has_pending_error() {
+            return Ok(false);
+        }
         Python::attach(|py| -> PyResult<bool> {
             let object = self.object.get(py);
             let other = other.object.get(py);
@@ -228,8 +237,12 @@ impl Variable for PythonVariable {
 
     /// Call `extension_search_domain` once: `None` derives the domain from
     /// the param, a domain object is read as its core domain, and anything
-    /// else is `TypeError`.
+    /// else is `TypeError`. Once an exception is pending, answer `None`
+    /// without calling Python.
     fn search_domain(&self) -> Result<Option<StepDomain>, BoxError> {
+        if has_pending_error() {
+            return Ok(None);
+        }
         Python::attach(|py| -> PyResult<Option<StepDomain>> {
             let object = self.instance.object.get(py);
             let hook = "extension_search_domain";
@@ -328,8 +341,13 @@ impl Alternative for PythonAlternative {
         &self.notes
     }
 
+    /// Call `extension_bound_identifiers`; once an exception is pending,
+    /// answer none without calling Python.
     fn bound_identifiers(&self) -> Result<Vec<Identifier>, BoxError> {
         const HOOK: &str = "extension_bound_identifiers";
+        if has_pending_error() {
+            return Ok(Vec::new());
+        }
         Python::attach(|py| -> PyResult<Vec<Identifier>> {
             let object = self.instance.object.get(py);
             let identifiers = object.call_method0(HOOK)?;

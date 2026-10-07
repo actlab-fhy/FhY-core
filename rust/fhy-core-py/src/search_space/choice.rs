@@ -100,7 +100,11 @@ impl PyChoice {
                 .iter()
                 .map(|alternative| read_alternative(&alternative, "Choice", "alternatives"))
                 .collect::<PyResult<Vec<_>>>()?;
-            Choice::new(core_name, parts).map_err(|error| space_error_to_py(py, error))
+            // A frame of its own: a subclass's hook answers its fallback
+            // while an exception is pending, so none must be left over.
+            with_pending_errors(|| {
+                Choice::new(core_name, parts).map_err(|error| space_error_to_py(py, error))
+            })
         });
         let choice = choice?.with_notes(notes_core);
         ensure_depth(py, "choice", choice_depth(&choice))?;
