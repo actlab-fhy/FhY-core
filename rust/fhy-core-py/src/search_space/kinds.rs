@@ -129,14 +129,46 @@ impl PyKindRegistry {
 
     /// Replace the current version with what `change` makes of a copy of
     /// it, unless `change` refuses.
+    ///
+    /// `change` runs under the lock, so it calls no Python: it returns the
+    /// [`Refusal`], which the caller words once the lock is released.
     fn update(
         &self,
-        change: impl FnOnce(&KindRegistryState) -> PyResult<KindRegistryState>,
-    ) -> PyResult<()> {
+        change: impl FnOnce(&KindRegistryState) -> Result<KindRegistryState, Refusal>,
+    ) -> Result<(), Refusal> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let changed = change(&state)?;
         *state = Arc::new(changed);
         Ok(())
+    }
+}
+
+/// Why a registration was refused, decided under the registry's lock and
+/// worded after it is released.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusal {
+    /// The kind is the family's built-in plain kind.
+    BuiltIn,
+    /// The kind is registered already.
+    KindRegistered,
+    /// The class is registered for a kind already.
+    ClassRegistered,
+}
+
+impl Refusal {
+    /// Return the error of the refusal to register the kind `kind` of
+    /// `family` for `class`. Reading the class's name may call Python, so
+    /// this is never called under the lock.
+    fn into_error(self, family: &str, kind: &str, class: &Bound<'_, PyType>) -> PyErr {
+        match self {
+            Self::BuiltIn => refuse(
+                family,
+                kind,
+                &format!("it is the plain {}'s kind", family.to_lowercase()),
+            ),
+            Self::KindRegistered => refuse(family, kind, "it is registered already"),
+            Self::ClassRegistered => refuse_class(family, kind, class),
+        }
     }
 }
 
@@ -299,15 +331,15 @@ pub(crate) fn register_variable_kind(
     resolve: VariableResolver,
 ) -> PyResult<()> {
     let registry = registry_of(module)?;
-    registry.get().update(|state| {
+    let updated = registry.get().update(|state| {
         if kind == PlainVariable::KIND {
-            return Err(refuse("Variable", kind, "it is the plain variable's kind"));
+            return Err(Refusal::BuiltIn);
         }
         if state.variables.contains_key(kind) {
-            return Err(refuse("Variable", kind, "it is registered already"));
+            return Err(Refusal::KindRegistered);
         }
         if state.holds_class(class) {
-            return Err(refuse_class("Variable", kind, class));
+            return Err(Refusal::ClassRegistered);
         }
         let mut variables = state.variables.clone();
         variables.insert(
@@ -324,7 +356,8 @@ pub(crate) fn register_variable_kind(
             alternatives: state.alternatives.clone(),
             oracles: state.oracles.clone(),
         })
-    })?;
+    });
+    updated.map_err(|refusal| refusal.into_error("Variable", kind, class))?;
     register_virtual_subclass(super::variable::registered_public_class(module.py()), class)
 }
 
@@ -343,19 +376,15 @@ pub(crate) fn register_alternative_kind(
     resolve: AlternativeResolver,
 ) -> PyResult<()> {
     let registry = registry_of(module)?;
-    registry.get().update(|state| {
+    let updated = registry.get().update(|state| {
         if kind == PlainAlternative::KIND {
-            return Err(refuse(
-                "Alternative",
-                kind,
-                "it is the plain alternative's kind",
-            ));
+            return Err(Refusal::BuiltIn);
         }
         if state.alternatives.contains_key(kind) {
-            return Err(refuse("Alternative", kind, "it is registered already"));
+            return Err(Refusal::KindRegistered);
         }
         if state.holds_class(class) {
-            return Err(refuse_class("Alternative", kind, class));
+            return Err(Refusal::ClassRegistered);
         }
         let mut alternatives = state.alternatives.clone();
         alternatives.insert(
@@ -372,7 +401,8 @@ pub(crate) fn register_alternative_kind(
             alternatives,
             oracles: state.oracles.clone(),
         })
-    })?;
+    });
+    updated.map_err(|refusal| refusal.into_error("Alternative", kind, class))?;
     register_virtual_subclass(
         super::alternative::registered_public_class(module.py()),
         class,
@@ -410,12 +440,12 @@ pub(crate) fn register_oracle_kind(
     lease: OracleLease,
 ) -> PyResult<()> {
     let registry = registry_of(module)?;
-    registry.get().update(|state| {
+    let updated = registry.get().update(|state| {
         if state.oracles.contains_key(kind) {
-            return Err(refuse("oracle", kind, "it is registered already"));
+            return Err(Refusal::KindRegistered);
         }
         if state.holds_class(class) {
-            return Err(refuse_class("oracle", kind, class));
+            return Err(Refusal::ClassRegistered);
         }
         let mut oracles = state.oracles.clone();
         oracles.insert(
@@ -430,5 +460,6 @@ pub(crate) fn register_oracle_kind(
             alternatives: state.alternatives.clone(),
             oracles,
         })
-    })
+    });
+    updated.map_err(|refusal| refusal.into_error("oracle", kind, class))
 }
