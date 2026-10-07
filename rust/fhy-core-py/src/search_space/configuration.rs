@@ -541,22 +541,24 @@ impl PyConfigurationKey {
 impl PyConfigurationKey {
     /// Compare structurally with another key; another type is
     /// `NotImplemented`.
-    fn __richcmp__<'py>(&self, other: &Bound<'py, PyAny>, op: CompareOp) -> Bound<'py, PyAny> {
+    ///
+    /// Raises the exception an opaque value's `==` raised.
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
         let py = other.py();
         let Ok(other) = other.cast::<Self>() else {
-            return py.NotImplemented().into_bound(py);
+            return Ok(py.NotImplemented());
         };
-        let equal = self.key == other.get().key;
-        match op {
-            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any(),
-            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any(),
-            _ => py.NotImplemented().into_bound(py),
-        }
+        let equal = with_pending_errors(|| Ok(self.key == other.get().key))?;
+        Ok(match op {
+            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
+            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
+            _ => py.NotImplemented(),
+        })
     }
 
     /// Return the key's hash, consistent with `==`.
-    fn __hash__(&self) -> u64 {
-        hash_value(&self.key)
+    fn __hash__(&self) -> PyResult<u64> {
+        with_pending_errors(|| Ok(hash_value(&self.key)))
     }
 
     /// Return `ConfigurationKey(...)`.

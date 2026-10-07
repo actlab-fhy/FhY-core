@@ -6,6 +6,7 @@ their type ids, the refusals of the readers, the depth guard and cyclic
 garbage collection.
 """
 
+import contextlib
 import copy
 import gc
 import json
@@ -13,7 +14,7 @@ import pickle
 import textwrap
 import weakref
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -39,14 +40,17 @@ from fhy_core.serialization import (
     Serializable,
     SerializationError,
     WrappedFamilySerializable,
+    register_serializable,
     serialize_value,
 )
 from fhy_core.symbolic.param import create_natural_param_between
 from fhy_core.traits import FrozenMixin, FrozenMutationError
+from fhy_core.utils.override import override
 from tests.native_modules import run_python
 from tests.v1 import writing_v1
 
 from .conftest import (
+    Explosion,
     build_chain,
     build_complete_configuration,
     build_tiling_space,
@@ -295,6 +299,75 @@ def test_pickled_key_with_a_bound_identifier_value_round_trips() -> None:
     left, right = build(), build()
 
     assert pickle.loads(pickle.dumps(left)) == right
+
+
+@register_serializable(type_id="tests.search_space.touchy_value")
+class _Touchy(Serializable):
+    """A `Serializable` value whose `==` raises while `explodes` is set."""
+
+    explodes: ClassVar[bool] = False
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        if _Touchy.explodes:
+            raise Explosion("touchy")
+        return isinstance(other, _Touchy) and self.value == other.value
+
+    @override
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+    @override
+    def serialize_to_dict(self) -> dict[str, Any]:
+        return {"value": self.value}
+
+    @classmethod
+    @override
+    def deserialize_from_dict(cls, data: dict[str, Any]) -> "_Touchy":
+        return cls(int(data["value"]))
+
+
+def _touchy_keys() -> tuple[ConfigurationKey, ConfigurationKey]:
+    """Return the keys of two configurations holding equal `_Touchy` values."""
+    variable = Variable(
+        param=categorical(_Touchy(1), _Touchy(2)), name=Identifier("touchy")
+    )
+    space = Space(variables=(variable,))
+    left = Configuration(space, {variable.name: _Touchy(1)}).key()
+    right = Configuration(space, {variable.name: _Touchy(1)}).key()
+    return left, right
+
+
+def test_a_value_comparison_that_raises_raises_from_the_key_comparison(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a value's raising `==` reaches the caller of the keys' `==` and `!=`."""
+    left, right = _touchy_keys()
+    monkeypatch.setattr(_Touchy, "explodes", True)
+
+    with pytest.raises(Explosion, match="touchy"):
+        _ = left == right
+    with pytest.raises(Explosion, match="touchy"):
+        _ = left != right
+
+
+def test_keys_compare_again_once_a_value_comparison_stopped_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a raised comparison leaves no exception behind on the thread."""
+    left, right = _touchy_keys()
+    monkeypatch.setattr(_Touchy, "explodes", True)
+    with contextlib.suppress(Explosion):
+        _ = left == right
+
+    monkeypatch.setattr(_Touchy, "explodes", False)
+
+    assert left == right
+    assert not left != right
+    assert {left: "measured"}.get(right) == "measured"
 
 
 def test_key_is_restored_from_its_wire_text_only() -> None:
