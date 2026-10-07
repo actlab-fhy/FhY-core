@@ -579,6 +579,33 @@ fn alternatives_order_is_significant_for_alpha_equivalence() {
     assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
 }
 
+#[test]
+fn alternatives_binding_as_many_identifiers_in_another_place_are_not_alpha_equivalent() {
+    // Both choices hold four names, so a frame pairs them, but the first
+    // binds `x` in its first alternative and the second `y` in its second:
+    // the bound identifiers do not line up, whatever the hooks answer.
+    let [c, a1, x, a2, d, b1, b2, y] =
+        ["c", "a1", "x", "a2", "d", "b1", "b2", "y"].map(Identifier::new);
+    let left = choice_of(
+        &c,
+        vec![Binder::binding(&a1, &[&x]), Binder::binding(&a2, &[])],
+    );
+    let right = choice_of(
+        &d,
+        vec![Binder::binding(&b1, &[]), Binder::binding(&b2, &[&y])],
+    );
+    let relabeled = choice_of(
+        &Identifier::new("e"),
+        vec![
+            Binder::binding(&Identifier::new("e1"), &[&Identifier::new("z")]),
+            Binder::binding(&Identifier::new("e2"), &[]),
+        ],
+    );
+
+    assert_eq!(compare_alpha_both_ways(&left, &right), [false, false]);
+    assert_eq!(compare_alpha_both_ways(&left, &relabeled), [true, true]);
+}
+
 #[rstest]
 #[case::prefix_first(true)]
 #[case::prefix_second(false)]
