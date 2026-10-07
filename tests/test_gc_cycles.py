@@ -351,6 +351,24 @@ def test_a_value_kept_by_a_changed_configuration_is_collected() -> None:
     assert _collects(build)
 
 
+def test_a_value_kept_by_a_reduced_configuration_is_collected() -> None:
+    """Test a value a configuration keeps when another value is removed.
+
+    The configuration it was given to is dropped; the one `without_entry`
+    returns, which points back through the value, must own the value's core
+    reference.
+    """
+    space, ranked, counted = _ranked_space()
+
+    def build() -> object:
+        value = _Rank(1)
+        given = Configuration(space, {ranked.name: value, counted.name: 1})
+        value.owner = given.without_entry(counted.name)  # type: ignore[attr-defined]
+        return value
+
+    assert _collects(build)
+
+
 def test_a_value_pointing_at_its_configuration_s_key_is_collected() -> None:
     """Test a configuration key and an opaque value of it that points back."""
     space, ranked, _ = _ranked_space()

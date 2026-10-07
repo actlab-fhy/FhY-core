@@ -160,6 +160,17 @@ impl Configuration {
     /// in place of its value if it has one, checked as
     /// [`new`](Self::new) checks a configuration.
     ///
+    /// No entry is dropped implicitly: switching a choice to another
+    /// alternative while the variables of the one it chose hold values is
+    /// refused, since they are no longer active
+    /// ([`InactiveDecision`](super::ConfigurationError::InactiveDecision)).
+    /// Remove their values first, with
+    /// [`without_entries`](Self::without_entries): to switch the choice
+    /// `layout` from the alternative holding the variable `tile` to the
+    /// alternative `flat`, ask for
+    /// `configuration.without_entries([tile], context)?.with_entry(layout,
+    /// Value::Identifier(flat), context)`.
+    ///
     /// # Errors
     ///
     /// Returns [`ConfigurationErrors`] holding every problem found.
@@ -193,6 +204,53 @@ impl Configuration {
             context,
             ValueCheck::New,
         )
+    }
+
+    /// Return this configuration without the value of the decision
+    /// `name`, checked as [`new`](Self::new) checks a configuration. A
+    /// decision that holds no value is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigurationErrors`] holding every problem found: an
+    /// [`UnknownDecision`](super::ConfigurationError::UnknownDecision) if
+    /// the space has no decision `name`, and an
+    /// [`InactiveDecision`](super::ConfigurationError::InactiveDecision)
+    /// for a decision that holds a value but is no longer active without
+    /// `name`'s, such as a variable of the alternative a removed choice's
+    /// value chose.
+    pub fn without_entry(
+        &self,
+        name: Identifier,
+        context: &ParamContext<'_>,
+    ) -> Result<Self, ConfigurationErrors> {
+        self.without_entries([name], context)
+    }
+
+    /// Return this configuration without the values of the decisions
+    /// `names`, checked as [`new`](Self::new) checks a configuration: the
+    /// result is the configuration `new` builds from the entries left. A
+    /// decision that holds no value, or that `names` names again, is left
+    /// as it is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigurationErrors`] holding every problem found, as
+    /// [`without_entry`](Self::without_entry) does, the names that are no
+    /// decision of the space first.
+    pub fn without_entries(
+        &self,
+        names: impl IntoIterator<Item = Identifier>,
+        context: &ParamContext<'_>,
+    ) -> Result<Self, ConfigurationErrors> {
+        let mut checker = Checker::new(
+            &self.0.space,
+            self.0.values.clone(),
+            context,
+            ValueCheck::New,
+        );
+        checker.remove_entries(names);
+        checker.run()
     }
 
     /// Return this configuration with the decision `name` given `value`,
@@ -518,30 +576,61 @@ fn check(
     context: &ParamContext<'_>,
     value_check: ValueCheck,
 ) -> Result<Configuration, ConfigurationErrors> {
-    let count = space.decision_count();
-    let mut checker = Checker {
-        space,
-        context,
-        value_check,
-        values: if base.is_empty() {
-            vec![None; count]
-        } else {
-            base
-        },
-        is_given: vec![false; count],
-        activities: vec![Activity::Pending; count],
-        chosen: vec![None; count],
-        problems: Vec::new(),
-    };
+    let mut checker = Checker::new(space, base, context, value_check);
     checker.read_entries(entries);
-    for &position in space.order_positions() {
-        checker.check_decision(position);
-    }
-    checker.check_forbidden_clauses();
-    checker.finish()
+    checker.run()
 }
 
-impl Checker<'_> {
+impl<'a> Checker<'a> {
+    /// Return the checker of a configuration of `space` holding `base`
+    /// (each decision's value, in canonical order, or none), before any
+    /// entry is read.
+    fn new(
+        space: &'a Space,
+        base: Vec<Option<Value>>,
+        context: &'a ParamContext<'a>,
+        value_check: ValueCheck,
+    ) -> Self {
+        let count = space.decision_count();
+        Checker {
+            space,
+            context,
+            value_check,
+            values: if base.is_empty() {
+                vec![None; count]
+            } else {
+                base
+            },
+            is_given: vec![false; count],
+            activities: vec![Activity::Pending; count],
+            chosen: vec![None; count],
+            problems: Vec::new(),
+        }
+    }
+
+    /// Check every decision and forbidden clause, and return the
+    /// configuration or every problem found.
+    fn run(mut self) -> Result<Configuration, ConfigurationErrors> {
+        for &position in self.space.order_positions() {
+            self.check_decision(position);
+        }
+        self.check_forbidden_clauses();
+        self.finish()
+    }
+
+    /// Remove the value of each decision `names` names, refusing a name
+    /// that is no decision.
+    fn remove_entries(&mut self, names: impl IntoIterator<Item = Identifier>) {
+        for name in names {
+            match self.space.position(&name) {
+                Some(position) => self.values[position] = None,
+                None => self
+                    .problems
+                    .push(ConfigurationError::UnknownDecision { name }),
+            }
+        }
+    }
+
     /// Give each entry's decision its value, refusing an entry that names
     /// no decision or one an earlier entry named.
     fn read_entries(&mut self, entries: impl IntoIterator<Item = (Identifier, Value)>) {

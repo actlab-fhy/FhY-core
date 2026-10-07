@@ -1,6 +1,7 @@
 //! Tests for `Configuration`: the problems `Configuration::new` collects and
-//! their order, completeness, the accessors, `with_entry` and
-//! `with_entries`, `==` and `Hash`, and the `ConfigurationKey`.
+//! their order, completeness, the accessors, `with_entry`, `with_entries`,
+//! `without_entry` and `without_entries`, `==` and `Hash`, and the
+//! `ConfigurationKey`.
 
 #![expect(
     clippy::many_single_char_names,
@@ -665,6 +666,164 @@ fn configuration_with_entries_refuses_two_entries_for_one_decision() {
         panic!("expected one DuplicateEntry, got {errors:?}");
     };
     assert_eq!(name, &s.t);
+}
+
+// ---------------------------------------------------------------------------
+// without_entry and without_entries
+// ---------------------------------------------------------------------------
+
+#[test]
+fn configuration_without_entry_removes_a_value_and_keeps_the_original() {
+    let s = build_selection();
+    let original = configure(
+        &s.space,
+        [(s.t.clone(), int(1)), (s.c.clone(), chosen(&s.b))],
+    );
+
+    let reduced = with_ground(|context| original.without_entry(s.t.clone(), context))
+        .expect("t may be unassigned");
+
+    assert_eq!(reduced.value(&s.t), None);
+    assert_eq!(reduced.value(&s.c), Some(&chosen(&s.b)));
+    assert_eq!(original.value(&s.t), Some(&int(1)));
+}
+
+#[test]
+fn configuration_without_entries_equals_the_configuration_built_without_them() {
+    let s = build_selection();
+    let original = configure(
+        &s.space,
+        [
+            (s.t.clone(), int(1)),
+            (s.c.clone(), chosen(&s.a)),
+            (s.k1.clone(), int(2)),
+            (s.k2.clone(), int(1)),
+        ],
+    );
+    let expected = configure(
+        &s.space,
+        [(s.t.clone(), int(1)), (s.c.clone(), chosen(&s.a))],
+    );
+
+    let reduced =
+        with_ground(|context| original.without_entries([s.k1.clone(), s.k2.clone()], context))
+            .expect("a's variables may be unassigned");
+
+    assert_eq!(reduced, expected);
+    assert_eq!(reduced.key(), expected.key());
+    assert!(!reduced.is_complete());
+}
+
+#[test]
+fn configuration_without_entries_then_with_entry_switches_an_alternative() {
+    let s = build_selection();
+    let original = configure(
+        &s.space,
+        [(s.c.clone(), chosen(&s.a)), (s.k1.clone(), int(1))],
+    );
+
+    let switched = with_ground(|context| {
+        original
+            .without_entries([s.k1.clone()], context)?
+            .with_entry(s.c.clone(), chosen(&s.b), context)
+    })
+    .expect("with k1 dropped, c may choose b");
+
+    assert_eq!(switched.value(&s.c), Some(&chosen(&s.b)));
+    assert_eq!(switched.value(&s.k1), None);
+    assert_eq!(
+        switched.key(),
+        configure(&s.space, [(s.c.clone(), chosen(&s.b))]).key()
+    );
+}
+
+#[test]
+fn configuration_without_entry_of_an_unassigned_decision_changes_nothing() {
+    let s = build_selection();
+    let original = configure(&s.space, [(s.t.clone(), int(1))]);
+
+    let same = with_ground(|context| original.without_entry(s.c.clone(), context))
+        .expect("c holds no value");
+
+    assert_eq!(same, original);
+    assert_eq!(same.key(), original.key());
+}
+
+#[test]
+fn configuration_without_entries_removes_a_decision_named_twice_once() {
+    let s = build_selection();
+    let original = configure(&s.space, [(s.t.clone(), int(1))]);
+
+    let reduced =
+        with_ground(|context| original.without_entries([s.t.clone(), s.t.clone()], context))
+            .expect("naming t twice removes it");
+
+    assert_eq!(reduced.entries().len(), 0);
+}
+
+#[test]
+fn configuration_without_entry_refuses_a_name_that_is_no_decision() {
+    let s = build_selection();
+    let original = configure(&s.space, [(s.t.clone(), int(1))]);
+    let ghost = Identifier::new("ghost");
+
+    let result = with_ground(|context| original.without_entry(ghost.clone(), context));
+
+    let errors = result.expect_err("ghost is no decision of the space");
+    let [ConfigurationError::UnknownDecision { name }] = errors.errors() else {
+        panic!("expected one UnknownDecision, got {errors:?}");
+    };
+    assert_eq!(name, &ghost);
+}
+
+#[test]
+fn configuration_without_entry_refuses_a_choice_whose_variables_hold_values() {
+    let s = build_selection();
+    let original = configure(
+        &s.space,
+        [(s.c.clone(), chosen(&s.a)), (s.k1.clone(), int(1))],
+    );
+
+    let result = with_ground(|context| original.without_entry(s.c.clone(), context));
+
+    let errors = result.expect_err("k1 is pending once c is unassigned");
+    let [ConfigurationError::InactiveDecision { name }] = errors.errors() else {
+        panic!("expected one InactiveDecision, got {errors:?}");
+    };
+    assert_eq!(name, &s.k1, "no entry is dropped implicitly");
+}
+
+#[test]
+fn configuration_without_entry_checks_conditions_anew() {
+    let [x, y, w] = ["x", "y", "w"].map(Identifier::new);
+    let space = Space::new(
+        Identifier::new("conditioned"),
+        vec![
+            int_variable(&x, &[1, 2]),
+            int_variable(&y, &[1, 2]),
+            int_variable(&w, &[1]),
+        ],
+        Vec::new(),
+        vec![condition(&w, [in_set(&x, [int(1)])])],
+        Vec::new(),
+    )
+    .expect("the space is valid");
+    let unassigned_target = configure(&space, [(x.clone(), int(1)), (y.clone(), int(2))]);
+    let assigned_target = configure(&space, [(x.clone(), int(1)), (w.clone(), int(1))]);
+
+    let reduced = with_ground(|context| unassigned_target.without_entry(x.clone(), context))
+        .expect("w is pending and unassigned without x");
+    let refused = with_ground(|context| assigned_target.without_entry(x.clone(), context));
+
+    assert_eq!(
+        reduced.key(),
+        configure(&space, [(y.clone(), int(2))]).key()
+    );
+    let errors = refused.expect_err("w is pending but holds a value without x");
+    let [ConfigurationError::InactiveDecision { name }] = errors.errors() else {
+        panic!("expected one InactiveDecision, got {errors:?}");
+    };
+    assert_eq!(name, &w);
 }
 
 // ---------------------------------------------------------------------------

@@ -70,6 +70,26 @@ fn read_entries(entries: Option<&Bound<'_, PyAny>>) -> PyResult<Entries> {
     Ok((core, objects))
 }
 
+/// Return the decision names `names` gives, an iterable of `Identifier`s.
+///
+/// # Errors
+///
+/// Raises `TypeError` for an argument that is not iterable and a name that
+/// is no `Identifier`.
+fn read_names(names: &Bound<'_, PyAny>) -> PyResult<Vec<Identifier>> {
+    let items = names.try_iter().map_err(|_not_iterable| {
+        wrong_argument(
+            "Configuration",
+            "names",
+            "an iterable of Identifiers",
+            names,
+        )
+    })?;
+    items
+        .map(|name| restore_identifier(&name?, "Configuration", "name"))
+        .collect()
+}
+
 /// A point of a space, checked against it, backed by the core
 /// [`Configuration`]; the base of the public `Configuration`.
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "Configuration")]
@@ -159,6 +179,55 @@ impl PyConfiguration {
             .map(|(name, value)| (name.clone(), value.clone_ref(py)))
             .collect();
         values.extend(objects);
+        Self {
+            configuration,
+            space: this.space.clone_ref(py),
+            values,
+            slots,
+        }
+        .into_python(py)
+    }
+
+    /// Return the configuration without the values of the decisions
+    /// `names`, an iterable of `Identifier`s.
+    ///
+    /// The new configuration owns the slots of its opaque values, as
+    /// [`with_entries_given`](Self::with_entries_given) makes it: a value
+    /// it keeps from `slf` and holds an opaque value is read anew from its
+    /// object and given again before the values are removed.
+    fn without_entries_given<'py>(
+        slf: &Bound<'py, Self>,
+        names: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let py = slf.py();
+        let this = slf.get();
+        let removed = read_names(names)?;
+        let (read, slots) = collect_slots(|| -> PyResult<Vec<(Identifier, Value)>> {
+            let mut kept = Vec::new();
+            for (name, object) in &this.values {
+                let is_opaque = this.configuration.value(name).is_some_and(holds_opaque);
+                if is_opaque && !removed.contains(name) {
+                    kept.push((name.clone(), read_bound_value(object.bind(py))?));
+                }
+            }
+            Ok(kept)
+        });
+        let kept = read?;
+        let current = this.configuration.clone();
+        let configuration = Self::check(py, move |context| {
+            let owned = if kept.is_empty() {
+                current
+            } else {
+                current.with_entries(kept, context)?
+            };
+            owned.without_entries(removed, context)
+        })?;
+        let values = this
+            .values
+            .iter()
+            .filter(|(name, _)| configuration.value(name).is_some())
+            .map(|(name, value)| (name.clone(), value.clone_ref(py)))
+            .collect();
         Self {
             configuration,
             space: this.space.clone_ref(py),
@@ -379,6 +448,10 @@ impl PyConfiguration {
     /// Return the configuration with `value` for the decision `name`, in
     /// place of its value if it has one, checked as a whole.
     ///
+    /// No entry is dropped implicitly: switching a choice away from an
+    /// alternative whose variables hold values is refused. Remove them
+    /// first: `c.without_entries([tile]).with_entry(layout, flat)`.
+    ///
     /// Raises as the constructor does.
     fn with_entry<'py>(
         slf: &Bound<'py, Self>,
@@ -398,6 +471,33 @@ impl PyConfiguration {
         entries: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         Self::with_entries_given(slf, entries)
+    }
+
+    /// Return the configuration without the value of the decision `name`,
+    /// checked as a whole. A decision that holds no value is left as it is.
+    ///
+    /// Raises `TypeError` if `name` is not an `Identifier`, and as the
+    /// constructor does: `ConfigurationError` if the space has no decision
+    /// `name`, or if a decision that holds a value is no longer active
+    /// without `name`'s.
+    fn without_entry<'py>(
+        slf: &Bound<'py, Self>,
+        name: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        Self::without_entries_given(slf, PyTuple::new(slf.py(), [name])?.as_any())
+    }
+
+    /// Return the configuration without the values of the decisions
+    /// `names`, an iterable of `Identifier`s, checked as a whole: the
+    /// configuration the constructor builds from the entries left. A
+    /// decision that holds no value is left as it is.
+    ///
+    /// Raises as `without_entry` does.
+    fn without_entries<'py>(
+        slf: &Bound<'py, Self>,
+        names: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        Self::without_entries_given(slf, names)
     }
 
     /// Return whether `other` is a configuration of a structurally

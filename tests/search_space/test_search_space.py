@@ -1150,6 +1150,91 @@ def test_with_entries_refuses_a_duplicate_pair() -> None:
     )
 
 
+def test_without_entry_removes_a_value_and_keeps_the_others() -> None:
+    """Test `without_entry` returns a new configuration with one value fewer."""
+    tiling = build_tiling_space()
+    original = build_complete_configuration(tiling)
+
+    updated = original.without_entry(tiling.unroll.name)
+
+    assert updated is not original
+    assert updated.value(tiling.unroll.name) is None
+    assert updated.value(tiling.tile.name) == 4
+    assert original.value(tiling.unroll.name) == 2
+    assert updated.space is tiling.space
+    assert (
+        updated.key()
+        == Configuration(
+            tiling.space, {tiling.layout.name: tiling.tiled.name, tiling.tile.name: 4}
+        ).key()
+    )
+
+
+def test_without_entries_then_with_entry_switches_an_alternative() -> None:
+    """Test dropping an alternative's variables lets its choice switch away."""
+    tiling = build_tiling_space()
+    original = build_complete_configuration(tiling)
+
+    switched = original.without_entries([tiling.tile.name]).with_entry(
+        tiling.layout.name, tiling.flat.name
+    )
+
+    assert switched.value(tiling.layout.name) is tiling.flat.name
+    assert switched.value(tiling.tile.name) is None
+    assert switched.is_complete()
+    assert (
+        switched.key()
+        == Configuration(
+            tiling.space, {tiling.unroll.name: 2, tiling.layout.name: tiling.flat.name}
+        ).key()
+    )
+
+
+def test_without_entry_of_an_unassigned_decision_changes_nothing() -> None:
+    """Test removing the value of a decision that holds none is a no-op."""
+    tiling = build_tiling_space()
+    original = Configuration(tiling.space, {tiling.unroll.name: 2})
+
+    same = original.without_entries([tiling.layout.name, tiling.tile.name])
+
+    assert same.entries == original.entries
+    assert same.key() == original.key()
+
+
+def test_without_entry_refuses_a_name_that_is_no_decision() -> None:
+    """Test removing a name the space lacks is an unknown decision."""
+    tiling = build_tiling_space()
+    original = Configuration(tiling.space, {tiling.unroll.name: 2})
+    ghost = Identifier("ghost")
+
+    error = _problems(lambda: original.without_entry(ghost))
+
+    assert error.problems == (f"{ghost!r} is not a decision of the space",)
+
+
+def test_without_entry_refuses_a_choice_whose_variables_hold_values() -> None:
+    """Test unassigning a choice strands its alternative's variable, refused."""
+    tiling = build_tiling_space()
+    original = build_complete_configuration(tiling)
+
+    error = _problems(lambda: original.without_entry(tiling.layout.name))
+
+    assert error.problems == (
+        f"the decision {tiling.tile.name!r} is given a value but is not active",
+    )
+
+
+def test_without_entries_refuses_a_name_that_is_no_identifier() -> None:
+    """Test a name to remove must be an `Identifier`."""
+    tiling = build_tiling_space()
+    original = Configuration(tiling.space, {tiling.unroll.name: 2})
+
+    with pytest.raises(TypeError):
+        original.without_entries(["unroll"])  # type: ignore[list-item]
+    with pytest.raises(TypeError):
+        original.without_entry("unroll")  # type: ignore[arg-type]
+
+
 # ===========================================================================
 # Keys
 # ===========================================================================
