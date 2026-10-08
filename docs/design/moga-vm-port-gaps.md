@@ -1073,6 +1073,8 @@ types or drift; if a shortcut is wanted before that, a `macro_rules!`
 `impl_alpha_equivalence!(Type { field, field })` in `fhy-core` gives most of
 the benefit with no new crate.
 
+**Decided (2026-10-07):** not now; no new crate and no `macro_rules!` shortcut either. A Rust MOGA-VM writes its `AlphaEquivalence` impls by hand.
+
 N2. **G2: decide integer bounds in the param without the solver.** This
 changes param semantics beyond the search space: `ParamAssignment::new`
 succeeds without a simplifier for bound-only params, and bound members
@@ -1083,10 +1085,14 @@ already treats bounds as structure. The fallback, if declined: keep only
 the `try_extend` error fix and document that the search needs a
 ground-deciding context (the count/sample disagreement stays).
 
+**Decided (2026-10-07):** accepted as recommended: option (b) with the `try_extend` fix.
+
 N3. **G5: break `Measurement::key`, `Measurer::measure` and the wire
 shape for `MeasurementKey`.** *Recommendation:* break now, while 0.2.0 is
 unreleased; the additive alternatives split `Measurement` in two or make
 its key optional.
+
+**Decided (2026-10-07):** accepted as recommended: break now.
 
 N4. **G4: `Provenance` gains `Custom` and stays exhaustive.**
 *Recommendation:* yes, exhaustive: consumers that render or walk
@@ -1094,26 +1100,38 @@ provenances must decide what to do with a custom one. Making it
 `#[non_exhaustive]` instead would hide future variants from the compiler
 for no current need.
 
+**Decided (2026-10-07):** accepted as recommended: `Custom` added, `Provenance` stays exhaustive.
+
 N5. **H5: `with_entry`/`with_entries` stop re-checking held values.**
 Differs only when a configuration built under one context gets an entry
 under a weaker one that could not verify an old value. *Recommendation:*
 yes; validity is the type's invariant, and it is what makes one-by-one
 building linear.
 
+**Decided (2026-10-07):** accepted as recommended.
+
 N6. **G3: make `expression::Rational` public** rather than add
 `num-rational`. *Recommendation:* yes; no dependency, one rational type in
 the crate.
 
+**Decided (2026-10-07):** accepted as recommended: `expression::Rational` is public, no `num-rational`.
+
 N7. **G1 seeded outputs.** Unchanged except where the old 1 024-run search
 guessed; nothing pins them. *Recommendation:* accept; informational.
+
+**Decided (2026-10-07):** accepted as recommended.
 
 N8. **G6: categorical domains accept tuple and frozen-set categories;
 ordinal and permutation domains do not.** *Recommendation:* yes; relax the
 others when a caller needs an order on tuples.
 
+**Decided (2026-10-07):** accepted as recommended.
+
 N9. **H1: the crossover operator is uniform crossover only.**
 *Recommendation:* yes; another operator (one-point over decision order) is
 another method when a search asks for it.
+
+**Decided (2026-10-07):** accepted as recommended.
 
 ## Open questions
 
