@@ -467,10 +467,6 @@ impl SearchOracle for ReplayOracle {
 /// to an [edited](super::Space::with_decisions) space, whose positions may
 /// differ, build a configuration from the old one's entries and
 /// [complete](super::Space::complete) it.
-#[expect(
-    dead_code,
-    reason = "interface stub; bodies are todo!() until implementation"
-)]
 #[derive(Debug, Clone)]
 pub struct GuidedOracle<O> {
     /// The guide's static steps, by canonical position.
@@ -485,45 +481,79 @@ impl<O: SearchOracle> GuidedOracle<O> {
     /// Return the oracle guided by `guide` that asks `fallback` what the
     /// guide does not answer.
     #[must_use]
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        clippy::needless_pass_by_value,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn new(guide: &Trace, fallback: O) -> Self {
-        todo!()
+        let mut statics = HashMap::new();
+        let mut dynamics: HashMap<DecisionKind, VecDeque<(DomainSignature, Coordinate)>> =
+            HashMap::new();
+        for step in guide.steps() {
+            let answer = (step.signature().clone(), step.coordinate().clone());
+            match step.decision() {
+                Some(position) => {
+                    statics.entry(position).or_insert(answer);
+                }
+                None => dynamics
+                    .entry(step.kind().clone())
+                    .or_default()
+                    .push_back(answer),
+            }
+        }
+        Self {
+            statics,
+            dynamics,
+            fallback,
+        }
     }
 
     /// Return the fallback oracle.
     #[must_use]
-    #[expect(
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn fallback(&self) -> &O {
-        todo!()
+        &self.fallback
     }
 
     /// Return the fallback oracle, consuming the guided one.
     #[must_use]
-    #[expect(
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn into_fallback(self) -> O {
-        todo!()
+        self.fallback
+    }
+
+    /// Return the guide's answer to the static step `step` over the
+    /// decision at canonical `position`: its step at that position, if
+    /// its signature is the step's and its coordinate admissible.
+    ///
+    /// # Errors
+    ///
+    /// Returns what [`PendingStep::admits`] returns.
+    fn answer_static(
+        &self,
+        position: usize,
+        step: &PendingStep<'_>,
+    ) -> Result<Option<Coordinate>, TraceError> {
+        let Some((signature, coordinate)) = self.statics.get(&position) else {
+            return Ok(None);
+        };
+        let fits = *signature == step.signature() && step.admits(coordinate)?;
+        Ok(fits.then(|| coordinate.clone()))
+    }
+
+    /// Take the guide's next step of the dynamic step `step`'s kind, and
+    /// return its answer if its signature is the step's and its coordinate
+    /// in the domain.
+    fn answer_dynamic(&mut self, step: &PendingStep<'_>) -> Option<Coordinate> {
+        let (signature, coordinate) = self.dynamics.get_mut(step.kind())?.pop_front()?;
+        (signature == step.signature() && step.domain().contains(&coordinate)).then_some(coordinate)
     }
 }
 
 impl<O: SearchOracle> SearchOracle for GuidedOracle<O> {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
-        todo!()
+        let answer = match step.decision_position() {
+            Some(position) => self.answer_static(position, step)?,
+            None => self.answer_dynamic(step),
+        };
+        match answer {
+            Some(coordinate) => Ok(coordinate),
+            None => self.fallback.decide(step),
+        }
     }
 }
 

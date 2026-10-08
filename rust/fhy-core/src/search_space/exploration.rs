@@ -223,11 +223,6 @@ impl Space {
     /// In order: [`TraceError::OtherSpace`] when either parent is of
     /// another space, [`TraceError::AttemptsExhausted`] after `attempts`
     /// dead ends, and what a step returns.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn crossover(
         &self,
         first: &Configuration,
@@ -236,7 +231,7 @@ impl Space {
         context: &ParamContext<'_>,
         attempts: NonZeroU32,
     ) -> Result<Recorded, TraceError> {
-        todo!()
+        cross_configurations(self, [first, second], rng, context, attempts)
     }
 }
 
@@ -730,6 +725,78 @@ impl SearchOracle for RepairOracle<'_> {
         if let Some(previous) = position.and_then(|position| self.previous.get(&position)) {
             if step.admits(previous)? {
                 return Ok(previous.clone());
+            }
+        }
+        Ok(step.draw_uniform(self.rng)?)
+    }
+}
+
+/// The number of parents a crossover picks between.
+const PARENTS: NonZeroU64 = NonZeroU64::new(2).expect("two is positive");
+
+/// Return the crossover of `parents`, as [`Space::crossover`] documents.
+fn cross_configurations(
+    space: &Space,
+    parents: [&Configuration; 2],
+    rng: &mut Rng,
+    context: &ParamContext<'_>,
+    attempts: NonZeroU32,
+) -> Result<Recorded, TraceError> {
+    if parents.iter().any(|parent| parent.space() != space) {
+        return Err(TraceError::OtherSpace);
+    }
+    let empty = Configuration::empty(space);
+    for _ in 0..attempts.get() {
+        let picks: Vec<bool> = (0..space.decision_count())
+            .map(|_| rng.below(PARENTS) == 1)
+            .collect();
+        let mut oracle = CrossoverOracle {
+            parents,
+            picks: &picks,
+            rng,
+        };
+        let run = Recorder::from_configuration(empty.clone());
+        match walk_from(run, space, |_| true, &mut oracle, context) {
+            Ok(recorded) => return Ok(recorded),
+            Err(TraceError::DeadEnd { .. } | TraceError::Inadmissible { .. }) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(TraceError::AttemptsExhausted {
+        attempts: attempts.get(),
+    })
+}
+
+/// Answers a crossover's walk: each decision with the value of the parent
+/// its pick names (`true` for the second), else the other parent's, when
+/// that parent assigns it and it is admissible, and otherwise uniformly.
+struct CrossoverOracle<'a> {
+    parents: [&'a Configuration; 2],
+    /// Per decision, by canonical position, whether it inherits from the
+    /// second parent.
+    picks: &'a [bool],
+    rng: &'a mut Rng,
+}
+
+impl SearchOracle for CrossoverOracle<'_> {
+    fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
+        if let Some(position) = step.decision_position() {
+            let [first, second] = self.parents;
+            let order = if self.picks[position] {
+                [second, first]
+            } else {
+                [first, second]
+            };
+            for parent in order {
+                let Some(value) = parent.value(step.subject()) else {
+                    continue;
+                };
+                let Some(coordinate) = step.domain().coordinate_of(value) else {
+                    continue;
+                };
+                if step.admits(&coordinate)? {
+                    return Ok(coordinate);
+                }
             }
         }
         Ok(step.draw_uniform(self.rng)?)

@@ -1,5 +1,6 @@
 //! What a `Space` and a `Configuration` do with the search stream on their
-//! own: sample, sample uniformly, replay, enumerate, count and mutate; and
+//! own: sample, sample uniformly, replay, enumerate, count, mutate and
+//! cross; and
 //! `fhy_core._rs.SpaceEnumeration`, the iterator `Space.enumerate` returns.
 
 use std::convert::Infallible;
@@ -181,16 +182,7 @@ pub(super) fn mutate<'py>(
     rng: &Bound<'py, PyAny>,
     attempts: u32,
 ) -> PyResult<Bound<'py, PyTuple>> {
-    let configuration = configuration
-        .cast::<PyConfiguration>()
-        .map_err(|_not_a_configuration| {
-            PyTypeError::new_err(format!(
-                "Space.mutate takes a Configuration, got {}.",
-                read_type_name(configuration)
-            ))
-        })?
-        .get()
-        .core();
+    let configuration = read_configuration(configuration, "Space.mutate")?;
     let rng = read_rng(rng, "Space.mutate")?;
     let attempts = read_attempts(attempts)?;
     let core = space.get().core();
@@ -198,6 +190,48 @@ pub(super) fn mutate<'py>(
         core.mutate(configuration, generator, context, attempts)
     })?;
     recorded_to_python(space, recorded)
+}
+
+/// `Space.crossover`: a configuration of `space` crossing `first` and
+/// `second`, drawn with `rng`.
+pub(super) fn crossover<'py>(
+    space: &Bound<'py, PySpace>,
+    first: &Bound<'py, PyAny>,
+    second: &Bound<'py, PyAny>,
+    rng: &Bound<'py, PyAny>,
+    attempts: u32,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let first = read_configuration(first, "Space.crossover")?;
+    let second = read_configuration(second, "Space.crossover")?;
+    let rng = read_rng(rng, "Space.crossover")?;
+    let attempts = read_attempts(attempts)?;
+    let core = space.get().core();
+    let recorded = draw_with(rng, |generator, context| {
+        core.crossover(first, second, generator, context, attempts)
+    })?;
+    recorded_to_python(space, recorded)
+}
+
+/// Return the core configuration of the `Configuration` object
+/// `configuration`.
+///
+/// # Errors
+///
+/// Raises `TypeError` naming `owner` for an object that is no
+/// `Configuration`.
+fn read_configuration<'a>(
+    configuration: &'a Bound<'_, PyAny>,
+    owner: &str,
+) -> PyResult<&'a fhy_core::search_space::Configuration> {
+    configuration
+        .cast::<PyConfiguration>()
+        .map(|configuration| configuration.get().core())
+        .map_err(|_not_a_configuration| {
+            PyTypeError::new_err(format!(
+                "{owner} takes a Configuration, got {}.",
+                read_type_name(configuration)
+            ))
+        })
 }
 
 /// `Configuration.trace`: the trace of the assigned decisions of

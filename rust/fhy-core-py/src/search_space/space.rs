@@ -754,11 +754,6 @@ impl PySpace {
     /// Raises `TraceError` for a parent of another space and after
     /// `attempts` dead ends.
     #[pyo3(signature = (first, second, rng, *, attempts = 16))]
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn crossover<'py>(
         slf: &Bound<'py, Self>,
         first: &Bound<'py, PyAny>,
@@ -766,7 +761,7 @@ impl PySpace {
         rng: &Bound<'py, PyAny>,
         attempts: u32,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        todo!()
+        exploration::crossover(slf, first, second, rng, attempts)
     }
 
     /// Return the configuration `configuration` completed by asking
