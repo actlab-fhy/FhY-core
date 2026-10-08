@@ -15,6 +15,7 @@ from fhy_core.symbolic.param import (
     ParamError,
     PermutationDomain,
     create_categorical_param,
+    create_permutation_param,
     create_single_valid_value_param,
 )
 from fhy_core.symbolic.param.core import Param
@@ -478,3 +479,42 @@ def test_ordinal_and_permutation_domains_still_refuse_tuples() -> None:
         OrdinalDomain(values)
     with pytest.raises(TypeError):
         PermutationDomain(values)
+
+
+# =============================================================================
+# A list is no tuple category
+# =============================================================================
+
+
+def test_a_list_is_not_admissible_for_a_tuple_category() -> None:
+    """Test `[8, 8]` is not `(8, 8)`, for the domain and for the param."""
+    categories: Any = _tile_shapes()
+    domain = CategoricalDomain(categories)
+    param = create_categorical_param(categories)
+
+    assert domain.is_value_admissible((8, 8))
+    assert param.is_value_admissible((8, 8))
+    assert not domain.is_value_admissible([8, 8])
+    assert not param.is_value_admissible([8, 8])
+
+
+def test_assigning_a_list_to_a_tuple_category_param_is_refused() -> None:
+    """Test assignment agrees with admissibility: the list is refused."""
+    param = create_categorical_param(_tile_shapes())
+    candidate: Any = [8, 8]
+
+    assert not param.is_value_admissible(candidate)
+    with pytest.raises(ParamError):
+        param.assign(candidate)
+
+
+def test_a_permutation_param_still_admits_and_assigns_a_list_ordering() -> None:
+    """Test a list is the documented way to give a permutation its ordering."""
+    param = create_permutation_param(["n", "c", "h", "w"])
+    domain = param.domain
+    ordering: Any = ["c", "n", "w", "h"]
+
+    assert domain.is_value_admissible(ordering)
+    assert param.is_value_admissible(ordering)
+    assert param.assign(ordering).value == ("c", "n", "w", "h")
+    assert not domain.is_value_admissible(["n", "c", "h", "n"])
