@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyDict, PyTuple, PyType};
@@ -425,9 +426,54 @@ impl PySpace {
 /// Return the error of an edited space's part that the binding has no
 /// object for: a bug, since every part of an edit is one given or held.
 fn missing_object(part: &str) -> PyErr {
-    pyo3::exceptions::PyRuntimeError::new_err(format!(
+    PyRuntimeError::new_err(format!(
         "the edited space holds a {part} the binding has no object for"
     ))
+}
+
+/// Return, per part of `edited`, the object of the part `is_same` matches
+/// it with: of `given`, the last first, else of `held`, each a key of a
+/// part paired with the part's object.
+///
+/// # Errors
+///
+/// Raises `RuntimeError` for a part neither holds, the `part` kind named.
+fn find_objects<'py, T, K>(
+    edited: &[T],
+    given: &[(K, Bound<'py, PyAny>)],
+    held: &[(K, Bound<'py, PyAny>)],
+    is_same: impl Fn(&K, &T) -> bool,
+    part: &str,
+) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    edited
+        .iter()
+        .map(|item| {
+            given
+                .iter()
+                .rev()
+                .chain(held)
+                .find(|(key, _)| is_same(key, item))
+                .map(|(_, object)| object.clone())
+                .ok_or_else(|| missing_object(part))
+        })
+        .collect()
+}
+
+/// Return each `Choice` object of `objects` paired with its name.
+///
+/// # Errors
+///
+/// Raises `TypeError` for an object that is no `Choice`.
+fn name_choice_objects<'py>(
+    objects: &Bound<'py, PyTuple>,
+) -> PyResult<Vec<(Identifier, Bound<'py, PyAny>)>> {
+    objects
+        .iter()
+        .map(|object| {
+            let name = object.cast::<PyChoice>()?.get().core().name().clone();
+            Ok((name, object))
+        })
+        .collect()
 }
 
 impl PySpace {
@@ -859,44 +905,22 @@ impl PySpace {
             .iter()
             .zip(this.variables.bind(py).iter())
             .collect();
-        let variable_objects = space
-            .variables()
-            .iter()
-            .map(|part| {
-                given_variables
-                    .iter()
-                    .rev()
-                    .chain(&held_variables)
-                    .find(|(held, _)| Part::ptr_eq(held, part))
-                    .map(|(_, object)| object.clone())
-                    .ok_or_else(|| missing_object("variable"))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-        let named_choices =
-            |objects: &Bound<'py, PyTuple>| -> PyResult<Vec<(Identifier, Bound<'py, PyAny>)>> {
-                objects
-                    .iter()
-                    .map(|object| {
-                        let name = object.cast::<PyChoice>()?.get().core().name().clone();
-                        Ok((name, object))
-                    })
-                    .collect()
-            };
-        let given_choices = named_choices(&choices)?;
-        let held_choices = named_choices(this.choices.bind(py))?;
-        let choice_objects = space
-            .choices()
-            .iter()
-            .map(|choice| {
-                given_choices
-                    .iter()
-                    .rev()
-                    .chain(&held_choices)
-                    .find(|(name, _)| name == choice.name())
-                    .map(|(_, object)| object.clone())
-                    .ok_or_else(|| missing_object("choice"))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
+        let variable_objects = find_objects(
+            space.variables(),
+            &given_variables,
+            &held_variables,
+            |held, part| Part::ptr_eq(held, part),
+            "variable",
+        )?;
+        let given_choices = name_choice_objects(&choices)?;
+        let held_choices = name_choice_objects(this.choices.bind(py))?;
+        let choice_objects = find_objects(
+            space.choices(),
+            &given_choices,
+            &held_choices,
+            |name, choice| name == choice.name(),
+            "choice",
+        )?;
         this.edited_to_python(
             py,
             space,
