@@ -205,23 +205,6 @@ fn register_part_1(module: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Add the classes and functions of the `identifier`, `lattice` and `op_attribute` modules.
-fn register_part_5(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(
-        identifier::advance_identifier_counter_past,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        identifier::allocate_identifier_id,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(identifier::next_identifier_id, module)?)?;
-    module.add_class::<lattice::PyLattice>()?;
-    module.add_class::<lattice::PyPartiallyOrderedSet>()?;
-    module.add_class::<op_attribute::PyOpAttribute>()?;
-    Ok(())
-}
-
 /// Add the classes and functions of the `param`, `pass`, `provenance`, `solver`, `symbol_table`, `term` modules.
 fn register_part_2(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<param::PyCategoricalDomain>()?;
@@ -405,5 +388,22 @@ fn register_part_4(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(search_space::non_dominated, module)?)?;
+    Ok(())
+}
+
+/// Add the classes and functions of the `identifier`, `lattice` and `op_attribute` modules.
+fn register_part_5(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(
+        identifier::advance_identifier_counter_past,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        identifier::allocate_identifier_id,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(identifier::next_identifier_id, module)?)?;
+    module.add_class::<lattice::PyLattice>()?;
+    module.add_class::<lattice::PyPartiallyOrderedSet>()?;
+    module.add_class::<op_attribute::PyOpAttribute>()?;
     Ok(())
 }
