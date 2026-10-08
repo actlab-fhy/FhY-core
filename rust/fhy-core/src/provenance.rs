@@ -21,7 +21,7 @@
 pub mod wire;
 
 use std::fmt;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::sync::Arc;
@@ -899,7 +899,7 @@ pub trait CustomProvenance: ForeignPart + fmt::Display {
 
     /// Feed the provenance's hash to `state`, consistently with
     /// [`eq_part`](Self::eq_part). The default feeds nothing.
-    fn hash_part(&self, state: &mut dyn std::hash::Hasher) {
+    fn hash_part(&self, state: &mut dyn Hasher) {
         let _ = state;
     }
 }
