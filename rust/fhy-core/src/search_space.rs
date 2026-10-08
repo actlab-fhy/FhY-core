@@ -184,6 +184,7 @@
 
 mod alternative;
 mod choice;
+mod chunked;
 mod configuration;
 mod counting;
 mod domain;
