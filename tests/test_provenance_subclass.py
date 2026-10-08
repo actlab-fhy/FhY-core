@@ -272,6 +272,16 @@ def test_a_subclass_child_is_written_as_a_custom_part() -> None:
 
 
 @pytest.mark.parametrize(
+    "round_trip",
+    [
+        lambda provenance: Provenance.deserialize_from_dict(
+            provenance.serialize_to_dict()
+        ),
+        lambda provenance: Provenance.from_json(provenance.to_json()),
+    ],
+    ids=["dict", "json"],
+)
+@pytest.mark.parametrize(
     "build",
     [
         lambda edge: NamedProvenance("n", edge),
@@ -284,18 +294,16 @@ def test_a_subclass_child_is_written_as_a_custom_part() -> None:
 )
 def test_a_variant_decoding_a_subclass_child_returns_the_subclass(
     build: Callable[[EdgePropagationProvenance], Provenance],
+    round_trip: Callable[[Provenance], Provenance],
 ) -> None:
     """Test a variant over a subclass child round-trips with an equal subclass child."""
-    edge = _edge()
-    original = build(edge)
+    original = build(_edge())
 
-    for restored in (
-        Provenance.deserialize_from_dict(original.serialize_to_dict()),
-        Provenance.from_json(original.to_json()),
-    ):
-        assert type(restored) is type(original)
-        assert restored == original
-        assert restored.serialize_to_dict() == original.serialize_to_dict()
+    restored = round_trip(original)
+
+    assert type(restored) is type(original)
+    assert restored == original
+    assert restored.serialize_to_dict() == original.serialize_to_dict()
 
 
 def test_a_decoded_subclass_child_is_the_subclass() -> None:
