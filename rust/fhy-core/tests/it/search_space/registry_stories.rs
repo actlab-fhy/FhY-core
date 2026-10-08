@@ -4,6 +4,8 @@
 //! ids, `merge`, the resolver handed to a variable's function, and two
 //! crates' registries composed to decode one space.
 
+use std::error::Error;
+
 use fhy_core::constraint::{CustomConstraint, OpaqueValue};
 use fhy_core::diagnostic::Note;
 use fhy_core::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part, Resolve};
@@ -12,6 +14,7 @@ use fhy_core::param::wire::ParamData;
 use fhy_core::param::{CustomDomain, Param, ParamContext};
 use fhy_core::search_space::wire::{
     ChoiceData, ConfigurationData, ResolverRegistry, SearchSpaceResolver, SpaceData, VariableData,
+    VariableResolverFn,
 };
 use fhy_core::search_space::{
     Alternative, Configuration, PlainAlternative, PlainVariable, RegistryError, Space, Variable,
@@ -133,6 +136,26 @@ fn resolve_stamped_knob(
     let mut knob = build_knob(foreign, resolver, context)?;
     knob.notes.push(Note::with_other_kind(name_solver(context)));
     Ok(Part::new(knob))
+}
+
+/// A variable function like [`resolve_knob`] that reports a part its
+/// param fails to build as a failure of its own, holding that error.
+fn resolve_knob_wrapping_its_errors(
+    foreign: &Foreign,
+    resolver: &dyn SearchSpaceResolver,
+    context: &ParamContext<'_>,
+) -> Result<Part<dyn Variable>, ForeignError> {
+    let payload: KnobPayload = read_payload(foreign)?;
+    let param = payload
+        .param
+        .build(resolver, context)
+        .map_err(|error| failed(foreign, error))?;
+    Ok(Part::new(TileKnob {
+        name: payload.name,
+        param,
+        notes: payload.notes,
+        index_symbols: payload.index_symbols,
+    }))
 }
 
 /// An [`AlternativeResolverFn`](fhy_core::search_space::wire::AlternativeResolverFn)
@@ -318,6 +341,23 @@ fn unresolved_id(result: Result<String, ForeignError>) -> String {
         panic!("expected Unresolved, got {result:?}");
     };
     type_id
+}
+
+/// Return the type id of the first `Unresolved` refusal in `error` or in
+/// the chain of its sources.
+fn find_unresolved_id(error: &BuildError) -> Option<String> {
+    let mut link: Option<&(dyn Error + 'static)> = Some(error);
+    while let Some(current) = link {
+        let foreign = match current.downcast_ref::<BuildError>() {
+            Some(BuildError::Foreign(foreign)) => Some(foreign),
+            _ => current.downcast_ref::<ForeignError>(),
+        };
+        if let Some(ForeignError::Unresolved { type_id }) = foreign {
+            return Some(type_id.clone());
+        }
+        link = current.source();
+    }
+    None
 }
 
 /// Return the type id of the repeated-id error of `result`.
@@ -651,11 +691,19 @@ fn variable_function_resolves_its_params_custom_domain_through_the_registry() {
 }
 
 /// Test that a variable whose param's custom domain is not registered
-/// fails the build with `Unresolved` naming the domain's type id.
-#[test]
-fn variable_function_without_the_params_domain_registered_fails_unresolved() {
+/// fails the build with the registry's `Unresolved` naming the domain's
+/// type id, whether the variable's function passes that error on as its
+/// own or wraps it in a failure of its own.
+#[rstest]
+#[case::passed_on(resolve_knob)]
+#[case::wrapped(resolve_knob_wrapping_its_errors)]
+fn variable_function_without_the_params_domain_registered_fails_unresolved(
+    #[case] resolve: VariableResolverFn,
+) {
     let (space, _) = build_custom_domain_space();
-    let registry = build_registry(&[(Family::Variable, TILE_KNOB)]);
+    let registry = ResolverRegistry::new()
+        .with_variable_kind(TILE_KNOB, resolve)
+        .expect("the knob kind is free");
     let solver = Solver::new();
     let context = ParamContext::new(&solver);
 
@@ -663,10 +711,12 @@ fn variable_function_without_the_params_domain_registered_fails_unresolved() {
         .expect("has a wire form")
         .build(&registry.resolver(&context), &context);
 
-    let Err(BuildError::Foreign(ForeignError::Unresolved { type_id })) = result else {
-        panic!("expected the domain unresolved, got {result:?}");
-    };
-    assert_eq!(type_id, "test.domain");
+    let error = result.expect_err("the domain is not registered");
+    assert_eq!(
+        find_unresolved_id(&error).as_deref(),
+        Some("test.domain"),
+        "{error:?}"
+    );
 }
 
 /// Test that a variable function is handed the context given to
@@ -959,9 +1009,7 @@ fn realization_crate_alone_fails_a_configuration_on_the_tile_knob() {
 
 // -- the error text ---------------------------------------------------------
 
-/// Test that the two registry errors read as pinned, one line each. A pin
-/// of a new type's text: it holds on the stub, where `Display` is already
-/// implemented.
+/// Test that the two registry errors read as pinned, one line each.
 #[rstest]
 #[case::repeated(
     RegistryError::RepeatedTypeId { type_id: "x".to_owned() },
