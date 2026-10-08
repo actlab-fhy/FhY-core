@@ -7,12 +7,13 @@
 //! prove affine is declined rather than approximated.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use num_bigint::BigInt;
 
 use crate::identifier::Identifier;
+use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity};
 
 use super::node::{BinaryExpression, Expression, ExpressionKind};
 use super::{
@@ -216,8 +217,18 @@ fn scale(form: AffineForm, operation: BinaryOperation, factor: &Rational) -> Opt
     })
 }
 
-/// Return the form of `node`, a binary operation at nesting `depth`.
-fn read_binary(node: &BinaryExpression, depth: usize) -> Option<AffineForm> {
+/// The forms of the nodes read so far, by node, each with the height of
+/// the node's tree (0 for a leaf), so a node several parents share is read
+/// once: the cost is that of the distinct nodes, not of their occurrences.
+type Memo = HashMap<NodeIdentity, (AffineForm, usize), BuildIdentityHasher>;
+
+/// Return the form of `node`, a binary operation at nesting `depth`, and
+/// the height of its tree.
+fn read_binary(
+    node: &BinaryExpression,
+    depth: usize,
+    memo: &mut Memo,
+) -> Option<(AffineForm, usize)> {
     let operation = node.operation();
     if !matches!(
         operation,
@@ -231,9 +242,10 @@ fn read_binary(node: &BinaryExpression, depth: usize) -> Option<AffineForm> {
     ) {
         return None;
     }
-    let left = read(node.left(), depth + 1)?;
-    let right = read(node.right(), depth + 1)?;
-    match operation {
+    let (left, left_height) = read(node.left(), depth + 1, memo)?;
+    let (right, right_height) = read(node.right(), depth + 1, memo)?;
+    let height = left_height.max(right_height) + 1;
+    let form = match operation {
         BinaryOperation::Add | BinaryOperation::Subtract => combine(left, right, operation),
         BinaryOperation::Multiply => {
             if left.is_constant() {
@@ -269,7 +281,8 @@ fn read_binary(node: &BinaryExpression, depth: usize) -> Option<AffineForm> {
         | BinaryOperation::LessEqual
         | BinaryOperation::Greater
         | BinaryOperation::GreaterEqual => None,
-    }
+    }?;
+    Some((form, height))
 }
 
 /// Return `base ** exponent`, exact and within the bounds, for an integer
@@ -278,45 +291,73 @@ fn compute_power(base: &Rational, exponent: &Rational) -> Option<Rational> {
     keep_within_bounds(raise_to_power(base, exponent)?)
 }
 
-/// Return the form of `expression` at nesting `depth`, or `None`.
-fn read(expression: &Expression, depth: usize) -> Option<AffineForm> {
+/// Return the form of `expression` at nesting `depth` and the height of its
+/// tree, or `None`. Every `None` ends the whole analysis, since each
+/// operation needs all its operands, so only forms are remembered.
+fn read(expression: &Expression, depth: usize, memo: &mut Memo) -> Option<(AffineForm, usize)> {
     if depth > MAX_DEPTH {
         return None;
     }
+    let identity = expression.identity();
+    if let Some((form, height)) = memo.get(&identity) {
+        // A shared node met deeper than where it was first read may reach
+        // past the bound.
+        return (depth + height <= MAX_DEPTH).then(|| (form.clone(), *height));
+    }
+    let read = read_node(expression, depth, memo)?;
+    memo.insert(identity, read.clone());
+    Some(read)
+}
+
+/// Return the form of `expression` at nesting `depth` and the height of its
+/// tree, reading its operands through `read`.
+fn read_node(
+    expression: &Expression,
+    depth: usize,
+    memo: &mut Memo,
+) -> Option<(AffineForm, usize)> {
     match expression.kind() {
-        ExpressionKind::Identifier(identifier) => Some(AffineForm {
-            terms: BTreeMap::from([(
-                OrderedIdentifier(identifier.clone()),
-                Rational::from(BigInt::from(1)),
-            )]),
-            constant: Rational::from(BigInt::from(0)),
-        }),
+        ExpressionKind::Identifier(identifier) => Some((
+            AffineForm {
+                terms: BTreeMap::from([(
+                    OrderedIdentifier(identifier.clone()),
+                    Rational::from(BigInt::from(1)),
+                )]),
+                constant: Rational::from(BigInt::from(0)),
+            },
+            0,
+        )),
         ExpressionKind::Literal(LiteralValue::Int(value)) => {
-            keep_within_bounds(Rational::from(value.clone())).map(AffineForm::of_constant)
+            keep_within_bounds(Rational::from(value.clone()))
+                .map(|constant| (AffineForm::of_constant(constant), 0))
         }
         ExpressionKind::Literal(LiteralValue::Decimal(value)) => {
-            keep_within_bounds(value.to_rational()).map(AffineForm::of_constant)
+            keep_within_bounds(value.to_rational())
+                .map(|constant| (AffineForm::of_constant(constant), 0))
         }
         ExpressionKind::Literal(LiteralValue::Bool(_) | LiteralValue::Float(_))
         | ExpressionKind::Logical(_)
         | ExpressionKind::Piecewise(_)
         | ExpressionKind::Call(_) => None,
-        ExpressionKind::Unary(node) => match node.operation() {
-            UnaryOperation::Positive => read(node.operand(), depth + 1),
-            UnaryOperation::Negate => {
-                let operand = read(node.operand(), depth + 1)?;
-                Some(AffineForm {
-                    terms: operand
-                        .terms
-                        .into_iter()
-                        .map(|(identifier, coefficient)| (identifier, -coefficient))
-                        .collect(),
-                    constant: -operand.constant,
-                })
+        ExpressionKind::Unary(node) => {
+            let (operand, height) = read(node.operand(), depth + 1, memo)?;
+            match node.operation() {
+                UnaryOperation::Positive => Some((operand, height + 1)),
+                UnaryOperation::Negate => Some((
+                    AffineForm {
+                        terms: operand
+                            .terms
+                            .into_iter()
+                            .map(|(identifier, coefficient)| (identifier, -coefficient))
+                            .collect(),
+                        constant: -operand.constant,
+                    },
+                    height + 1,
+                )),
+                UnaryOperation::LogicalNot => None,
             }
-            UnaryOperation::LogicalNot => None,
-        },
-        ExpressionKind::Binary(node) => read_binary(node, depth),
+        }
+        ExpressionKind::Binary(node) => read_binary(node, depth, memo),
     }
 }
 
@@ -346,6 +387,6 @@ impl Expression {
     /// Terms that cancel are dropped, so `(3 * s + t) - t` gives `3 * s`.
     #[must_use]
     pub fn affine_form(&self) -> Option<AffineForm> {
-        read(self, 0)
+        read(self, 0, &mut Memo::default()).map(|(form, _)| form)
     }
 }
