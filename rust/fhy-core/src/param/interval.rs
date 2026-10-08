@@ -229,6 +229,28 @@ fn decode_bound(
     })
 }
 
+/// Return whether `value` satisfies `constraint` read as an integer bound
+/// of `variable` (`x >= c`, `x > c`, `x <= c` or `x < c` for an integer
+/// literal `c`, on either side), or `None` when `constraint` is no such
+/// bound.
+pub(super) fn decide_bound(
+    constraint: &Constraint,
+    variable: &Identifier,
+    value: &BigInt,
+) -> Option<bool> {
+    // `decode_bound` refuses only a constraint that is no bound of the
+    // variable, which this answers as `None`.
+    let Ok(bound) = decode_bound(constraint, variable) else {
+        return None;
+    };
+    Some(match (bound.side, bound.is_inclusive) {
+        (BoundSide::Lower, true) => *value >= bound.value,
+        (BoundSide::Lower, false) => *value > bound.value,
+        (BoundSide::Upper, true) => *value <= bound.value,
+        (BoundSide::Upper, false) => *value < bound.value,
+    })
+}
+
 /// The effective integer interval of a param's bounds: each end `None` when
 /// unbounded.
 pub(crate) struct Interval {

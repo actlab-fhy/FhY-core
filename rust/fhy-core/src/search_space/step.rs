@@ -11,7 +11,8 @@ use num_bigint::{BigInt, BigUint};
 use crate::constraint::{Member, MemberKind, Value};
 use crate::identifier::Identifier;
 use crate::param::{
-    IntervalError, Param, ParamBuildError, ParamContext, ParamDomain, effective_interval,
+    AssignmentError, IntervalError, Param, ParamBuildError, ParamContext, ParamDomain,
+    effective_interval,
 };
 
 use super::configuration::Configuration;
@@ -182,12 +183,14 @@ pub(super) fn member_value(member: &Member) -> Value {
 }
 
 /// Return `configuration` with the decision `name` given `value`, or `None`
-/// when the value is not admissible: its param refuses it, or it completes
-/// a forbidden clause that holds.
+/// when the value is not admissible: its param refuses it (the value is
+/// outside its domain, or provably violates or cannot be verified against
+/// a constraint), or it completes a forbidden clause that holds.
 ///
 /// # Errors
 ///
-/// Returns [`TraceError::Configuration`] for any other refusal.
+/// Returns [`TraceError::Configuration`] for any other refusal, such as a
+/// param constraint the context fails to evaluate.
 pub(super) fn try_extend(
     configuration: &Configuration,
     name: &Identifier,
@@ -200,7 +203,13 @@ pub(super) fn try_extend(
             let is_inadmissible = errors.errors().iter().all(|problem| {
                 matches!(
                     problem,
-                    ConfigurationError::Forbidden { .. } | ConfigurationError::Assignment { .. }
+                    ConfigurationError::Forbidden { .. }
+                        | ConfigurationError::Assignment {
+                            error: AssignmentError::Inadmissible
+                                | AssignmentError::ViolatedConstraint { .. }
+                                | AssignmentError::UnverifiedConstraint { .. },
+                            ..
+                        }
                 )
             });
             if is_inadmissible {
