@@ -418,9 +418,10 @@ too. The function has the shape of the core's
 `fhy_core::search_space::wire::VariableResolverFn` (or
 `AlternativeResolverFn`), so the one function a crate writes also serves
 a pure-Rust program, which composes the crates' functions in a
-`ResolverRegistry` and decodes with its `resolver`. A class that keeps a Python-defined part reads it inside
-`util::gc::collect_slots`, keeps the `Slots` and the objects it was given,
-and visits them from its `__traverse__`, as `rust/example-aggregate` does.
+`ResolverRegistry` and decodes with its `resolver`. A class that keeps a
+Python-defined part reads it inside `util::gc::collect_slots`, keeps the
+`Slots` and the objects it was given, and visits them from its
+`__traverse__`, as `rust/example-aggregate` does.
 Its `util` module is the public surface for writing a Rust-backed class the
 way `fhy_core`'s are written, which `fhy_core`'s own classes use and a
 downstream `-py` crate builds on:
@@ -740,8 +741,9 @@ affected types document this; decoding is not ordered to prevent it.
 
 A type with an open variant, one that holds a part another implementation
 defines (a `Type` or `DataType` extension, a custom constraint or domain,
-an opaque value, a custom provenance), holds it in a `fhy_core::foreign::Part`, and serializes
-that part as a `fhy_core::foreign::Foreign`: the type id its
+an opaque value, a custom provenance), holds it in a
+`fhy_core::foreign::Part`, and serializes that part as a
+`fhy_core::foreign::Foreign`: the type id its
 implementation registered under and its own payload as text, from the
 `to_foreign` of the `ForeignPart` supertrait, whose default refuses. Its module's
 `wire` submodule defines the shape once, as a plain data type that derives
