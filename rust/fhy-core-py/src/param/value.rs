@@ -6,9 +6,12 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyBool, PyByteArray, PyBytes, PyFloat, PyInt, PyString, PyType};
+use pyo3::types::{
+    PyBool, PyByteArray, PyBytes, PyFloat, PyFrozenSet, PyInt, PyString, PyTuple, PyType,
+};
 
 use fhy_core::constraint::Value;
+use fhy_core::constraint::wire::MAX_VALUE_DEPTH;
 use fhy_core::param::DomainKind;
 
 use crate::constraint::{read_bound_value, read_identifier, read_opaque_member};
@@ -93,8 +96,21 @@ pub(super) const fn value_kind_message(kind: DomainKind) -> &'static str {
 /// the kind is ordinal, since identifiers do not order. Another
 /// `Serializable` is one when its class supports the ordering
 /// (ordinal) or the equality (categorical, permutation) the kind needs, and
-/// is read as an opaque value Python compares.
+/// is read as an opaque value Python compares. In a categorical domain a
+/// `tuple` or a `frozenset` of such values is one too, nested at most as
+/// deep as a value may be on the wire.
 fn read_finite_value(kind: DomainKind, value: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
+    read_finite_value_at(kind, value, MAX_VALUE_DEPTH)
+}
+
+/// Return the core value of one value of a finite domain of `kind`, with
+/// `remaining` more tuples or frozen sets allowed around its innermost
+/// value, or `None` if it is no value of that kind.
+fn read_finite_value_at(
+    kind: DomainKind,
+    value: &Bound<'_, PyAny>,
+    remaining: usize,
+) -> PyResult<Option<Value>> {
     if let Ok(boolean) = value.cast::<PyBool>() {
         return Ok(Some(Value::Bool(boolean.is_true())));
     }
@@ -109,6 +125,24 @@ fn read_finite_value(kind: DomainKind, value: &Bound<'_, PyAny>) -> PyResult<Opt
     }
     if let Some(identifier) = read_identifier(value)? {
         return Ok((kind != DomainKind::Ordinal).then_some(Value::Identifier(identifier)));
+    }
+    let is_tuple = value.is_instance_of::<PyTuple>();
+    if kind == DomainKind::Categorical && (is_tuple || value.is_instance_of::<PyFrozenSet>()) {
+        let Some(remaining) = remaining.checked_sub(1) else {
+            return Ok(None);
+        };
+        let mut elements = Vec::new();
+        for element in value.try_iter()? {
+            match read_finite_value_at(kind, &element?, remaining)? {
+                Some(read) => elements.push(read),
+                None => return Ok(None),
+            }
+        }
+        return Ok(Some(if is_tuple {
+            Value::Tuple(elements)
+        } else {
+            Value::FrozenSet(elements)
+        }));
     }
     if !is_serializable(value)? {
         return Ok(None);
