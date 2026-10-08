@@ -40,6 +40,14 @@ enum Pick {
     Alt(&'static str),
 }
 
+/// Return the value `pick` stands for, an alternative named in `names`.
+fn build_pick_value(names: &HashMap<&'static str, Identifier>, pick: Pick) -> Value {
+    match pick {
+        Pick::Int(number) => int(number),
+        Pick::Alt(label) => chosen(&names[label]),
+    }
+}
+
 /// The status space: the variables `v1`, `v2` over `{1, 2}`, `v2` active
 /// only while `v1` is 1; the choice `c1` among `a1` holding `x1`, `a2`
 /// holding `x2`, and the bare `a3`; and the choice `outer` among `deep`,
@@ -116,21 +124,16 @@ impl Status {
         &self.names[label]
     }
 
-    /// Return the value `pick` stands for.
-    fn value_of(&self, pick: Pick) -> Value {
-        match pick {
-            Pick::Int(number) => int(number),
-            Pick::Alt(label) => chosen(self.name(label)),
-        }
-    }
-
     /// Return the configuration of the space with `picks`.
     fn configure(&self, picks: &[(&str, Pick)]) -> Configuration {
         configure(
             &self.space,
-            picks
-                .iter()
-                .map(|&(label, pick)| (self.name(label).clone(), self.value_of(pick))),
+            picks.iter().map(|&(label, pick)| {
+                (
+                    self.name(label).clone(),
+                    build_pick_value(&self.names, pick),
+                )
+            }),
         )
     }
 }
@@ -234,17 +237,21 @@ fn is_complete_under_a_nested_choice_looks_at_every_depth(
 /// Test a name that is no decision of the space, an unknown one or an
 /// alternative's, has no answer.
 #[rstest]
-#[case::unknown_name(Identifier::new("ghost"))]
-#[case::alternative_name(Identifier::new("a1"))]
-fn is_complete_under_a_name_that_is_no_decision_is_none(#[case] stranger: Identifier) {
+#[case::unknown_name(None)]
+#[case::chosen_alternatives_name(Some("a1"))]
+#[case::other_alternatives_name(Some("a2"))]
+#[case::the_spaces_name(Some("status"))]
+fn is_complete_under_a_name_that_is_no_decision_is_none(#[case] label: Option<&str>) {
     let status = Status::new();
     let configuration = status.configure(&[("c1", Pick::Alt("a1"))]);
+    let stranger = label.map_or_else(
+        || Identifier::new("ghost"),
+        |label| status.name(label).clone(),
+    );
 
     let complete = configuration.is_complete_under(&stranger);
-    let alternative = configuration.is_complete_under(status.name("a1"));
 
     assert_eq!(complete, None);
-    assert_eq!(alternative, None);
 }
 
 /// Test on a complete configuration every decision is complete under
@@ -322,11 +329,11 @@ fn with_entries_keeps_a_held_value_a_weaker_context_could_not_check() {
     assert_eq!(extended.value(&other), Some(&int(2)));
 }
 
-/// Guard: the new entry's own value is still checked, so under the weaker
-/// context a value for the odd variable is refused as an assignment error.
-/// It passes before and after the change.
+/// Test `with_entry` still checks the new entry's own value: under a
+/// context that cannot check it, a value for the odd variable is refused
+/// as an assignment error.
 #[test]
-fn with_entry_guard_still_checks_the_new_value() {
+fn with_entry_checks_the_new_value_under_a_weaker_context() {
     let [odd, other] = ["odd", "other"].map(Identifier::new);
     let space = build_odd_space(&odd, &other);
     let held = configure(&space, []);
@@ -510,21 +517,19 @@ impl Chain {
         picks
             .iter()
             .map(|&(label, pick)| {
-                let value = match pick {
-                    Pick::Int(number) => int(number),
-                    Pick::Alt(alternative) => chosen(&self.names[alternative]),
-                };
-                (self.names[label].clone(), value)
+                (
+                    self.names[label].clone(),
+                    build_pick_value(&self.names, pick),
+                )
             })
             .collect()
     }
 }
 
-/// Guard: `with_entry` changing a decision that gates others through
+/// Test `with_entry` changing a decision that gates others through
 /// conditions at depth gives exactly what `Configuration::new` gives for
-/// the same entries, the same configuration or the same errors. It passes
-/// before the change: it guards the incremental check against dropping an
-/// activity change.
+/// the same entries, the same configuration or the same errors: the check
+/// of only the new entry does not drop a change of activity.
 #[rstest]
 #[case::choice_switch_deactivates_both_held_values(
     &[("g", Pick::Alt("p")), ("m", Pick::Int(1)), ("n", Pick::Int(1))],
@@ -550,7 +555,7 @@ impl Chain {
     &[("g", Pick::Alt("p")), ("m", Pick::Int(2))],
     ("n", Pick::Int(1)), true
 )]
-fn with_entry_guard_agrees_with_new_when_activity_changes_at_depth(
+fn with_entry_agrees_with_new_when_activity_changes_at_depth(
     #[case] start: &[(&str, Pick)],
     #[case] change: (&str, Pick),
     #[case] is_refused: bool,
