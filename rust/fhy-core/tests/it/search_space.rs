@@ -6,9 +6,11 @@
 mod activity_stories;
 mod alternative_stories;
 mod choice_stories;
+mod completeness_stories;
 mod configuration_stories;
 mod crossover_stories;
 mod domain_stories;
+mod editing_stories;
 mod equivalence_stories;
 mod error_text_stories;
 mod exploration_stories;
