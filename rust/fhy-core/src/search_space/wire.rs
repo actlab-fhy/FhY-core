@@ -122,8 +122,9 @@ pub type CustomDomainResolverFn = fn(&Foreign) -> Result<Part<dyn CustomDomain>,
 /// [`resolver`](Self::resolver) lends the registry, with the context
 /// params are built under, as a [`SearchSpaceResolver`] for the wire
 /// forms' `build`: a part whose type id the registry holds is built by its
-/// function, which is handed that resolver for the parts inside it, and any
-/// other part is refused as [`NoForeign`] refuses it.
+/// function, a variable's or an alternative's being handed that resolver
+/// and the context for the parts inside it, and any other part is refused
+/// as [`NoForeign`] refuses it.
 ///
 /// Cloning copies the tables; the registry holds no other state.
 ///
@@ -178,6 +179,21 @@ fn register<F>(
     }
 }
 
+/// Refuse `type_id` when it is `reserved`, a kind the wire form tags
+/// `plain` and never resolves.
+///
+/// # Errors
+///
+/// Returns [`RegistryError::ReservedTypeId`] for `reserved`.
+fn refuse_reserved(type_id: &str, reserved: &str) -> Result<(), RegistryError> {
+    if type_id == reserved {
+        return Err(RegistryError::ReservedTypeId {
+            type_id: type_id.to_owned(),
+        });
+    }
+    Ok(())
+}
+
 /// Move the functions of `other` into `table`.
 ///
 /// # Errors
@@ -215,11 +231,7 @@ impl ResolverRegistry {
         type_id: &str,
         resolve: VariableResolverFn,
     ) -> Result<Self, RegistryError> {
-        if type_id == PlainVariable::KIND {
-            return Err(RegistryError::ReservedTypeId {
-                type_id: type_id.to_owned(),
-            });
-        }
+        refuse_reserved(type_id, PlainVariable::KIND)?;
         register(&mut self.variables, type_id, resolve)?;
         Ok(self)
     }
@@ -237,11 +249,7 @@ impl ResolverRegistry {
         type_id: &str,
         resolve: AlternativeResolverFn,
     ) -> Result<Self, RegistryError> {
-        if type_id == PlainAlternative::KIND {
-            return Err(RegistryError::ReservedTypeId {
-                type_id: type_id.to_owned(),
-            });
-        }
+        refuse_reserved(type_id, PlainAlternative::KIND)?;
         register(&mut self.alternatives, type_id, resolve)?;
         Ok(self)
     }
@@ -333,65 +341,52 @@ pub struct RegistryResolver<'a, 'c> {
     context: &'a ParamContext<'c>,
 }
 
-/// Return the error for the part `foreign`, whose type id the registry
-/// does not hold, as [`NoForeign`] refuses it.
-fn unresolved(foreign: &Foreign) -> ForeignError {
-    ForeignError::Unresolved {
-        type_id: foreign.type_id().to_owned(),
-    }
+/// Return the function `table` holds for the type id of `foreign`.
+///
+/// # Errors
+///
+/// Returns [`ForeignError::Unresolved`] for a type id the table does not
+/// hold, as [`NoForeign`] refuses it.
+fn look_up<F: Copy>(table: &HashMap<Arc<str>, F>, foreign: &Foreign) -> Result<F, ForeignError> {
+    table
+        .get(foreign.type_id())
+        .copied()
+        .ok_or_else(|| ForeignError::Unresolved {
+            type_id: foreign.type_id().to_owned(),
+        })
 }
 
 impl Resolve<Part<dyn Variable>> for RegistryResolver<'_, '_> {
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Variable>, ForeignError> {
-        let build = self
-            .registry
-            .variables
-            .get(foreign.type_id())
-            .ok_or_else(|| unresolved(foreign))?;
+        let build = look_up(&self.registry.variables, foreign)?;
         build(foreign, self, self.context)
     }
 }
 
 impl Resolve<Part<dyn Alternative>> for RegistryResolver<'_, '_> {
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Alternative>, ForeignError> {
-        let build = self
-            .registry
-            .alternatives
-            .get(foreign.type_id())
-            .ok_or_else(|| unresolved(foreign))?;
+        let build = look_up(&self.registry.alternatives, foreign)?;
         build(foreign, self, self.context)
     }
 }
 
 impl Resolve<Part<dyn OpaqueValue>> for RegistryResolver<'_, '_> {
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
-        let build = self
-            .registry
-            .opaque_values
-            .get(foreign.type_id())
-            .ok_or_else(|| unresolved(foreign))?;
+        let build = look_up(&self.registry.opaque_values, foreign)?;
         build(foreign)
     }
 }
 
 impl Resolve<Part<dyn CustomConstraint>> for RegistryResolver<'_, '_> {
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomConstraint>, ForeignError> {
-        let build = self
-            .registry
-            .custom_constraints
-            .get(foreign.type_id())
-            .ok_or_else(|| unresolved(foreign))?;
+        let build = look_up(&self.registry.custom_constraints, foreign)?;
         build(foreign)
     }
 }
 
 impl Resolve<Part<dyn CustomDomain>> for RegistryResolver<'_, '_> {
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomDomain>, ForeignError> {
-        let build = self
-            .registry
-            .custom_domains
-            .get(foreign.type_id())
-            .ok_or_else(|| unresolved(foreign))?;
+        let build = look_up(&self.registry.custom_domains, foreign)?;
         build(foreign)
     }
 }
