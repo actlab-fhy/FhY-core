@@ -7,8 +7,8 @@
 use fhy_core::constraint::Value;
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::{
-    Configuration, Coordinate, GuidedOracle, RandomOracle, Recorded, Recorder, Space, StepDomain,
-    Trace, TraceError,
+    Configuration, Coordinate, GuidedOracle, RandomOracle, Recorded, Recorder, SearchOracle, Space,
+    StepDomain, Trace, TraceError,
 };
 use rstest::rstest;
 
@@ -75,10 +75,7 @@ fn value_of(configuration: &Configuration, name: &Identifier) -> Value {
 
 /// Return the dynamic steps `asks` (a kind and its domain) answered by
 /// `oracle`, in order.
-fn ask_dynamic(
-    oracle: &mut GuidedOracle<&mut ScriptedOracle>,
-    asks: &[(&str, StepDomain)],
-) -> Vec<Coordinate> {
+fn ask_dynamic(oracle: &mut dyn SearchOracle, asks: &[(&str, StepDomain)]) -> Vec<Coordinate> {
     let subject = Identifier::new("s");
     let mut recorder = Recorder::new();
     with_context(|context| {
@@ -413,19 +410,11 @@ fn guided_oracle_with_an_empty_guide_stops_with_its_fallbacks_error() {
 #[test]
 fn guided_oracle_fallback_returns_the_fallback_given() {
     let mut guided = GuidedOracle::new(&Trace::default(), ScriptedOracle::new([index(3)]));
-    let domain = strided(&[(0, 64)]);
-    let answers = {
-        let subject = Identifier::new("s");
-        let mut recorder = Recorder::new();
-        with_context(|context| {
-            recorder.decide_dynamic(&kind("k"), &subject, &domain, &mut guided, context)
-        })
-        .expect("the fallback answers")
-    };
+    let answers = ask_dynamic(&mut guided, &[("k", strided(&[(0, 64)]))]);
 
     let fallback = guided.fallback();
 
-    assert_eq!(answers, index(3));
+    assert_eq!(answers, vec![index(3)]);
     assert_eq!(fallback.seen.len(), 1);
     assert_eq!(fallback.seen[0].kind, "k");
 }
@@ -435,13 +424,7 @@ fn guided_oracle_fallback_returns_the_fallback_given() {
 #[test]
 fn guided_oracle_into_fallback_returns_the_fallback_given() {
     let mut guided = GuidedOracle::new(&Trace::default(), ScriptedOracle::new([index(3)]));
-    let domain = strided(&[(0, 64)]);
-    let subject = Identifier::new("s");
-    let mut recorder = Recorder::new();
-    with_context(|context| {
-        recorder.decide_dynamic(&kind("k"), &subject, &domain, &mut guided, context)
-    })
-    .expect("the fallback answers");
+    ask_dynamic(&mut guided, &[("k", strided(&[(0, 64)]))]);
 
     let fallback = guided.into_fallback();
 
