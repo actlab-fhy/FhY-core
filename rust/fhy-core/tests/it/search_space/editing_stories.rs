@@ -781,6 +781,38 @@ fn complete_returns_a_complete_configuration_as_it_is() {
     assert_eq!(completed.trace(), &expected_trace);
 }
 
+/// Test `complete` honours a fixed value when a forbidden clause spans it
+/// and an unassigned decision asked earlier: with `a == 1 and b == 1`
+/// forbidden and `b` fixed at 1, every run, whatever its oracle's seed,
+/// answers `a = 0`, and the trace replays into the completion.
+#[test]
+fn complete_keeps_an_earlier_decision_clear_of_a_forbidden_clause_with_a_fixed_one() {
+    let [name, a, b] = ["pair", "a", "b"].map(Identifier::new);
+    let space = Space::new(
+        name,
+        vec![int_variable(&a, &[0, 1]), int_variable(&b, &[0, 1])],
+        Vec::new(),
+        Vec::new(),
+        vec![forbidden([in_set(&a, [int(1)]), in_set(&b, [int(1)])])],
+    )
+    .expect("the space is valid");
+    let partial = configure(&space, [(b.clone(), int(1))]);
+
+    for seed in 0..64 {
+        let mut oracle = RandomOracle::new(seed);
+
+        let completed = with_context(|context| space.complete(&partial, &mut oracle, context))
+            .unwrap_or_else(|error| panic!("seed {seed} does not complete: {error}"));
+
+        let configuration = completed.configuration().expect("over a space");
+        assert_eq!(configuration.value(&a), Some(&int(0)), "seed {seed}");
+        assert_eq!(configuration.value(&b), Some(&int(1)), "seed {seed}");
+        let replayed = with_context(|context| space.replay(completed.trace(), context))
+            .expect("the trace replays");
+        assert_eq!(&replayed, configuration, "seed {seed}");
+    }
+}
+
 /// Test `complete` of a configuration of another space is refused with
 /// `OtherSpace` and does not ask the oracle.
 #[test]
