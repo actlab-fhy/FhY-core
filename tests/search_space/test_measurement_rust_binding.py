@@ -226,21 +226,31 @@ def test_the_trace_key_payload_lists_its_steps() -> None:
     assert [step["decision"] for step in steps] == [None, None]
 
 
+@pytest.mark.parametrize(
+    "round_trip",
+    [
+        lambda measurement: Measurement.deserialize_from_dict(
+            measurement.serialize_to_dict()
+        ),
+        lambda measurement: Measurement.from_json(measurement.to_json()),
+    ],
+    ids=["dict", "text"],
+)
 @pytest.mark.parametrize("index", range(4), ids=_IDS)
-def test_a_trace_key_measurement_round_trips_through_its_payloads(index: int) -> None:
+def test_a_trace_key_measurement_round_trips_through_its_payloads(
+    index: int, round_trip: Callable[[Measurement], Measurement]
+) -> None:
     """Test the V2 dict and text of a run's measurement decode to its trace key."""
     measurement = _trace_measurements()[index]
 
-    from_dict = Measurement.deserialize_from_dict(measurement.serialize_to_dict())
-    from_text = Measurement.from_json(measurement.to_json())
+    decoded = round_trip(measurement)
 
-    for decoded in (from_dict, from_text):
-        assert type(decoded) is Measurement
-        assert type(decoded.key) is TraceKey
-        assert decoded.key == measurement.key
-        assert hash(decoded.key) == hash(measurement.key)
-        assert decoded.serialize_to_dict() == measurement.serialize_to_dict()
-        assert decoded.values == measurement.values
+    assert type(decoded) is Measurement
+    assert type(decoded.key) is TraceKey
+    assert decoded.key == measurement.key
+    assert hash(decoded.key) == hash(measurement.key)
+    assert decoded.serialize_to_dict() == measurement.serialize_to_dict()
+    assert decoded.values == measurement.values
 
 
 def test_a_trace_key_measurement_round_trips_through_the_registry() -> None:
