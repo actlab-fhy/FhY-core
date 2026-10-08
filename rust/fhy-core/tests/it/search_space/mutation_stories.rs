@@ -18,8 +18,8 @@ use crate::support::search::{
     attempts, build_tiling_space, permutation_param, tiling_entries, with_context,
 };
 use crate::support::search_space::{
-    bare_alternative, choice_of, chosen, configure, forbidden, int_variable, plain_alternative,
-    plain_variable, space_of,
+    bare_alternative, choice_of, chosen, configure, forbidden, int_variable, natural_param,
+    plain_alternative, plain_variable, space_of,
 };
 
 /// Test a mutation refuses a choice's other alternative when no completion
@@ -39,6 +39,78 @@ fn space_mutate_refuses_an_alternative_without_a_completion_beyond_the_search_bu
         matches!(result, Err(TraceError::NothingToMutate)),
         "{result:?}"
     );
+}
+
+/// Return the space of one choice `c` between `a`, holding the variable `x`
+/// over `values`, the alternatives `extra` holding nothing, and `u`,
+/// holding the variable `n` over the unbounded natural numbers, with the
+/// names of `c`, `a`, `x` and `u`.
+fn build_unbounded_alternative_space(
+    values: &[i64],
+    extra: &[&str],
+) -> (Space, Identifier, Identifier, Identifier, Identifier) {
+    let [name, c, a, x, u, n] = ["unbounded", "c", "a", "x", "u", "n"].map(Identifier::new);
+    let mut alternatives = vec![plain_alternative(
+        &a,
+        vec![int_variable(&x, values)],
+        Vec::new(),
+    )];
+    alternatives.extend(
+        extra
+            .iter()
+            .map(|name| bare_alternative(&Identifier::new(name))),
+    );
+    alternatives.push(plain_alternative(
+        &u,
+        vec![plain_variable(&n, natural_param())],
+        Vec::new(),
+    ));
+    let space = space_of(&name, Vec::new(), vec![choice_of(&c, alternatives)]);
+    (space, c, a, x, u)
+}
+
+/// Test a mutation never moves to an alternative holding a variable with no
+/// finite domain, whatever the seed: no value of its variable can be drawn,
+/// so it is no option, and every seed mutates to another one.
+#[test]
+fn space_mutate_never_moves_to_an_alternative_holding_an_unbounded_variable() {
+    let (space, choice, alternative, variable, unbounded) =
+        build_unbounded_alternative_space(&[1, 2, 3], &["b"]);
+    let configuration = configure(
+        &space,
+        [(choice.clone(), chosen(&alternative)), (variable, int(2))],
+    );
+
+    for seed in 0..64 {
+        let mutated = with_context(|context| {
+            space.mutate(&configuration, &mut Rng::new(seed), context, attempts(16))
+        })
+        .unwrap_or_else(|error| panic!("seed {seed} mutates, got {error:?}"));
+        let configuration = mutated.configuration().expect("a run over a space");
+        assert_ne!(
+            configuration.value(&choice),
+            Some(&chosen(&unbounded)),
+            "seed {seed} moved to the unbounded alternative"
+        );
+    }
+}
+
+/// Test a mutation whose only other option is an alternative holding a
+/// variable with no finite domain finds nothing to mutate, for every seed.
+#[test]
+fn space_mutate_finds_nothing_when_the_only_other_alternative_is_unbounded() {
+    let (space, choice, alternative, variable, _) = build_unbounded_alternative_space(&[1], &[]);
+    let configuration = configure(&space, [(choice, chosen(&alternative)), (variable, int(1))]);
+
+    for seed in 0..16 {
+        let result = with_context(|context| {
+            space.mutate(&configuration, &mut Rng::new(seed), context, attempts(16))
+        });
+        assert!(
+            matches!(result, Err(TraceError::NothingToMutate)),
+            "seed {seed}: {result:?}"
+        );
+    }
 }
 
 /// Test a mutation asks each variable's search-domain hook a number of
