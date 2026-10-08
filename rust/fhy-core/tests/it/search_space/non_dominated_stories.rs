@@ -198,6 +198,29 @@ fn non_dominated_refuses_successes_over_different_objectives() {
     );
 }
 
+/// Test two successes over three objectives, one objective of each
+/// different, are refused although each is worse than the other on an
+/// objective they share, so neither direction of `dominates` reads past it.
+#[test]
+fn non_dominated_refuses_different_objectives_after_a_worse_value_each_way() {
+    let [x, y, z, w] = ["x", "y", "z", "w"].map(|name| objective(name, Direction::Minimize));
+    let measurements = [
+        Measurement::ok(
+            tiling_key(0),
+            vec![(x.clone(), 2.0), (y.clone(), 1.0), (z, 1.0)],
+        )
+        .expect("finite"),
+        Measurement::ok(tiling_key(0), vec![(x, 1.0), (y, 2.0), (w, 1.0)]).expect("finite"),
+    ];
+
+    let result = non_dominated(&measurements);
+
+    assert!(
+        matches!(result, Err(MeasurementError::DifferentObjectives)),
+        "{result:?}"
+    );
+}
+
 /// Test measurements of runs and of configurations are compared alike:
 /// the key does not take part.
 #[test]

@@ -324,6 +324,27 @@ fn dominance_refuses_different_objectives(#[case] other: Objective) {
     );
 }
 
+/// Test measurements of the same number of objectives, one of them named
+/// otherwise, are refused even where the first objective already shows a
+/// worse value, in either direction.
+#[test]
+fn dominance_refuses_a_renamed_objective_after_a_worse_value() {
+    let latency = objective("latency", Direction::Minimize);
+    let energy = objective("energy", Direction::Minimize);
+    let power = objective("power", Direction::Minimize);
+    let left = measured(0, &[(&latency, 2.0), (&energy, 1.0)]);
+    let right = measured(1, &[(&latency, 1.0), (&power, 1.0)]);
+
+    assert_eq!(
+        left.dominates(&right),
+        Err(MeasurementError::DifferentObjectives)
+    );
+    assert_eq!(
+        right.dominates(&left),
+        Err(MeasurementError::DifferentObjectives)
+    );
+}
+
 /// Test a measurement holding an extra objective is not compared.
 #[test]
 fn dominance_refuses_an_extra_objective() {

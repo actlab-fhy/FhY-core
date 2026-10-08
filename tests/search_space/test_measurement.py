@@ -603,6 +603,20 @@ def test_dominance_refuses_different_objectives() -> None:
         left.dominates(right)
 
 
+def test_dominance_refuses_a_renamed_objective_after_a_worse_value() -> None:
+    """Test other objectives are refused even after a worse shared value."""
+    latency, energy, power = (
+        Objective(n, "minimize") for n in ("latency", "energy", "power")
+    )
+    left = Measurement.ok(_key(), {latency: 2.0, energy: 1.0})
+    right = Measurement.ok(_key(), {latency: 1.0, power: 1.0})
+
+    with pytest.raises(MeasurementError, match="different objectives"):
+        left.dominates(right)
+    with pytest.raises(MeasurementError, match="different objectives"):
+        right.dominates(left)
+
+
 def test_dominance_refuses_a_measurement_that_did_not_succeed() -> None:
     """Test a failed measurement is not compared, in either position."""
     failed = Measurement.timeout(_key())
@@ -728,6 +742,18 @@ def test_non_dominated_refuses_different_objectives() -> None:
     """Test two successful measurements over other objectives are not compared."""
     left = Measurement.ok(_key(), {_latency(): 1.0})
     right = Measurement.ok(_key(), {Objective("latency", "maximize"): 1.0})
+
+    with pytest.raises(MeasurementError, match="different objectives"):
+        non_dominated([left, right])
+
+
+def test_non_dominated_refuses_different_objectives_after_a_worse_value_each_way() -> (
+    None
+):
+    """Test a different third objective is refused despite worse shared values."""
+    x, y, z, w = (Objective(name, "minimize") for name in "xyzw")
+    left = Measurement.ok(_key(), {x: 2.0, y: 1.0, z: 1.0})
+    right = Measurement.ok(_key(), {x: 1.0, y: 2.0, w: 1.0})
 
     with pytest.raises(MeasurementError, match="different objectives"):
         non_dominated([left, right])
