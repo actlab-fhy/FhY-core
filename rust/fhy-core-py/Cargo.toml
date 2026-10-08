@@ -1,13 +1,19 @@
 [package]
 name = "fhy-core-py"
 description = "The PyO3 binding of fhy-core as a library: registers fhy_core's Python classes into an extension module."
-publish = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/fhy-core-py"
+keywords = ["python", "pyo3", "bindings", "compiler", "ir"]
+categories = ["api-bindings", "compilers"]
+# Ship the sources, with the SymPy prelude they embed; the tests are unit
+# tests inside them. Cargo.toml and Cargo.lock are always included.
+include = ["/src/**/*.rs", "/src/**/*.py", "/README.md", "/LICENSE"]
 
 [lib]
 name = "fhy_core_py"

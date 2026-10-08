@@ -32,7 +32,8 @@ allow = [
 confidence-threshold = 0.93
 
 [licenses.private]
-# Skip workspace crates that are never published (fhy-core-py).
+# Skip workspace crates that are never published (fhy-core-ext and the
+# example aggregate).
 ignore = true
 
 [bans]
