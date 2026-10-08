@@ -23,7 +23,7 @@ uv run pre-commit install
 uv run pre-commit run --all-files
 ```
 
-4. Run the developer tasks with [nox](https://nox.thea.codes/) (driven by uv). The test sessions span Python 3.10–3.14; uv installs any interpreters you are missing automatically.
+4. Run the developer tasks with [nox](https://nox.thea.codes/) (driven by uv). The test sessions span Python 3.11–3.14; uv installs any interpreters you are missing automatically.
 ```bash
 uv run nox              # lint, type_check, tests, coverage
 uv run nox -s lint      # ruff check + format

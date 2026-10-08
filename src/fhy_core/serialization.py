@@ -168,6 +168,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
+from enum import StrEnum
 from pathlib import PurePath
 from pprint import pformat
 from types import UnionType
@@ -191,7 +192,6 @@ from immutabledict import immutabledict
 
 from .error import register_error
 from .logger import get_logger
-from .utils.enum import StrEnum
 from .utils.type_hint_utils import (
     get_origin_and_arguments,
     resolve_field_annotations,

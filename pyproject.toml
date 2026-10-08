@@ -15,14 +15,13 @@ authors = [
 maintainers = [
    {name = "Christopher Priebe", email = "cpriebe@ucsd.edu"},
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = [
    "Compiler",
 ]
 classifiers = [
    "Development Status :: 3 - Alpha",
    "Programming Language :: Python :: 3",
-   "Programming Language :: Python :: 3.10",
    "Programming Language :: Python :: 3.11",
    "Programming Language :: Python :: 3.12",
    "Programming Language :: Python :: 3.13",
@@ -131,7 +130,7 @@ exclude_also = [
 ]
 
 [tool.ty.environment]
-python-version = "3.10"
+python-version = "3.11"
 
 [tool.ty.src]
 include = [
@@ -153,7 +152,7 @@ enable_error_code = ["explicit-override", "truthy-bool"]
 [tool.ruff]
 line-length = 88
 indent-width = 4
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [

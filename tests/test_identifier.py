@@ -254,10 +254,6 @@ def test_identifier_supports_equal_traits() -> None:
     assert identifier.supports_equality is True
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 11),
-    reason="`typing.final` only sets `__final__` on Python 3.11+",
-)
 def test_identifier_class_is_final() -> None:
     """Test `Identifier` is decorated with `typing.final`.
 

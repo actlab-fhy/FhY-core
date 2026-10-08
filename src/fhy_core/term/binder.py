@@ -23,11 +23,10 @@ __all__ = ["BinderMixin", "HasFreeIdentifiers", "Term"]
 
 from abc import abstractmethod
 from collections.abc import Mapping, Sequence
-from typing import Protocol, cast, runtime_checkable
+from typing import Protocol, Self, cast, runtime_checkable
 
 from fhy_core import _rs
 from fhy_core.identifier import Identifier
-from fhy_core.utils import Self
 
 from .alpha_equivalence import AlphaEquivalence, AlphaEquivalenceMixin, AlphaRenaming
 

@@ -49,7 +49,6 @@ The expression, constraint, and parameter families, together with their shared s
 | Compiler Traits - Interned               | `Interned` mixin for components with hash-consed, deduplicated instances. |
 | Data Structure - Lattice                 | Order-theoretic lattice over hashable elements, backed by the Rust core, with join/meet operations and a `verify()` report of the pairs that lack one, for dataflow-style analyses. |
 | _General Utility_ - Logging              | Centralized logging configuration and helpers shared by all compiler components. |
-| _General Utility_ - Python 3.11 Enums    | Backports of `StrEnum` and `IntEnum` semantics introduced in Python 3.11. |
 | _General Utility_ - Stack                | Lightweight stack wrapping `collections.deque` with a clearer interface. |
 | _General Utility_ - Scope                | `Scope` stack of LIFO name-binding frames with innermost-first shadowing lookup and a context manager for scoped push/pop; generalizes the scoping used by `SymbolTable`. |
 | _General Utility_ - POSET                | Partially ordered set over hashable elements, backed by the Rust core: reflexive order queries answered from each element's up-set, and a topological iteration that insertion order (or `iter_stable`'s key) makes deterministic. |

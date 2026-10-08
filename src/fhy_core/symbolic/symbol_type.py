@@ -2,7 +2,7 @@
 
 __all__ = ["SymbolType"]
 
-from fhy_core.utils import StrEnum
+from enum import StrEnum
 
 
 class SymbolType(StrEnum):

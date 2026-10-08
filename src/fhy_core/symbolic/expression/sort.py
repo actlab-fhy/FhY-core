@@ -17,7 +17,7 @@ __all__ = [
     "is_python_value_compatible_with_sort",
 ]
 
-from fhy_core.utils import StrEnum
+from enum import StrEnum
 
 
 class FunctionSort(StrEnum):

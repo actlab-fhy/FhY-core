@@ -45,6 +45,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from threading import Lock
 from typing import (
     TYPE_CHECKING,
@@ -52,6 +53,7 @@ from typing import (
     ClassVar,
     Generic,
     Protocol,
+    Self,
     TypeVar,
     cast,
     runtime_checkable,
@@ -64,8 +66,6 @@ from fhy_core.diagnostic import Diagnostic, DiagnosticLevel, Note
 from fhy_core.error import register_error
 from fhy_core.logger import get_logger
 from fhy_core.traits import FrozenMixin, PartialEqualMixin, Visitable
-from fhy_core.utils.enum import StrEnum
-from fhy_core.utils.self import Self
 
 if TYPE_CHECKING:
     from fhy_core.diagnostic import ValidationReport

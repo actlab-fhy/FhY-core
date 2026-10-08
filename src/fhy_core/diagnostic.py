@@ -36,7 +36,8 @@ __all__ = [
 ]
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar
 
 from fhy_core import _rs
 from fhy_core.error import register_error
@@ -58,9 +59,7 @@ from fhy_core.traits import (
     PartialEqualMixin,
     StructuralEquivalence,
 )
-from fhy_core.utils import StrEnum
 from fhy_core.utils.override import override
-from fhy_core.utils.self import Self
 
 
 @register_serializable(type_id="note_kind")

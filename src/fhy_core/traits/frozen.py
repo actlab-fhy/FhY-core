@@ -27,6 +27,7 @@ from typing import (
     ClassVar,
     ForwardRef,
     Protocol,
+    Self,
     TypeVar,
     get_origin,
     runtime_checkable,
@@ -36,7 +37,6 @@ from immutabledict import immutabledict
 
 from fhy_core.error import register_error
 from fhy_core.logger import get_logger
-from fhy_core.utils import Self
 from fhy_core.utils.type_hint_utils import (
     get_field_names,
     get_origin_and_arguments,

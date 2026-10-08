@@ -116,6 +116,7 @@ __all__ = [
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
+from enum import StrEnum
 from functools import cache
 from typing import cast
 
@@ -124,7 +125,7 @@ from immutabledict import immutabledict
 from fhy_core import _rs
 from fhy_core.error import register_error
 from fhy_core.identifier import Identifier
-from fhy_core.utils import StrEnum, is_strict_int
+from fhy_core.utils import is_strict_int
 from fhy_core.utils.override import override
 
 from .expression import Expression

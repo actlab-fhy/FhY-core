@@ -2,9 +2,9 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from decimal import Decimal
 from os import PathLike
 from pathlib import Path
-from typing import Any, Generic
+from typing import Any, Generic, Self
 
-from typing_extensions import Self, override
+from typing_extensions import override
 
 from fhy_core.diagnostic import Diagnostic as _Diagnostic
 from fhy_core.diagnostic import DiagnosticLevel as _DiagnosticLevel

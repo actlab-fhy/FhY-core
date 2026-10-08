@@ -9,7 +9,7 @@ import nox
 nox.options.default_venv_backend = "uv"
 nox.options.sessions = ["lint", "type_check", "tests", "coverage"]
 
-PYTHONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+PYTHONS = ["3.11", "3.12", "3.13", "3.14"]
 ROOT = pathlib.Path(__file__).parent
 # The golden-corpus generators are the Rust core's equivalence oracle, and the
 # benchmarks measure the package's hot paths, so both pass the same lint and
