@@ -49,10 +49,11 @@ fn build_unbounded_alternative_space(
     values: &[i64],
     extra: &[&str],
 ) -> (Space, Identifier, Identifier, Identifier, Identifier) {
-    let [name, c, a, x, u, n] = ["unbounded", "c", "a", "x", "u", "n"].map(Identifier::new);
+    let [name, choice, bounded, variable, unbounded, natural] =
+        ["unbounded", "c", "a", "x", "u", "n"].map(Identifier::new);
     let mut alternatives = vec![plain_alternative(
-        &a,
-        vec![int_variable(&x, values)],
+        &bounded,
+        vec![int_variable(&variable, values)],
         Vec::new(),
     )];
     alternatives.extend(
@@ -61,12 +62,12 @@ fn build_unbounded_alternative_space(
             .map(|name| bare_alternative(&Identifier::new(name))),
     );
     alternatives.push(plain_alternative(
-        &u,
-        vec![plain_variable(&n, natural_param())],
+        &unbounded,
+        vec![plain_variable(&natural, natural_param())],
         Vec::new(),
     ));
-    let space = space_of(&name, Vec::new(), vec![choice_of(&c, alternatives)]);
-    (space, c, a, x, u)
+    let space = space_of(&name, Vec::new(), vec![choice_of(&choice, alternatives)]);
+    (space, choice, bounded, variable, unbounded)
 }
 
 /// Test a mutation never moves to an alternative holding a variable with no
