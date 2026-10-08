@@ -10,6 +10,7 @@ pub(crate) mod foreign;
 pub(crate) mod hashing;
 pub(crate) mod lambda;
 pub(crate) mod measurement;
+pub(crate) mod mutation;
 pub(crate) mod param;
 pub(crate) mod pass_ir;
 pub(crate) mod pattern;

@@ -328,6 +328,42 @@ fn collect_keys(configurations: &[Configuration]) -> HashSet<ConfigurationKey> {
     configurations.iter().map(Configuration::key).collect()
 }
 
+/// Return, per decision of `space` in decision order, the values other than
+/// `original`'s that some of `configurations` takes while agreeing with
+/// `original` on every earlier decision: none for a decision `original`
+/// leaves unassigned.
+fn compute_takeable_values(
+    space: &Space,
+    configurations: &[Configuration],
+    original: &Configuration,
+) -> Vec<Vec<Value>> {
+    let order = space.decision_order();
+    order
+        .iter()
+        .enumerate()
+        .map(|(position, name)| {
+            let Some(current) = original.value(name) else {
+                return Vec::new();
+            };
+            let mut values: Vec<Value> = Vec::new();
+            for configuration in configurations {
+                let agrees = order[..position]
+                    .iter()
+                    .all(|earlier| configuration.value(earlier) == original.value(earlier));
+                if !agrees {
+                    continue;
+                }
+                if let Some(value) = configuration.value(name) {
+                    if value != current && !values.contains(value) {
+                        values.push(value.clone());
+                    }
+                }
+            }
+            values
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Strategies
 // ---------------------------------------------------------------------------
@@ -516,6 +552,52 @@ proptest! {
             }
             Err(TraceError::NothingToMutate) => prop_assert_eq!(configurations.len(), 1),
             Err(error) => prop_assert!(false, "mutation failed: {error}"),
+        }
+    }
+
+    /// Test a mutation is refused exactly when a brute-force oracle finds no
+    /// decision that may change, and otherwise gives a complete reference
+    /// configuration, other than the original, whose first changed decision
+    /// is one the oracle allows, to a value the oracle allows.
+    ///
+    /// The oracle: a decision may change to a value iff some complete
+    /// configuration agrees with the original on every decision before it
+    /// in decision order and takes that value there.
+    #[test]
+    fn mutation_changes_only_what_the_brute_force_oracle_allows(
+        model in generate_model(),
+        pick in any::<prop::sample::Index>(),
+        seed in any::<u64>(),
+    ) {
+        let (space, names) = build_space(&model);
+        let configurations = build_reference_configurations(&model, &space, &names);
+        prop_assume!(!configurations.is_empty());
+        let original = &configurations[pick.index(configurations.len())];
+        let takeable = compute_takeable_values(&space, &configurations, original);
+
+        let result = with_context(|context| {
+            space.mutate(original, &mut Rng::new(seed), context, NonZeroU32::new(256).expect("positive"))
+        });
+
+        if takeable.iter().all(Vec::is_empty) {
+            prop_assert!(matches!(result, Err(TraceError::NothingToMutate)), "{result:?}");
+        } else {
+            let recorded = result.expect("a decision may change");
+            let mutated = recorded.configuration().expect("over a space");
+            prop_assert!(mutated.is_complete());
+            prop_assert!(collect_keys(&configurations).contains(&mutated.key()));
+            prop_assert_ne!(mutated.key(), original.key());
+            let first = space
+                .decision_order()
+                .iter()
+                .position(|name| mutated.value(name) != original.value(name))
+                .expect("the mutation differs from the original");
+            let value = mutated.value(&space.decision_order()[first]).expect("the changed decision is assigned");
+            prop_assert!(
+                takeable[first].contains(value),
+                "decision {first} took {value:?}, which the oracle does not allow: {:?}",
+                takeable[first]
+            );
         }
     }
 
@@ -736,5 +818,61 @@ fn some_generated_models_have_no_configuration() {
         count >= 1,
         "no model of {GUARD_CASES} has an empty space; uniform sampling's exhaustion \
          is not exercised"
+    );
+}
+
+/// Return whether some complete configuration of `model` can be mutated:
+/// the oracle finds a changeable decision for it.
+fn has_changeable_configuration(model: &Model) -> bool {
+    let (space, names) = build_space(model);
+    let configurations = build_reference_configurations(model, &space, &names);
+    configurations.iter().any(|original| {
+        compute_takeable_values(&space, &configurations, original)
+            .iter()
+            .any(|values| !values.is_empty())
+    })
+}
+
+#[test]
+fn many_generated_models_can_be_mutated_and_some_cannot() {
+    let models = draw_models();
+
+    let mutable = models
+        .iter()
+        .filter(|model| has_changeable_configuration(model))
+        .count();
+    let immutable = models
+        .iter()
+        .filter(|model| compute_reference_points(model).len() == 1)
+        .count();
+
+    assert!(
+        mutable * 10 >= GUARD_CASES * 6,
+        "{mutable} of {GUARD_CASES} models have a mutable configuration; the oracle's \
+         allowed values are exercised only on those"
+    );
+    assert!(
+        immutable >= 8,
+        "{immutable} of {GUARD_CASES} models have exactly one configuration; the refusal \
+         of a mutation is exercised only on those"
+    );
+}
+
+#[test]
+fn many_mutable_models_have_a_condition_or_a_forbidden_clause() {
+    let models = draw_models();
+
+    let constrained = models
+        .iter()
+        .filter(|model| {
+            (model.condition.is_some() || model.forbidden.is_some())
+                && has_changeable_configuration(model)
+        })
+        .count();
+
+    assert!(
+        constrained * 5 >= GUARD_CASES,
+        "{constrained} of {GUARD_CASES} models have a condition or a forbidden clause and \
+         can be mutated; repair after a mutation is exercised only on those"
     );
 }
