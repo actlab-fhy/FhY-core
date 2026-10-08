@@ -1172,6 +1172,9 @@ impl PyFileProvenance {
     /// Return the text of the path `file_path`, and whether it is a
     /// `PurePath`.
     ///
+    /// A `PurePath` is read in its POSIX form, so a Windows path stores
+    /// `/` as its separator.
+    ///
     /// # Errors
     ///
     /// Raises `TypeError` unless `file_path` is a `str`, or an
@@ -1185,7 +1188,9 @@ impl PyFileProvenance {
         }
         let is_pure_path = file_path.is_instance(pure_path_class(py)?)?;
         let text = if is_pure_path {
-            file_path.str()?
+            file_path
+                .call_method0(intern!(py, "as_posix"))?
+                .cast_into::<PyString>()?
         } else if file_path.get_type().hasattr(intern!(py, "__fspath__"))? {
             let text = file_path.call_method0(intern!(py, "__fspath__"))?;
             match text.cast_into::<PyString>() {
@@ -1270,13 +1275,17 @@ impl PyFileProvenance {
         )
     }
 
-    /// Pickle as a constructor call of the provenance's class.
+    /// Pickle as a constructor call of the provenance's class, with the
+    /// path as its POSIX text so the pickle loads on any platform.
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
     ) -> PyResult<(Bound<'py, PyType>, Bound<'py, PyTuple>)> {
         let py = slf.py();
-        let this = slf.get();
-        let arguments = PyTuple::new(py, [this.file_path.bind(py), this.span.bind(py)])?;
+        let Provenance::File(provenance) = &slf.as_super().get().provenance else {
+            unreachable!("a FileProvenance holds a file provenance");
+        };
+        let file_path = PyString::new(py, provenance.file_path()).into_any();
+        let arguments = PyTuple::new(py, [&file_path, slf.get().span.bind(py)])?;
         Ok((slf.get_type(), arguments))
     }
 

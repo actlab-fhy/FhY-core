@@ -12,6 +12,7 @@ import base64
 import contextlib
 import json
 import pickle
+import sys
 import warnings
 from collections.abc import Iterator
 from pathlib import Path
@@ -57,9 +58,12 @@ def test_the_corpora_cover_exactly_the_fixtures() -> None:
 @pytest.mark.parametrize("name", sorted(_FIXTURES))
 def test_a_frozen_pickle_loads_to_the_same_value(name: str, protocol: str) -> None:
     """Test a frozen pickle loads to an equivalent object."""
+    data = base64.b64decode(_PICKLES[name][protocol])
+    if sys.platform == "win32" and b"PosixPath" in data:
+        pytest.skip("pathlib cannot build the pickled PosixPath on Windows")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        loaded = pickle.loads(base64.b64decode(_PICKLES[name][protocol]))
+        loaded = pickle.loads(data)
     assert is_equivalent(loaded, _FIXTURES[name])
 
 
