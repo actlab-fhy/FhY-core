@@ -16,11 +16,12 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{CompareOp, PyTraverseError, PyVisit};
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyMapping, PyString, PyTuple, PyType};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyTuple, PyType};
 
 use fhy_core::search_space::wire::MeasurementData;
 use fhy_core::search_space::{
     Direction, Measurement, MeasurementKey, MeasurementStatus, Objective,
+    non_dominated as core_non_dominated,
 };
 
 use crate::diagnostic::note_to_python;
@@ -774,14 +775,35 @@ impl PyMeasurement {
 /// different objectives, and `TypeError` for an element that is no
 /// `Measurement`.
 #[pyfunction]
-#[expect(
-    unused_variables,
-    clippy::todo,
-    reason = "interface stub; bodies are todo!() until implementation"
-)]
 pub(crate) fn non_dominated<'py>(
     py: Python<'py>,
     measurements: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    todo!()
+    let objects = measurements
+        .try_iter()?
+        .map(|element| {
+            let element = element?;
+            element
+                .cast_into::<PyMeasurement>()
+                .map_err(|not_a_measurement| {
+                    PyTypeError::new_err(format!(
+                        "non_dominated takes Measurements, got {}.",
+                        read_type_name(not_a_measurement.into_inner().as_any())
+                    ))
+                })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let cores: Vec<Measurement> = objects
+        .iter()
+        .map(|object| object.get().core().clone())
+        .collect();
+    let front = core_non_dominated(&cores).map_err(|error| measurement_error_to_py(py, &error))?;
+    let kept = front.into_iter().map(|measurement| {
+        let position = cores
+            .iter()
+            .position(|core| std::ptr::eq(core, measurement))
+            .unwrap_or_else(|| unreachable!("the front holds input measurements"));
+        objects[position].clone().into_any()
+    });
+    Ok(PyList::new(py, kept)?.into_any())
 }

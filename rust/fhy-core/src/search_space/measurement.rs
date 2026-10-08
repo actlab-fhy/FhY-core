@@ -498,11 +498,25 @@ pub trait Measurer<S: ?Sized> {
 ///
 /// Returns [`MeasurementError::DifferentObjectives`] when two successful
 /// measurements are over different objectives.
-#[expect(
-    unused_variables,
-    clippy::todo,
-    reason = "interface stub; bodies are todo!() until implementation"
-)]
 pub fn non_dominated(measurements: &[Measurement]) -> Result<Vec<&Measurement>, MeasurementError> {
-    todo!()
+    let successes: Vec<&Measurement> = measurements
+        .iter()
+        .filter(|measurement| measurement.is_ok())
+        .collect();
+    let mut is_dominated = vec![false; successes.len()];
+    for (position, first) in successes.iter().enumerate() {
+        for (offset, second) in successes[position + 1..].iter().enumerate() {
+            if first.dominates(second)? {
+                is_dominated[position + 1 + offset] = true;
+            }
+            if second.dominates(first)? {
+                is_dominated[position] = true;
+            }
+        }
+    }
+    Ok(successes
+        .into_iter()
+        .zip(is_dominated)
+        .filter_map(|(measurement, is_dominated)| (!is_dominated).then_some(measurement))
+        .collect())
 }
