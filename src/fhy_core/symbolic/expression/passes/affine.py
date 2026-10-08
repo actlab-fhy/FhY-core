@@ -12,8 +12,11 @@ subtraction, multiplication by a constant form, true division by a non-zero
 constant, and floor division, modulo and integer powers of constant
 operands, which it folds exactly. It declines everything else: a float or
 Boolean literal, a comparison, a logical operation, a piecewise expression,
-a call, a product of two non-constant forms, a tree nested more than 256
-levels, and a coefficient whose parts would exceed 4096 bits.
+a call, a product of two non-constant forms, a division by a non-constant
+form or by zero, a floor division, modulo or power with a non-constant
+operand, a power with a non-integer exponent, ``0`` to a negative power, a
+tree nested more than 256 levels, and a coefficient or constant whose
+numerator or denominator would exceed 4096 bits.
 """
 
 __all__ = [
