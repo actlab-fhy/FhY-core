@@ -1,8 +1,8 @@
 # Install dependencies, lint, type-check, and test across Python versions/OSes.
 # Driven by uv (env/deps) and nox (sessions). See noxfile.py.
 #
-# The config job selects a LEAN matrix (ubuntu x py3.10/3.14) for everyday dev
-# PRs and a FULL matrix (3 OSes x 5 Pythons) for release gates (-> main), main
+# The config job selects a LEAN matrix (ubuntu x py3.11/3.14) for everyday dev
+# PRs and a FULL matrix (3 OSes x 4 Pythons) for release gates (-> main), main
 # pushes, and manual dispatch. The property job (hypothesis suites) and the
 # golden-expanded job (large random golden corpora replayed through the Rust
 # equivalence tests) run only on release gates (PRs -> main) and manual
@@ -273,8 +273,8 @@ jobs:
       - id: decide
         shell: bash
         run: |
-          FULL='{"os":["ubuntu-latest","macOS-latest","windows-latest"],"python-version":["3.10","3.11","3.12","3.13","3.14"]}'
-          LEAN='{"os":["ubuntu-latest"],"python-version":["3.10","3.14"]}'
+          FULL='{"os":["ubuntu-latest","macOS-latest","windows-latest"],"python-version":["3.11","3.12","3.13","3.14"]}'
+          LEAN='{"os":["ubuntu-latest"],"python-version":["3.11","3.14"]}'
 
           # Default = everyday PRs into dev.
           MATRIX="$LEAN"; FAILFAST="true"

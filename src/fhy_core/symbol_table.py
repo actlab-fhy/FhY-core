@@ -26,6 +26,7 @@ __all__ = [
 
 from abc import ABC
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import ClassVar
 
 from fhy_core import _rs
@@ -45,7 +46,6 @@ from fhy_core.traits import (
 )
 
 from .error import register_error
-from .utils import StrEnum
 
 _LOGGER = get_logger(__name__)
 """The logger the Rust binding writes this module's DEBUG lines to."""

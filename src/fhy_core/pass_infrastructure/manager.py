@@ -35,13 +35,12 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self, TypeVar
 
 from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
 from fhy_core.traits import FrozenMixin, PartialEqualMixin
-from fhy_core.utils.self import Self
 
 from .core import CompilerPass, PassExecutionError
 

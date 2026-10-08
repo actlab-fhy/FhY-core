@@ -33,6 +33,7 @@ __all__ = [
 ]
 
 from abc import ABC
+from enum import StrEnum
 
 from fhy_core import _rs
 from fhy_core.serialization import WrappedFamilySerializable, register_serializable
@@ -44,7 +45,6 @@ from ..error import register_error
 # Imported for its effect: it registers the expression classes, among them
 # the literal class the default stride of an `IndexType` is built through.
 from ..symbolic.expression import core as _expression_core  # noqa: F401
-from ..utils import StrEnum
 
 
 @register_error

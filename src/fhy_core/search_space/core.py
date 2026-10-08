@@ -48,6 +48,7 @@ __all__ = [
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Generic, Protocol, TypeVar, final, runtime_checkable
 
 from fhy_core import _rs
@@ -66,7 +67,6 @@ from fhy_core.symbolic.param import Param
 from fhy_core.term import AlphaRenaming
 from fhy_core.traits import FrozenMixin
 from fhy_core.traits.frozen import _FrozenAfterInit
-from fhy_core.utils import StrEnum
 from fhy_core.utils.override import override
 
 _T = TypeVar("_T")

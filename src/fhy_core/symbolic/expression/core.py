@@ -56,6 +56,7 @@ import math
 import re
 from collections.abc import Mapping
 from decimal import MAX_EMAX, MIN_EMIN, Context, Decimal
+from enum import StrEnum
 from typing import TypeAlias
 
 from immutabledict import immutabledict
@@ -66,7 +67,7 @@ from fhy_core.serialization import WrappedFamilySerializable, register_serializa
 from fhy_core.symbolic.symbol_type import SymbolType
 from fhy_core.term import AlphaEquivalenceMixin
 from fhy_core.traits import FrozenMixin, RewritableMixin, VisitableMixin
-from fhy_core.utils import StrEnum, invert_frozen_dict
+from fhy_core.utils import invert_frozen_dict
 
 LiteralType: TypeAlias = str | float | int | bool | Decimal
 """A value :class:`LiteralExpression` accepts.

@@ -30,7 +30,7 @@ __all__ = [
     "OpAttribute",
 ]
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 from . import _rs
 from .identifier import (
@@ -45,7 +45,6 @@ from .identifier import (
 from .serialization import Serializable, register_serializable
 from .term import AlphaEquivalenceMixin
 from .traits import FrozenMixin, InternedMixin, StructuralEquivalence
-from .utils.self import Self
 
 
 @register_serializable(type_id="op_attribute")

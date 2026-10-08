@@ -12,7 +12,7 @@ import re
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Annotated, ClassVar, Final
+from typing import Annotated, ClassVar, Final, Self
 
 import pytest
 from immutabledict import immutabledict
@@ -45,7 +45,6 @@ from fhy_core.traits import (
     PartialOrderableMixin,
     VerifiableMixin,
 )
-from fhy_core.utils import Self
 from fhy_core.utils.override import override
 from fhy_core.value_domain import DATA_DOMAIN
 
@@ -1198,11 +1197,7 @@ def test_field_type_check_accepts_type_field() -> None:
 
 
 def test_field_type_check_accepts_self_field() -> None:
-    """Test a ``Self``-typed field passes the check across Python versions.
-
-    ``Self`` is sourced from the ``fhy_core.utils`` compatibility shim so the
-    module imports on Python 3.10, where ``typing.Self`` does not exist.
-    """
+    """Test a ``Self``-typed field passes the check."""
 
     @dataclass(frozen=True)
     class _GoodSelf(FrozenMixin):

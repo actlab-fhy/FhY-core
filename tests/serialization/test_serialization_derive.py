@@ -10,6 +10,7 @@ be derived.
 import enum
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import IntEnum, StrEnum
 from pathlib import Path, PureWindowsPath
 from typing import Any, cast
 
@@ -33,7 +34,6 @@ from fhy_core.serialization import (
     register_serializable,
 )
 from fhy_core.traits.frozen import FrozenMixin
-from fhy_core.utils import IntEnum, StrEnum
 from fhy_core.utils.override import override
 
 # ============================================================================
