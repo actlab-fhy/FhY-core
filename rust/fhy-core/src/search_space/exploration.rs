@@ -56,18 +56,17 @@ impl Space {
     /// Returns [`TraceError::OtherSpace`] for a configuration of another
     /// space, and what [`Recorder::decide`](super::Recorder::decide)
     /// returns.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn complete(
         &self,
         configuration: &Configuration,
         oracle: &mut dyn SearchOracle,
         context: &ParamContext<'_>,
     ) -> Result<Recorded, TraceError> {
-        todo!()
+        if configuration.space() != self {
+            return Err(TraceError::OtherSpace);
+        }
+        let recorder = Recorder::realizing(configuration);
+        walk_from(recorder, self, |_| true, oracle, context)
     }
 
     /// Draw a complete configuration uniformly from all of them, and return

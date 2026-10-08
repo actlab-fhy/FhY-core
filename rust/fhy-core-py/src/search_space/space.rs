@@ -7,9 +7,10 @@ use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::types::{PyDict, PyTuple, PyType};
 
 use fhy_core::constraint::ConstraintSystem;
+use fhy_core::foreign::Part;
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::wire::SpaceData;
-use fhy_core::search_space::{Condition, Forbidden, Space};
+use fhy_core::search_space::{Condition, Forbidden, Space, Variable};
 use fhy_core::term::AlphaEquivalence;
 
 use crate::constraint::{PyConstraintSystem, read_native_constraint};
@@ -421,6 +422,48 @@ impl PySpace {
     }
 }
 
+/// Return the error of an edited space's part that the binding has no
+/// object for: a bug, since every part of an edit is one given or held.
+fn missing_object(part: &str) -> PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(format!(
+        "the edited space holds a {part} the binding has no object for"
+    ))
+}
+
+impl PySpace {
+    /// Return a new public `Space` of `space`, an edit of this one, over
+    /// the top-level `variables` and `choices` objects, this space's name,
+    /// forbidden clauses and notes objects, and the objects of the
+    /// conditions it keeps, owning `slots`.
+    ///
+    /// # Errors
+    ///
+    /// Raises what building an object raises.
+    fn edited_to_python<'py>(
+        &self,
+        py: Python<'py>,
+        space: Space,
+        variables: Bound<'py, PyTuple>,
+        choices: Bound<'py, PyTuple>,
+        slots: Slots,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let conditions = kept_conditions(&space, self.conditions.bind(py))?;
+        let seeded = Self::assemble(
+            space,
+            SpaceObjects {
+                name: self.name.bind(py).clone(),
+                variables,
+                choices,
+                conditions,
+                forbidden: self.forbidden.bind(py).clone(),
+                notes: self.notes.bind(py).clone(),
+            },
+            slots,
+        )?;
+        instantiate(Self::public_class().get(py)?, 0, Seeded::Space(seeded))
+    }
+}
+
 /// Return the condition objects of `space`, one per target in canonical
 /// order: the object given when a target has one, and a new one over the
 /// constraint objects given when its conditions merged.
@@ -770,17 +813,12 @@ impl PySpace {
     ///
     /// Raises `TraceError` for a configuration of another space, and what
     /// `Recorder.decide` raises.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn complete<'py>(
         slf: &Bound<'py, Self>,
         configuration: &Bound<'py, PyAny>,
         oracle: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        todo!()
+        exploration::complete(slf, configuration, oracle)
     }
 
     /// Return this space with each of `variables` and `choices` put at the
@@ -789,17 +827,83 @@ impl PySpace {
     ///
     /// Raises what the constructor raises for the edited space.
     #[pyo3(signature = (variables = None, choices = None))]
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn with_decisions<'py>(
         slf: &Bound<'py, Self>,
         variables: Option<&Bound<'py, PyAny>>,
         choices: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        todo!()
+        const OWNER: &str = "Space.with_decisions";
+        let py = slf.py();
+        let this = slf.get();
+        let variables = read_items(py, variables, OWNER, "variables", "Variables")?;
+        let choices = read_items(py, choices, OWNER, "choices", "Choices")?;
+        let core_choices = read_choices(&choices, OWNER)?;
+        ensure_depth(py, "space", choices_depth(&core_choices))?;
+        let (edited, slots) = collect_slots(|| -> PyResult<(Space, Vec<Part<dyn Variable>>)> {
+            let core_variables = variables
+                .iter()
+                .map(|variable| read_variable(&variable, OWNER, "variables"))
+                .collect::<PyResult<Vec<_>>>()?;
+            let space = with_pending_errors(|| {
+                this.space
+                    .with_decisions(core_variables.clone(), core_choices)
+                    .map_err(|error| space_error_to_py(py, error))
+            })?;
+            Ok((space, core_variables))
+        });
+        let (space, core_variables) = edited?;
+        let given_variables: Vec<_> = core_variables.iter().zip(variables.iter()).collect();
+        let held_variables: Vec<_> = this
+            .space
+            .variables()
+            .iter()
+            .zip(this.variables.bind(py).iter())
+            .collect();
+        let variable_objects = space
+            .variables()
+            .iter()
+            .map(|part| {
+                given_variables
+                    .iter()
+                    .rev()
+                    .chain(&held_variables)
+                    .find(|(held, _)| Part::ptr_eq(held, part))
+                    .map(|(_, object)| object.clone())
+                    .ok_or_else(|| missing_object("variable"))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let named_choices =
+            |objects: &Bound<'py, PyTuple>| -> PyResult<Vec<(Identifier, Bound<'py, PyAny>)>> {
+                objects
+                    .iter()
+                    .map(|object| {
+                        let name = object.cast::<PyChoice>()?.get().core().name().clone();
+                        Ok((name, object))
+                    })
+                    .collect()
+            };
+        let given_choices = named_choices(&choices)?;
+        let held_choices = named_choices(this.choices.bind(py))?;
+        let choice_objects = space
+            .choices()
+            .iter()
+            .map(|choice| {
+                given_choices
+                    .iter()
+                    .rev()
+                    .chain(&held_choices)
+                    .find(|(name, _)| name == choice.name())
+                    .map(|(_, object)| object.clone())
+                    .ok_or_else(|| missing_object("choice"))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        this.edited_to_python(
+            py,
+            space,
+            PyTuple::new(py, variable_objects)?,
+            PyTuple::new(py, choice_objects)?,
+            slots,
+        )
     }
 
     /// Return this space without the top-level decisions `names` and the
@@ -807,16 +911,46 @@ impl PySpace {
     ///
     /// Raises `SearchSpaceError` for a name that is no top-level decision,
     /// and what the constructor raises for the edited space.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn without_decisions<'py>(
         slf: &Bound<'py, Self>,
         names: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        todo!()
+        const OWNER: &str = "Space.without_decisions";
+        let py = slf.py();
+        let this = slf.get();
+        let names = names
+            .try_iter()?
+            .map(|name| restore_identifier(&name?, OWNER, "names"))
+            .collect::<PyResult<Vec<_>>>()?;
+        let space = with_pending_errors(|| {
+            this.space
+                .without_decisions(names)
+                .map_err(|error| space_error_to_py(py, error))
+        })?;
+        let is_kept = |name: &Identifier| space.decision(name).is_some();
+        let variable_objects = this
+            .space
+            .variables()
+            .iter()
+            .zip(this.variables.bind(py).iter())
+            .filter(|(part, _)| is_kept(part.get().name()))
+            .map(|(_, object)| object)
+            .collect::<Vec<_>>();
+        let choice_objects = this
+            .space
+            .choices()
+            .iter()
+            .zip(this.choices.bind(py).iter())
+            .filter(|(choice, _)| is_kept(choice.name()))
+            .map(|(_, object)| object)
+            .collect::<Vec<_>>();
+        this.edited_to_python(
+            py,
+            space,
+            PyTuple::new(py, variable_objects)?,
+            PyTuple::new(py, choice_objects)?,
+            Slots::default(),
+        )
     }
 
     /// Return whether `other` is the same space up to the renaming of the

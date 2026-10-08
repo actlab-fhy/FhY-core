@@ -334,18 +334,33 @@ impl Space {
     /// as [`SpaceError::DuplicateName`] for a variable named as a top-level
     /// choice, or [`SpaceError::UnknownReference`] for a condition naming a
     /// decision a replaced choice no longer holds.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        clippy::needless_pass_by_value,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn with_decisions(
         &self,
         variables: Vec<Part<dyn Variable>>,
         choices: Vec<Choice>,
     ) -> Result<Self, SpaceError> {
-        todo!()
+        let mut edited_variables = self.0.variables.clone();
+        for variable in variables {
+            let name = variable.get().name();
+            match edited_variables
+                .iter()
+                .position(|held| held.get().name() == name)
+            {
+                Some(slot) => edited_variables[slot] = variable,
+                None => edited_variables.push(variable),
+            }
+        }
+        let mut edited_choices = self.0.choices.clone();
+        for choice in choices {
+            match edited_choices
+                .iter()
+                .position(|held| held.name() == choice.name())
+            {
+                Some(slot) => edited_choices[slot] = choice,
+                None => edited_choices.push(choice),
+            }
+        }
+        self.rebuild(edited_variables, edited_choices, self.0.conditions.clone())
     }
 
     /// Return this space without the top-level decisions `names`, and
@@ -364,17 +379,72 @@ impl Space {
     /// [`new`](Self::new) returns for the edited space, such as
     /// [`SpaceError::UnknownReference`] for a condition or a forbidden
     /// clause that names a removed decision.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        clippy::needless_pass_by_value,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn without_decisions(
         &self,
         names: impl IntoIterator<Item = Identifier>,
     ) -> Result<Self, SpaceError> {
-        todo!()
+        let mut removed: HashSet<usize> = HashSet::new();
+        for name in names {
+            match self.position(&name) {
+                Some(position) if self.0.nodes[position].parent.is_none() => {
+                    removed.insert(position);
+                }
+                _ => return Err(SpaceError::NotTopLevelDecision { name }),
+            }
+        }
+        let is_removed = |name: &Identifier| {
+            self.position(name)
+                .is_some_and(|position| removed.contains(&position))
+        };
+        let is_under_removed = |position: usize| {
+            removed
+                .iter()
+                .any(|&top| (top..self.0.nodes[top].subtree_end).contains(&position))
+        };
+        let variables = self
+            .0
+            .variables
+            .iter()
+            .filter(|variable| !is_removed(variable.get().name()))
+            .cloned()
+            .collect();
+        let choices = self
+            .0
+            .choices
+            .iter()
+            .filter(|choice| !is_removed(choice.name()))
+            .cloned()
+            .collect();
+        let conditions = self
+            .0
+            .conditions
+            .iter()
+            .filter(|condition| {
+                self.position(condition.target())
+                    .is_none_or(|target| !is_under_removed(target))
+            })
+            .cloned()
+            .collect();
+        self.rebuild(variables, choices, conditions)
+    }
+
+    /// Return the space of this one's name, forbidden clauses and notes,
+    /// holding `variables`, `choices` and `conditions`, checked as
+    /// [`new`](Self::new) checks one.
+    fn rebuild(
+        &self,
+        variables: Vec<Part<dyn Variable>>,
+        choices: Vec<Choice>,
+        conditions: Vec<Condition>,
+    ) -> Result<Self, SpaceError> {
+        let space = Self::new(
+            self.0.name.clone(),
+            variables,
+            choices,
+            conditions,
+            self.0.forbidden.clone(),
+        )?;
+        Ok(space.with_notes(self.0.notes.clone()))
     }
 
     /// Return whether `other` is the same space up to identity: equal

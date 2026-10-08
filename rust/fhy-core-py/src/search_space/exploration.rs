@@ -1,6 +1,6 @@
 //! What a `Space` and a `Configuration` do with the search stream on their
-//! own: sample, sample uniformly, replay, enumerate, count, mutate and
-//! cross; and
+//! own: sample, sample uniformly, replay, enumerate, count, mutate, cross
+//! and complete; and
 //! `fhy_core._rs.SpaceEnumeration`, the iterator `Space.enumerate` returns.
 
 use std::convert::Infallible;
@@ -208,6 +208,30 @@ pub(super) fn crossover<'py>(
     let core = space.get().core();
     let recorded = draw_with(rng, |generator, context| {
         core.crossover(first, second, generator, context, attempts)
+    })?;
+    recorded_to_python(space, recorded)
+}
+
+/// `Space.complete`: `configuration` completed by asking `oracle` every
+/// active decision of `space` it leaves unassigned.
+pub(super) fn complete<'py>(
+    space: &Bound<'py, PySpace>,
+    configuration: &Bound<'py, PyAny>,
+    oracle: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let py = space.py();
+    let configuration = read_configuration(configuration, "Space.complete")?;
+    let frame = StepFrame {
+        space: Some(space.clone().unbind()),
+        ..StepFrame::default()
+    };
+    let core = space.get().core();
+    let recorded = with_oracle(oracle, frame, |oracle| {
+        run_attached_with_context(
+            py,
+            |context| core.complete(configuration, oracle, context),
+            |error| trace_error_to_py(py, error),
+        )
     })?;
     recorded_to_python(space, recorded)
 }
