@@ -323,17 +323,18 @@ impl Space {
     ///
     /// Every decision before the first one the edit changes, in canonical
     /// order, keeps its canonical position, and so do the steps of a trace
-    /// over them: appending choices keeps every existing position, while
-    /// appending or replacing a variable, or replacing a choice by one
-    /// whose subtree holds another number of decisions, moves the
-    /// decisions after it.
+    /// over them: appending choices and replacing a variable keep every
+    /// existing position, appending a variable moves every choice's subtree
+    /// by one, and replacing a choice by one whose subtree holds another
+    /// number of decisions moves the decisions after it.
     ///
     /// # Errors
     ///
     /// Returns what [`new`](Self::new) returns for the edited space, such
     /// as [`SpaceError::DuplicateName`] for a variable named as a top-level
-    /// choice, or [`SpaceError::UnknownReference`] for a condition naming a
-    /// decision a replaced choice no longer holds.
+    /// choice, [`SpaceError::UnknownConditionTarget`] for a condition on a
+    /// decision a replaced choice no longer holds, or
+    /// [`SpaceError::UnknownReference`] for a condition naming one.
     pub fn with_decisions(
         &self,
         variables: Vec<Part<dyn Variable>>,
