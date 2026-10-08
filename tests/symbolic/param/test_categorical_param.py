@@ -1,5 +1,7 @@
 """Tests for categorical parameters."""
 
+from typing import Any
+
 import pytest
 
 from fhy_core.identifier import Identifier
@@ -9,7 +11,9 @@ from fhy_core.serialization import (
 )
 from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
 from fhy_core.symbolic.param import (
+    OrdinalDomain,
     ParamError,
+    PermutationDomain,
     create_categorical_param,
     create_single_valid_value_param,
 )
@@ -354,3 +358,119 @@ def test_categorical_param_bool_and_int_categories_round_trip_distinctly() -> No
     assert len(restored.domain.categories) == 2
     assert restored.is_value_admissible(True)
     assert restored.is_value_admissible(1)
+
+
+# =============================================================================
+# Tuple and frozen-set categories
+# =============================================================================
+
+
+def _tile_shapes() -> Any:
+    """Return the tile shapes `(4, 4)` and `(8, 8)`, untyped as categories."""
+    return ((8, 8), (4, 4))
+
+
+def test_categorical_domain_accepts_tuple_categories() -> None:
+    """Test a domain over tile shapes builds and keeps them as tuples."""
+    domain = CategoricalDomain(_tile_shapes())
+
+    assert set(domain.categories) == {(4, 4), (8, 8)}
+    assert all(isinstance(category, tuple) for category in domain.categories)
+
+
+def test_tuple_categories_come_back_in_a_canonical_order() -> None:
+    """Test the categories' order does not depend on the order they were given in."""
+    forward = CategoricalDomain(((4, 4), (8, 8))).categories
+    backward = CategoricalDomain(((8, 8), (4, 4))).categories
+
+    assert forward == backward == ((4, 4), (8, 8))
+
+
+def test_tuple_categories_may_mix_leaf_kinds_and_nest() -> None:
+    """Test a tuple of a string and an int, and a nested tuple, are categories."""
+    categories: Any = (("x", 4), (1, (2, 3)), (True, "y"))
+
+    domain = CategoricalDomain(categories)
+
+    assert set(domain.categories) == set(categories)
+    assert domain.is_value_admissible(("x", 4))
+    assert domain.is_value_admissible((1, (2, 3)))
+
+
+def test_a_frozen_set_is_a_category() -> None:
+    """Test a frozen set of leaf values is a category."""
+    categories: Any = (frozenset({1, 2}), frozenset({3}))
+
+    domain = CategoricalDomain(categories)
+
+    assert set(domain.categories) == {frozenset({1, 2}), frozenset({3})}
+    assert domain.is_value_admissible(frozenset({3}))
+
+
+def test_a_categorical_param_over_tuples_admits_exactly_them() -> None:
+    """Test a param admits each tile shape and nothing else."""
+    param = create_categorical_param(_tile_shapes())
+
+    assert param.is_value_admissible((8, 8))
+    assert param.is_value_admissible((4, 4))
+    assert not param.is_value_admissible((4, 8))
+    assert not param.is_value_admissible((8,))
+    assert not param.is_value_admissible(8)
+
+
+def test_a_categorical_param_over_tuples_assigns_a_tuple() -> None:
+    """Test assigning `(8, 8)` keeps the tuple, assigning `(5, 5)` is refused."""
+    param = create_categorical_param(_tile_shapes())
+
+    assignment = param.assign((8, 8))
+
+    assert assignment.value == (8, 8)
+    with pytest.raises(ParamError):
+        param.assign((5, 5))
+
+
+def test_tuple_categories_that_repeat_are_refused() -> None:
+    """Test two equal tuples are one category twice: `ParamError`."""
+    repeated: Any = ((4, 4), (4, 4))
+
+    with pytest.raises(ParamError, match="unique"):
+        CategoricalDomain(repeated)
+
+
+def test_a_tuple_category_round_trips_through_its_payload() -> None:
+    """Test a param over tuples serializes and reads back admitting the same."""
+    param = create_categorical_param(_tile_shapes())
+
+    restored: Param[Any] = Param.deserialize_from_dict(param.serialize_to_dict())
+
+    assert isinstance(restored.domain, CategoricalDomain)
+    assert restored.domain.categories == ((4, 4), (8, 8))
+    assert restored.is_value_admissible((8, 8))
+    assert not restored.is_value_admissible((4, 8))
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        pytest.param((4, 4.5), id="float_in_a_tuple"),
+        pytest.param((4, (4, 4.5)), id="float_nested"),
+        pytest.param(4.5, id="float"),
+        pytest.param(frozenset({4.5}), id="float_in_a_frozen_set"),
+    ],
+)
+def test_a_float_category_is_refused_inside_a_tuple_too(category: Any) -> None:
+    """Test a float, bare or inside a composite category, is a `TypeError`."""
+    categories: Any = ((4, 4), category)
+
+    with pytest.raises(TypeError):
+        CategoricalDomain(categories)
+
+
+def test_ordinal_and_permutation_domains_still_refuse_tuples() -> None:
+    """Test composite values are for categorical domains only."""
+    values: Any = ((4, 4), (8, 8))
+
+    with pytest.raises(TypeError):
+        OrdinalDomain(values)
+    with pytest.raises(TypeError):
+        PermutationDomain(values)

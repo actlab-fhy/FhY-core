@@ -16,6 +16,8 @@ from fhy_core.identifier import Identifier
 from fhy_core.search_space import (
     Activity,
     Alternative,
+    Cardinality,
+    CardinalityKind,
     Choice,
     Condition,
     Configuration,
@@ -23,6 +25,7 @@ from fhy_core.search_space import (
     ConfigurationKey,
     DuplicateNameError,
     Forbidden,
+    RandomOracle,
     SearchSpaceError,
     Space,
     Variable,
@@ -1750,3 +1753,70 @@ def test_structural_equivalence_discriminates_a_perturbed_field(
 
     assert not obj.is_structurally_equivalent(perturbed)
     assert not perturbed.is_structurally_equivalent(obj)
+
+
+# ===========================================================================
+# Tuple categories
+# ===========================================================================
+
+
+def _tile_space() -> tuple[Space, Variable[Any]]:
+    """Return a space of one variable `tile` over the shapes `(4, 4)` and `(8, 8)`."""
+    shapes: Any = ((4, 4), (8, 8))
+    tile = Variable(param=categorical(*shapes), name=Identifier("tile"))
+    return Space(variables=(tile,)), tile
+
+
+def test_a_configuration_entry_may_be_a_tuple_category() -> None:
+    """Test `(8, 8)` is accepted for a variable over tile shapes, and read back."""
+    space, tile = _tile_space()
+
+    configuration = Configuration(space, {tile.name: (8, 8)})
+
+    assert configuration.value(tile.name) == (8, 8)
+    assert configuration.is_complete()
+
+
+def test_a_configuration_refuses_a_tuple_that_is_no_category() -> None:
+    """Test `(5, 5)` is no shape of the variable: `ConfigurationError`."""
+    space, tile = _tile_space()
+
+    with pytest.raises(ConfigurationError):
+        Configuration(space, {tile.name: (5, 5)})
+
+
+def test_configurations_over_tuple_categories_have_keys_that_tell_them_apart() -> None:
+    """Test keys of the two shapes differ and a key of one shape repeats."""
+    space, tile = _tile_space()
+
+    small = Configuration(space, {tile.name: (4, 4)}).key()
+    large = Configuration(space, {tile.name: (8, 8)}).key()
+
+    assert small != large
+    assert large == Configuration(space, {tile.name: (8, 8)}).key()
+    assert hash(large) == hash(Configuration(space, {tile.name: (8, 8)}).key())
+
+
+def test_a_space_over_tuple_categories_counts_enumerates_and_samples() -> None:
+    """Test the two shapes are counted, enumerated, and sampled as tuples."""
+    space, tile = _tile_space()
+
+    sampled, trace = space.sample(RandomOracle(seed=3))
+
+    assert space.cardinality() == Cardinality(CardinalityKind.EXACT, 2, None)
+    assert {c.value(tile.name) for c in space.enumerate()} == {(4, 4), (8, 8)}
+    assert sampled.value(tile.name) in {(4, 4), (8, 8)}
+    assert space.replay(trace).key() == sampled.key()
+
+
+def test_a_forbidden_clause_over_a_tuple_category_removes_it() -> None:
+    """Test `tile in {(8, 8)}` forbids that shape, as the sketch's clause does."""
+    tile = Variable(param=categorical(*((4, 4), (8, 8))), name=Identifier("tile"))
+    space = Space(
+        variables=(tile,),
+        forbidden=(Forbidden((InSetConstraint(tile.name, {(8, 8)}),)),),
+    )
+
+    assert {c.value(tile.name) for c in space.enumerate()} == {(4, 4)}
+    with pytest.raises(ConfigurationError):
+        Configuration(space, {tile.name: (8, 8)})

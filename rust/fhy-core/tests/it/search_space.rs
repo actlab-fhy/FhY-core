@@ -29,4 +29,5 @@ mod stream_error_text_stories;
 mod trace_properties;
 mod trace_serde_stories;
 mod trace_stories;
+mod tuple_category_stories;
 mod variable_stories;
