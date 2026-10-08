@@ -46,6 +46,7 @@ use crate::util::dataclass::{
     build_argument_type_error, collect_tuple, compare_as_dataclass, format_dataclass_repr,
     hash_value, read_str,
 };
+use crate::util::exceptions::FROZEN_VALIDATION_ERROR;
 use crate::util::foreign::read_foreign;
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::util::gc::{Slot, Slots, collect_slots};
@@ -1066,17 +1067,41 @@ impl PyProvenance {
             .call1((PyTuple::new(py, flat)?, metadata))
     }
 
-    /// Always true: provenances are immutable.
+    /// Whether the provenance is frozen: always for a variant, and for an
+    /// instance of a Python-defined subclass exactly when its class is a
+    /// frozen dataclass.
     #[getter]
-    const fn is_frozen(_slf: &Bound<'_, Self>) -> bool {
-        true
+    fn is_frozen(slf: &Bound<'_, Self>) -> PyResult<bool> {
+        if slf.get().provenance.is_some() {
+            return Ok(true);
+        }
+        let py = slf.py();
+        let Some(params) = slf
+            .get_type()
+            .getattr_opt(intern!(py, "__dataclass_params__"))?
+        else {
+            return Ok(false);
+        };
+        params.getattr(intern!(py, "frozen"))?.is_truthy()
     }
 
-    /// Do nothing: provenances are always frozen.
+    /// Do nothing: a variant is always frozen, and a Python-defined subclass
+    /// is frozen only by its own class.
     const fn freeze(_slf: &Bound<'_, Self>) {}
 
-    /// Do nothing: provenances are always frozen, and mutating one raises.
-    const fn assert_frozen(_slf: &Bound<'_, Self>) {}
+    /// Do nothing for a frozen provenance.
+    ///
+    /// # Errors
+    ///
+    /// Raises `FrozenValidationError` for an instance of a Python-defined
+    /// subclass whose class is not a frozen dataclass.
+    fn assert_frozen(slf: &Bound<'_, Self>) -> PyResult<()> {
+        if Self::is_frozen(slf)? {
+            return Ok(());
+        }
+        let message = format!("{} is not frozen.", slf.get_type().name()?);
+        Err(FROZEN_VALIDATION_ERROR.err(slf.py(), (message,)))
+    }
 
     /// Compare as a dataclass does: equal when `other` has exactly the same
     /// class and equal fields, compared recursively, a Python-defined
