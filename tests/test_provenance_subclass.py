@@ -31,6 +31,7 @@ from fhy_core.serialization import (
     SerializedDict,
     register_serializable,
 )
+from fhy_core.traits.frozen import FrozenValidationError
 from fhy_core.utils.override import override
 
 from .conftest import is_cycle_collected
@@ -129,6 +130,56 @@ def test_the_subclass_is_frozen() -> None:
 
     with pytest.raises(FrozenInstanceError):
         edge.edge_id = Identifier("other")  # type: ignore[misc]  # test: frozen
+
+
+def test_a_frozen_dataclass_subclass_reports_frozen() -> None:
+    """Test a frozen dataclass subclass is frozen and passes `assert_frozen`."""
+    edge = _edge()
+
+    assert edge.is_frozen
+    edge.assert_frozen()
+
+
+class _MutableProvenance(Provenance):
+    """A provenance whose class does not make it immutable."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    @override
+    def __str__(self) -> str:
+        return f"mutable<{self.value}>"
+
+
+def test_a_mutable_subclass_reports_not_frozen() -> None:
+    """Test a plain subclass is not frozen and `assert_frozen` raises."""
+    mutable = _MutableProvenance(1)
+    mutable.value = 2
+
+    assert not mutable.is_frozen
+    with pytest.raises(FrozenValidationError, match="_MutableProvenance"):
+        mutable.assert_frozen()
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        UnknownProvenance,
+        lambda: FileProvenance(Path("a.fhy"), None),
+        lambda: NamedProvenance("n", UnknownProvenance()),
+        lambda: CallSiteProvenance(UnknownProvenance(), UnknownProvenance()),
+        lambda: FusedProvenance((UnknownProvenance(), UnknownProvenance())),
+    ],
+    ids=["unknown", "file", "named", "call_site", "fused"],
+)
+def test_the_built_in_variants_report_frozen(
+    build: Callable[[], Provenance],
+) -> None:
+    """Test each built-in variant is frozen and passes `assert_frozen`."""
+    provenance = build()
+
+    assert provenance.is_frozen
+    provenance.assert_frozen()
 
 
 def test_the_subclass_text_is_its_own() -> None:
