@@ -1,7 +1,8 @@
-//! Tests for `non_dominated`, the Pareto front of measurements: the
-//! design's table, the order kept, ties, failures left out, directions and
-//! reported objectives, the error for different objectives, and a property
-//! against the pairwise `dominates` of the input.
+//! Tests for `non_dominated`, the Pareto front of measurements: a front of
+//! two among a dominated success and a failure, the order kept, ties,
+//! failures left out, directions and reported objectives, the error for
+//! different objectives, and a property against the pairwise `dominates`
+//! of the input.
 
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::{Direction, Measurement, MeasurementError, Objective, non_dominated};
@@ -48,8 +49,8 @@ fn locate_front(measurements: &[Measurement]) -> Vec<usize> {
     locate(measurements, &front)
 }
 
-/// Test the design's table: of `(1, 2)`, `(2, 1)`, `(2, 2)` and a failure,
-/// minimizing both, the front is the first two, in order.
+/// Test of `(1, 2)`, `(2, 1)`, `(2, 2)` and a failure, minimizing both,
+/// the front is the first two, in order.
 #[test]
 fn non_dominated_keeps_the_pareto_front_in_input_order() {
     let measurements = [

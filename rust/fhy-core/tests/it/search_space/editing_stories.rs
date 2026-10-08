@@ -171,7 +171,7 @@ impl Table {
     }
 }
 
-/// Return the names of `variables`.
+/// Return the names of `space`'s top-level variables.
 fn list_variable_names(space: &Space) -> Vec<Identifier> {
     space
         .variables()
@@ -671,8 +671,7 @@ fn without_decisions_reports_a_bad_name_before_a_rebuild_error() {
 }
 
 /// Test `SpaceError::NotTopLevelDecision` writes the name and says it is
-/// not a top-level decision of the space. It passes on the stub: the
-/// variant and its text are already there, and this pins the new text.
+/// not a top-level decision of the space.
 #[test]
 fn not_top_level_decision_error_writes_the_name_and_the_reason() {
     let error = SpaceError::NotTopLevelDecision {
@@ -864,5 +863,11 @@ fn complete_carries_the_old_values_across_an_edit() {
     for (name, value) in old.entries() {
         assert_eq!(configuration.value(name), Some(value), "{name:?}");
     }
-    assert!(configuration.value(&v3).is_some());
+    let drawn = configuration.value(&v3);
+    assert!(
+        [int(1), int(2), int(3)]
+            .iter()
+            .any(|value| drawn == Some(value)),
+        "{drawn:?}"
+    );
 }

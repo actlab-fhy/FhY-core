@@ -31,8 +31,8 @@ fn sample_configuration(space: &Space, seed: u64) -> Configuration {
 ///
 /// Not a test: run it in a release build with `cargo test --release -p
 /// fhy-core --test it search_space_timing -- --ignored --nocapture`. The
-/// design's targets are a mutation of a 200-entry table under 100 ms and
-/// the building under 50 ms.
+/// targets are a mutation of a 200-entry table under 100 ms and the
+/// building under 50 ms.
 #[test]
 #[ignore = "a timing, not a check: run it in a release build with --nocapture"]
 #[expect(clippy::print_stdout, reason = "the timing is the output")]

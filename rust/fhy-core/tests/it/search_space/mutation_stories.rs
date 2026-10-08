@@ -169,8 +169,9 @@ fn observe_mutation(space: &Space, configuration: &Configuration, seed: u64) -> 
     )
 }
 
-/// Return the space of one choice between `a`, holding a variable over
-/// `{1, 2, 3}`, and `b`, holding nothing, and the choice's name.
+/// Return the space of one choice `c` between `a`, holding the variable
+/// `x` over `{1, 2, 3}`, and `b`, holding nothing, with the names of `c`,
+/// `a` and `x`.
 fn build_choice_space() -> (Space, Identifier, Identifier, Identifier) {
     let [name, c, a, x, b] = ["choosing", "c", "a", "x", "b"].map(Identifier::new);
     let space = space_of(
@@ -184,12 +185,11 @@ fn build_choice_space() -> (Space, Identifier, Identifier, Identifier) {
             ],
         )],
     );
-    (space, c, a, b)
+    (space, c, a, x)
 }
 
-/// Test the tiling space's seeded mutations are the ones pinned before the
-/// search was made cheaper: this pins unchanged seeded output, so it passes
-/// before and after the change.
+/// Test the tiling space's seeded mutations are the pinned ones: per seed,
+/// the mutated entries and the generator's next number afterwards.
 #[test]
 fn space_mutate_of_the_tiling_space_keeps_its_pinned_seeded_output() {
     let tiling = build_tiling_space();
@@ -213,17 +213,10 @@ fn space_mutate_of_the_tiling_space_keeps_its_pinned_seeded_output() {
 }
 
 /// Test a choice space's seeded mutations, from its alternative holding a
-/// variable, are the pinned ones: unchanged seeded output, passing before
-/// and after the change.
+/// variable, are the pinned ones.
 #[test]
 fn space_mutate_of_a_choice_space_keeps_its_pinned_seeded_output() {
-    let (space, choice, alternative, _) = build_choice_space();
-    let variable = space
-        .decisions()
-        .nth(1)
-        .expect("the variable")
-        .name()
-        .clone();
+    let (space, choice, alternative, variable) = build_choice_space();
     let configuration = configure(&space, [(choice, chosen(&alternative)), (variable, int(2))]);
 
     assert_pinned(
@@ -241,8 +234,7 @@ fn space_mutate_of_a_choice_space_keeps_its_pinned_seeded_output() {
 }
 
 /// Test the seeded mutations of a space holding an ordering and a variable
-/// are the pinned ones: unchanged seeded output, passing before and after
-/// the change.
+/// are the pinned ones.
 #[test]
 fn space_mutate_of_an_ordering_space_keeps_its_pinned_seeded_output() {
     let [name, order, k, i, j, l] = ["ordered", "order", "k", "i", "j", "l"].map(Identifier::new);
@@ -310,8 +302,7 @@ const TABLE_PINS: [(&str, u64); 6] = [
 
 /// Test the seeded mutations of a three-entry candidate table, which
 /// change a bounded integer, a categorical or an entry's alternative, are
-/// the pinned ones: unchanged seeded output, passing before and after the
-/// change.
+/// the pinned ones.
 #[test]
 fn space_mutate_of_a_table_space_keeps_its_pinned_seeded_output() {
     let table = build_table_space(3);
