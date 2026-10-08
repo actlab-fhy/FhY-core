@@ -831,6 +831,20 @@ impl PyProvenance {
         }
     }
 
+    /// Raise `TypeError` if `cls` is this class itself, as the interpreter
+    /// refuses a class it cannot instantiate: only a subclass, a variant or
+    /// a Python-defined provenance, holds a provenance.
+    fn refuse_base_class(cls: &Bound<'_, PyType>) -> PyResult<()> {
+        if !cls.is(cls.py().get_type::<Self>()) {
+            return Ok(());
+        }
+        Err(PyTypeError::new_err(format!(
+            "cannot create '{}.{}' instances",
+            cls.module()?,
+            cls.name()?
+        )))
+    }
+
     /// Raise `TypeError` if `cls` has abstract methods, as `object.__new__`
     /// does for an abstract class.
     ///
@@ -935,8 +949,9 @@ impl PyProvenance {
     /// Return the base of an instance of a Python subclass defined outside
     /// `fhy_core`, whose own `__init__` takes the arguments.
     ///
-    /// Raises `TypeError` for a class with abstract methods, such as
-    /// `Provenance` itself.
+    /// Raises `TypeError` for this class itself, whose instance would be no
+    /// provenance, and for a class with abstract methods, such as
+    /// `fhy_core.provenance.Provenance`.
     #[new]
     #[classmethod]
     #[pyo3(signature = (*_args, **_kwargs))]
@@ -945,6 +960,7 @@ impl PyProvenance {
         _args: &Bound<'_, PyTuple>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
+        Self::refuse_base_class(cls)?;
         Self::refuse_abstract_class(cls)?;
         Ok(Self {
             provenance: None,
