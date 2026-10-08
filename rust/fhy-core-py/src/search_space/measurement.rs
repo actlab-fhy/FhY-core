@@ -794,12 +794,13 @@ pub(crate) fn non_dominated<'py>(
         .map(|object| object.get().core().clone())
         .collect();
     let front = core_non_dominated(&cores).map_err(|error| measurement_error_to_py(py, &error))?;
-    let kept = front.into_iter().map(|measurement| {
-        let position = cores
-            .iter()
-            .position(|core| std::ptr::eq(core, measurement))
-            .unwrap_or_else(|| unreachable!("the front holds input measurements"));
-        objects[position].clone().into_any()
+    // The front keeps the order given, so one pass over the inputs finds
+    // the object of each measurement it keeps.
+    let mut front = front.into_iter().peekable();
+    let kept = objects.iter().zip(&cores).filter_map(|(object, core)| {
+        front
+            .next_if(|kept| std::ptr::eq(*kept, core))
+            .map(|_| object.clone().into_any())
     });
     Ok(PyList::new(py, kept)?.into_any())
 }

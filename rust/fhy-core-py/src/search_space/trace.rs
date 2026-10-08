@@ -341,9 +341,7 @@ impl PyTrace {
     /// position, its domain's signature and its coordinate, without its
     /// subject or value.
     fn key(&self) -> PyTraceKey {
-        PyTraceKey {
-            key: self.trace.key(),
-        }
+        PyTraceKey::of(self.trace.key())
     }
 
     /// Return the steps of the kind `kind`, a `str`, in the order asked.
