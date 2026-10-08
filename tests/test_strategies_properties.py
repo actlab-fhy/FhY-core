@@ -93,6 +93,7 @@ from .strategies.expressions import (
     COMPARISON_OPERATIONS,
     NUMERIC_DIVISION_OPERATIONS,
     SYMPY_STABLE_CALL_FUNCTIONS,
+    build_affine_expression_strategy,
     build_any_sort_expression_strategy,
     build_boolean_environment_strategy,
     build_boolean_expression_strategy,
@@ -191,6 +192,7 @@ _LITERALS_CASES: list[_Case] = [
 ]
 
 _EXPRESSIONS_CASES: list[_Case] = [
+    ("build_affine_expression_strategy", build_affine_expression_strategy(_POOL)),
     ("build_numeric_expression_strategy", build_numeric_expression_strategy(_POOL)),
     ("build_boolean_expression_strategy", build_boolean_expression_strategy(_POOL)),
     ("build_any_sort_expression_strategy", build_any_sort_expression_strategy(_POOL)),
@@ -1057,6 +1059,121 @@ def test_sympy_property_substitution_cases_reach_a_sort_ambiguous_equality() -> 
     )
 
     assert _makes_a_sort_ambiguous_equality_boolean(found)
+
+
+# =============================================================================
+# Affine trees
+# =============================================================================
+
+
+_AFFINE_TREES: Final = build_affine_expression_strategy(_POOL)
+
+
+def _is_nonconstant_literal_product(node: Expression) -> bool:
+    """Return whether ``node`` multiplies a literal by a sum or a difference."""
+    if not (
+        isinstance(node, BinaryExpression)
+        and node.operation is BinaryOperation.MULTIPLY
+    ):
+        return False
+    operands = (node.left, node.right)
+    return any(isinstance(operand, LiteralExpression) for operand in operands) and any(
+        isinstance(operand, BinaryExpression)
+        and operand.operation in (BinaryOperation.ADD, BinaryOperation.SUBTRACT)
+        for operand in operands
+    )
+
+
+def _repeats_an_identifier(expression: Expression) -> bool:
+    """Return whether some identifier occurs at two leaves of ``expression``."""
+    leaves = [
+        node.identifier
+        for node in _iter_expression_nodes(expression)
+        if isinstance(node, IdentifierExpression)
+    ]
+    return len(leaves) > len(set(leaves))
+
+
+def _holds_a_division(expression: Expression) -> bool:
+    """Return whether ``expression`` divides by a literal somewhere."""
+    return any(
+        isinstance(node, BinaryExpression) and node.operation is BinaryOperation.DIVIDE
+        for node in _iter_expression_nodes(expression)
+    )
+
+
+def _cancels_an_identifier(expression: Expression) -> bool:
+    """Return whether an identifier occurs in ``expression`` and expands away."""
+    sympy = pytest.importorskip("sympy")
+    bridge = pytest.importorskip("fhy_core.symbolic.expression.passes.sympy")
+
+    lowered = sympy.expand(bridge.convert_expression_to_sympy_expression(expression))
+    return len(lowered.free_symbols) < len(expression.get_free_identifiers())
+
+
+@pytest.mark.parametrize(
+    "holds_shape",
+    [
+        pytest.param(_holds_a_division, id="division-by-a-literal"),
+        pytest.param(
+            lambda expression: any(
+                _is_nonconstant_literal_product(node)
+                for node in _iter_expression_nodes(expression)
+            ),
+            id="literal-times-a-sum",
+        ),
+        pytest.param(_repeats_an_identifier, id="repeated-identifier"),
+        pytest.param(
+            lambda expression: len(expression.get_free_identifiers()) == len(_POOL) - 1,
+            id="three-of-four-identifiers",
+        ),
+        pytest.param(
+            lambda expression: any(
+                isinstance(node, UnaryExpression)
+                and node.operation is UnaryOperation.NEGATE
+                for node in _iter_expression_nodes(expression)
+            ),
+            id="negation",
+        ),
+    ],
+)
+def test_affine_trees_reach_each_shape(
+    holds_shape: Callable[[Expression], bool],
+) -> None:
+    """Test the affine strategy draws divisions, scaled sums, repeats and negations."""
+    found = find(_AFFINE_TREES, holds_shape, settings=_SHAPE_SEARCH_SETTINGS)
+
+    assert holds_shape(found)
+
+
+@pytest.mark.sympy
+def test_affine_trees_reach_a_cancelled_identifier() -> None:
+    """Test the affine strategy draws a tree in which an identifier cancels out."""
+    found = find(_AFFINE_TREES, _cancels_an_identifier, settings=_SHAPE_SEARCH_SETTINGS)
+
+    assert _cancels_an_identifier(found)
+
+
+@given(_AFFINE_TREES)
+def test_affine_trees_hold_only_affine_nodes(expression: Expression) -> None:
+    """Test an affine tree holds literals, pool identifiers and affine operations."""
+    for node in _iter_expression_nodes(expression):
+        assert isinstance(
+            node,
+            LiteralExpression
+            | IdentifierExpression
+            | UnaryExpression
+            | BinaryExpression,
+        )
+        if isinstance(node, IdentifierExpression):
+            assert node.identifier in _POOL
+        if isinstance(node, BinaryExpression):
+            assert node.operation in (
+                BinaryOperation.ADD,
+                BinaryOperation.SUBTRACT,
+                BinaryOperation.MULTIPLY,
+                BinaryOperation.DIVIDE,
+            )
 
 
 # =============================================================================
