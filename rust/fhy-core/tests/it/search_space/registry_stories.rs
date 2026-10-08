@@ -704,6 +704,38 @@ fn variable_function_is_handed_the_context_the_resolver_was_lent() {
     );
 }
 
+/// Test that a registry hands each type id to the function registered under
+/// it: of two variable kinds in one registry, only the payload of the kind
+/// registered with the stamping function comes back stamped.
+#[test]
+fn each_type_id_is_resolved_by_its_own_function() {
+    let registry = ResolverRegistry::new()
+        .with_variable_kind("test.plain", resolve_knob)
+        .expect("the id is free")
+        .with_variable_kind("test.stamped", resolve_stamped_knob)
+        .expect("the id is free");
+    let solver = Solver::new();
+    let context = ParamContext::new(&solver);
+
+    let notes = ["test.plain", "test.stamped", "test.plain"].map(|type_id| {
+        let sample = build_sample(Family::Variable, type_id);
+        let part =
+            Resolve::<Part<dyn Variable>>::resolve(&registry.resolver(&context), &sample.foreign)
+                .expect("the knob resolves");
+        part.get()
+            .notes()
+            .iter()
+            .map(|note| note.message().to_owned())
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(
+        notes,
+        [vec![], vec![format!("{:p}", &solver)], vec![]],
+        "only the stamped kind's function stamps what it builds"
+    );
+}
+
 // -- copying the resolver and cloning the registry --------------------------
 
 /// Test that a `RegistryResolver` is `Copy`: the original and its copies
