@@ -168,6 +168,16 @@ struct SpaceInner {
     /// The canonical positions of the decisions each forbidden clause
     /// names, ascending.
     forbidden_references: Vec<Vec<usize>>,
+    /// Per decision, by canonical position, the positions of the
+    /// forbidden clauses naming it, ascending.
+    forbidden_naming: Vec<Vec<usize>>,
+    /// Per decision, by canonical position, the canonical positions of the
+    /// decisions that depend on it directly, ascending: those under its
+    /// alternatives' top level, and the targets of the conditions naming
+    /// it.
+    dependents: Vec<Vec<usize>>,
+    /// Per decision, by canonical position, its rank in decision order.
+    order_ranks: Vec<usize>,
 }
 
 /// One decision of a space, in canonical order.
@@ -502,6 +512,30 @@ impl Space {
     pub(super) fn forbidden_references(&self, index: usize) -> &[usize] {
         &self.0.forbidden_references[index]
     }
+
+    /// Return the positions of the forbidden clauses naming the decision at
+    /// `position`, ascending.
+    pub(super) fn forbidden_naming(&self, position: usize) -> &[usize] {
+        &self.0.forbidden_naming[position]
+    }
+
+    /// Return the canonical positions of the decisions that depend on the
+    /// decision at `position` directly, through its choice or their
+    /// condition, ascending.
+    pub(super) fn dependents_at(&self, position: usize) -> &[usize] {
+        &self.0.dependents[position]
+    }
+
+    /// Return the rank of the decision at `position` in decision order.
+    pub(super) fn order_rank(&self, position: usize) -> usize {
+        self.0.order_ranks[position]
+    }
+
+    /// Return the canonical position after the subtree of the decision at
+    /// `position`: the decisions under it are the ones between the two.
+    pub(super) fn subtree_end_at(&self, position: usize) -> usize {
+        self.0.nodes[position].subtree_end
+    }
 }
 
 /// The conditions on one target, gathered: their members, and the
@@ -531,7 +565,17 @@ fn build(
         .map(|(index, clause)| check_forbidden(index, clause, &positions, &nodes))
         .collect::<Result<Vec<_>, _>>()?;
     let merged = merge_conditions(gathered, &mut nodes)?;
-    let order_positions = find_decision_order(&nodes)?;
+    let (order_positions, dependents) = find_decision_order(&nodes)?;
+    let mut order_ranks = vec![0; nodes.len()];
+    for (rank, &position) in order_positions.iter().enumerate() {
+        order_ranks[position] = rank;
+    }
+    let mut forbidden_naming = vec![Vec::new(); nodes.len()];
+    for (index, references) in forbidden_references.iter().enumerate() {
+        for &reference in references {
+            forbidden_naming[reference].push(index);
+        }
+    }
     let label_positions = labels
         .iter()
         .enumerate()
@@ -554,6 +598,9 @@ fn build(
         nodes,
         positions,
         forbidden_references,
+        forbidden_naming,
+        dependents,
+        order_ranks,
     })
 }
 
@@ -779,9 +826,10 @@ fn find_references(
     Ok(references)
 }
 
-/// Return the decisions' canonical positions in decision order, or the
-/// cycle that prevents one.
-fn find_decision_order(nodes: &[Node]) -> Result<Vec<usize>, SpaceError> {
+/// Return the decisions' canonical positions in decision order and, per
+/// decision, the canonical positions of the decisions depending on it
+/// directly, ascending; or the cycle that prevents an order.
+fn find_decision_order(nodes: &[Node]) -> Result<(Vec<usize>, Vec<Vec<usize>>), SpaceError> {
     let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
     let mut waiting: Vec<usize> = vec![0; nodes.len()];
     for (position, node) in nodes.iter().enumerate() {
@@ -811,7 +859,7 @@ fn find_decision_order(nodes: &[Node]) -> Result<Vec<usize>, SpaceError> {
         }
     }
     if order.len() == nodes.len() {
-        return Ok(order);
+        return Ok((order, dependents));
     }
     let placed: HashSet<usize> = order.into_iter().collect();
     let cycle = (0..nodes.len())

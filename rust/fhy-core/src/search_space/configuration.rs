@@ -4,6 +4,8 @@
 //! This module owns a configuration's invariant: it is valid for its
 //! space.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
@@ -17,6 +19,7 @@ use crate::term::{AlphaEquivalence, AlphaRenaming};
 
 use super::alternative::Alternative;
 use super::choice::Choice;
+use super::chunked::Chunked;
 use super::equivalence::{do_spaces_correspond, do_values_correspond, space_frame};
 use super::error::{ConfigurationError, ConfigurationErrors, EquivalenceError};
 use super::space::{Decision, Space};
@@ -98,11 +101,11 @@ pub struct Configuration(Arc<ConfigurationInner>);
 struct ConfigurationInner {
     space: Space,
     /// Each decision's value, in canonical order.
-    values: Vec<Option<Value>>,
+    values: Chunked<Option<Value>>,
     /// Each decision's activity, in canonical order.
-    activities: Vec<Activity>,
+    activities: Chunked<Activity>,
     /// Each choice's chosen alternative's position, in canonical order.
-    chosen: Vec<Option<usize>>,
+    chosen: Chunked<Option<usize>>,
 }
 
 impl Configuration {
@@ -119,7 +122,7 @@ impl Configuration {
         entries: impl IntoIterator<Item = (Identifier, Value)>,
         context: &ParamContext<'_>,
     ) -> Result<Self, ConfigurationErrors> {
-        check(space, Vec::new(), entries, context, ValueCheck::New)
+        check(space, entries, context, ValueCheck::New)
     }
 
     /// Return the configuration of `space` built as [`new`](Self::new)
@@ -132,7 +135,7 @@ impl Configuration {
         entries: impl IntoIterator<Item = (Identifier, Value)>,
         context: &ParamContext<'_>,
     ) -> Result<Self, ConfigurationErrors> {
-        check(space, Vec::new(), entries, context, ValueCheck::Restore)
+        check(space, entries, context, ValueCheck::Restore)
     }
 
     /// Return the configuration of `space` assigning nothing.
@@ -143,14 +146,7 @@ impl Configuration {
     /// evaluation reads, is never asked.
     pub(super) fn empty(space: &Space) -> Self {
         let solver = Solver::new();
-        check(
-            space,
-            Vec::new(),
-            [],
-            &ParamContext::new(&solver),
-            ValueCheck::New,
-        )
-        .expect(
+        check(space, [], &ParamContext::new(&solver), ValueCheck::New).expect(
             "every condition and forbidden clause names a decision, so a configuration \
              assigning nothing evaluates none of them and is valid",
         )
@@ -208,13 +204,9 @@ impl Configuration {
         entries: impl IntoIterator<Item = (Identifier, Value)>,
         context: &ParamContext<'_>,
     ) -> Result<Self, ConfigurationErrors> {
-        check(
-            &self.0.space,
-            self.0.values.clone(),
-            entries,
-            context,
-            ValueCheck::New,
-        )
+        let mut checker = Checker::extending(self, context);
+        checker.read_entries(entries);
+        checker.run_incrementally()
     }
 
     /// Return this configuration without the value of the decision
@@ -261,16 +253,12 @@ impl Configuration {
             ValueCheck::New,
         );
         checker.remove_entries(names);
-        checker.run()
+        checker.run_fully()
     }
 
     /// Return this configuration with the decision `name` given `value`,
-    /// checked as [`with_entry`](Self::with_entry) checks it, except that
-    /// the values this configuration holds are not checked against their
-    /// params again: its own check accepted them, and a search run checks
-    /// every step under the one context. Activity, conditions and
-    /// forbidden clauses are checked anew, since the new value can change
-    /// them.
+    /// checked as [`with_entry`](Self::with_entry) checks it: a search run
+    /// grows its configuration this way, one step at a time.
     ///
     /// # Errors
     ///
@@ -281,13 +269,7 @@ impl Configuration {
         value: Value,
         context: &ParamContext<'_>,
     ) -> Result<Self, ConfigurationErrors> {
-        check(
-            &self.0.space,
-            self.0.values.clone(),
-            [(name, value)],
-            context,
-            ValueCheck::Extend,
-        )
+        self.with_entries([(name, value)], context)
     }
 
     /// Return the space the configuration is a point of.
@@ -301,7 +283,7 @@ impl Configuration {
     #[must_use]
     pub fn value(&self, name: &Identifier) -> Option<&Value> {
         let position = self.0.space.position(name)?;
-        self.0.values[position].as_ref()
+        self.0.values.get(position).as_ref()
     }
 
     /// Return the alternative the choice `choice` chose, or `None` if it is
@@ -309,7 +291,7 @@ impl Configuration {
     #[must_use]
     pub fn alternative(&self, choice: &Identifier) -> Option<&Part<dyn Alternative>> {
         let position = self.0.space.position(choice)?;
-        let index = self.0.chosen[position]?;
+        let index = (*self.0.chosen.get(position))?;
         match self.0.space.decision_at(position) {
             Decision::Choice(choice) => choice.alternatives().get(index),
             Decision::Variable(_) => None,
@@ -320,7 +302,8 @@ impl Configuration {
     pub fn entries(&self) -> impl ExactSizeIterator<Item = (&Identifier, &Value)> + '_ {
         Entries {
             space: &self.0.space,
-            values: self.0.values.iter().enumerate(),
+            values: &self.0.values,
+            position: 0,
             remaining: self.0.values.iter().flatten().count(),
         }
     }
@@ -332,7 +315,7 @@ impl Configuration {
         self.0
             .space
             .position(name)
-            .map(|position| self.0.activities[position])
+            .map(|position| *self.0.activities.get(position))
     }
 
     /// Return whether every decision is assigned or inactive.
@@ -341,7 +324,7 @@ impl Configuration {
         self.0
             .activities
             .iter()
-            .zip(&self.0.values)
+            .zip(self.0.values.iter())
             .all(|(activity, value)| *activity == Activity::Inactive || value.is_some())
     }
 
@@ -355,13 +338,13 @@ impl Configuration {
     /// is partly selected. A decision under an alternative the choice did
     /// not choose is inactive, so it counts as decided.
     #[must_use]
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn is_complete_under(&self, name: &Identifier) -> Option<bool> {
-        todo!()
+        let space = &self.0.space;
+        let position = space.position(name)?;
+        Some((position..space.subtree_end_at(position)).all(|position| {
+            *self.0.activities.get(position) == Activity::Inactive
+                || self.0.values.get(position).is_some()
+        }))
     }
 
     /// Return the configuration's key within its space.
@@ -370,13 +353,13 @@ impl Configuration {
         let space = &self.0.space;
         let entries = (0..space.decision_count())
             .map(|position| {
-                if self.0.activities[position] == Activity::Inactive {
+                if *self.0.activities.get(position) == Activity::Inactive {
                     return KeyEntry::Inactive;
                 }
-                if let Some(index) = self.0.chosen[position] {
+                if let Some(index) = *self.0.chosen.get(position) {
                     return KeyEntry::Alternative(index);
                 }
-                match &self.0.values[position] {
+                match self.0.values.get(position) {
                     None => KeyEntry::Unassigned,
                     Some(value) => KeyEntry::Value(KeyValue::of(value, space)),
                 }
@@ -441,10 +424,10 @@ impl AlphaEquivalence for Configuration {
             return Ok(false);
         }
         Ok((0..left.space.decision_count()).all(|position| {
-            match (&left.values[position], &right.values[position]) {
+            match (left.values.get(position), right.values.get(position)) {
                 (None, None) => true,
-                (Some(left_value), Some(right_value)) => match left.chosen[position] {
-                    Some(index) => right.chosen[position] == Some(index),
+                (Some(left_value), Some(right_value)) => match *left.chosen.get(position) {
+                    Some(index) => *right.chosen.get(position) == Some(index),
                     None => do_values_correspond(left_value, right_value, &frame),
                 },
                 _ => false,
@@ -575,10 +558,17 @@ enum ValueCheck {
     New,
     /// As [`ParamAssignment::restore`] checks them.
     Restore,
-    /// The entries' values as [`ParamAssignment::new`] checks them; the
-    /// base values, which a check of the base configuration accepted, as
-    /// they are.
-    Extend,
+}
+
+/// Which decisions a check looks at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// Every decision and forbidden clause, and every value, given or held.
+    Full,
+    /// The decisions the entries can change and the forbidden clauses
+    /// naming one that changed; a held value, which the configuration's
+    /// own check accepted, is not checked against its param again.
+    Incremental,
 }
 
 /// The state of one check of a configuration's entries: each decision's
@@ -588,36 +578,40 @@ struct Checker<'a> {
     space: &'a Space,
     context: &'a ParamContext<'a>,
     value_check: ValueCheck,
-    values: Vec<Option<Value>>,
-    /// Per position, whether an entry gave the decision its value.
-    is_given: Vec<bool>,
-    activities: Vec<Activity>,
-    chosen: Vec<Option<usize>>,
+    scope: Scope,
+    values: Chunked<Option<Value>>,
+    /// The canonical positions of the decisions an entry gave a value.
+    given: HashSet<usize>,
+    activities: Chunked<Activity>,
+    chosen: Chunked<Option<usize>>,
     problems: Vec<ConfigurationError>,
 }
 
-/// Return the configuration of `space` holding `base` (each decision's
-/// value, in canonical order, or none) with `entries` given on top, checked
-/// as [`Configuration`] documents.
+/// Return the configuration of `space` holding `entries`, checked as
+/// [`Configuration`] documents.
 fn check(
     space: &Space,
-    base: Vec<Option<Value>>,
     entries: impl IntoIterator<Item = (Identifier, Value)>,
     context: &ParamContext<'_>,
     value_check: ValueCheck,
 ) -> Result<Configuration, ConfigurationErrors> {
-    let mut checker = Checker::new(space, base, context, value_check);
+    let mut checker = Checker::new(
+        space,
+        Chunked::filled(space.decision_count(), &None),
+        context,
+        value_check,
+    );
     checker.read_entries(entries);
-    checker.run()
+    checker.run_fully()
 }
 
 impl<'a> Checker<'a> {
-    /// Return the checker of a configuration of `space` holding `base`
-    /// (each decision's value, in canonical order, or none), before any
-    /// entry is read.
+    /// Return the checker of a configuration of `space` holding `values`
+    /// (each decision's value, in canonical order, or none), checking
+    /// every decision, before any entry is read.
     fn new(
         space: &'a Space,
-        base: Vec<Option<Value>>,
+        values: Chunked<Option<Value>>,
         context: &'a ParamContext<'a>,
         value_check: ValueCheck,
     ) -> Self {
@@ -626,26 +620,94 @@ impl<'a> Checker<'a> {
             space,
             context,
             value_check,
-            values: if base.is_empty() {
-                vec![None; count]
-            } else {
-                base
-            },
-            is_given: vec![false; count],
-            activities: vec![Activity::Pending; count],
-            chosen: vec![None; count],
+            scope: Scope::Full,
+            values,
+            given: HashSet::new(),
+            activities: Chunked::filled(count, &Activity::Pending),
+            chosen: Chunked::filled(count, &None),
+            problems: Vec::new(),
+        }
+    }
+
+    /// Return the checker of `base` grown by entries, checking only what
+    /// the entries can change, before any entry is read.
+    fn extending(base: &'a Configuration, context: &'a ParamContext<'a>) -> Self {
+        let inner = &base.0;
+        Checker {
+            space: &inner.space,
+            context,
+            value_check: ValueCheck::New,
+            scope: Scope::Incremental,
+            values: inner.values.clone(),
+            given: HashSet::new(),
+            activities: inner.activities.clone(),
+            chosen: inner.chosen.clone(),
             problems: Vec::new(),
         }
     }
 
     /// Check every decision and forbidden clause, and return the
     /// configuration or every problem found.
-    fn run(mut self) -> Result<Configuration, ConfigurationErrors> {
+    fn run_fully(mut self) -> Result<Configuration, ConfigurationErrors> {
         for &position in self.space.order_positions() {
             self.check_decision(position);
         }
-        self.check_forbidden_clauses();
+        for index in 0..self.space.forbidden().len() {
+            self.check_forbidden_clause(index);
+        }
         self.finish()
+    }
+
+    /// Check the decisions the entries can change, in decision order: each
+    /// given one, and each depending on a decision whose activity, chosen
+    /// alternative or value changed; then the forbidden clauses naming a
+    /// decision that changed, in order. Return the configuration or every
+    /// problem found.
+    ///
+    /// The configuration grown is valid, so a decision no entry reaches
+    /// keeps its activity and value, and a clause naming none of the
+    /// changed decisions keeps its outcome.
+    fn run_incrementally(mut self) -> Result<Configuration, ConfigurationErrors> {
+        let space = self.space;
+        let mut queued: HashSet<usize> = self.given.clone();
+        let mut queue: BinaryHeap<Reverse<(usize, usize)>> = queued
+            .iter()
+            .map(|&position| Reverse((space.order_rank(position), position)))
+            .collect();
+        let mut changed: Vec<usize> = Vec::new();
+        while let Some(Reverse((_, position))) = queue.pop() {
+            let before = self.read_state(position);
+            self.check_decision(position);
+            if !self.given.contains(&position) && self.read_state(position) == before {
+                continue;
+            }
+            changed.push(position);
+            for &dependent in space.dependents_at(position) {
+                if queued.insert(dependent) {
+                    queue.push(Reverse((space.order_rank(dependent), dependent)));
+                }
+            }
+        }
+        let mut clauses: Vec<usize> = changed
+            .iter()
+            .flat_map(|&position| space.forbidden_naming(position).iter().copied())
+            .collect();
+        clauses.sort_unstable();
+        clauses.dedup();
+        for index in clauses {
+            self.check_forbidden_clause(index);
+        }
+        self.finish()
+    }
+
+    /// Return what a dependent of the decision at `position` reads of it:
+    /// its activity, its chosen alternative and whether it holds a value.
+    fn read_state(&self, position: usize) -> (Activity, Option<usize>, bool) {
+        (
+            *self.activities.get(position),
+            *self.chosen.get(position),
+            self.values.get(position).is_some(),
+        )
     }
 
     /// Remove the value of each decision `names` names, refusing a name
@@ -653,7 +715,9 @@ impl<'a> Checker<'a> {
     fn remove_entries(&mut self, names: impl IntoIterator<Item = Identifier>) {
         for name in names {
             match self.space.position(&name) {
-                Some(position) => self.values[position] = None,
+                Some(position) => {
+                    self.values.take(position);
+                }
                 None => self
                     .problems
                     .push(ConfigurationError::UnknownDecision { name }),
@@ -670,13 +734,12 @@ impl<'a> Checker<'a> {
                     .push(ConfigurationError::UnknownDecision { name });
                 continue;
             };
-            if self.is_given[position] {
+            if !self.given.insert(position) {
                 self.problems
                     .push(ConfigurationError::DuplicateEntry { name });
                 continue;
             }
-            self.is_given[position] = true;
-            self.values[position] = Some(value);
+            self.values.set(position, Some(value));
         }
     }
 
@@ -684,26 +747,42 @@ impl<'a> Checker<'a> {
     /// dropping a refused one.
     fn check_decision(&mut self, position: usize) {
         let activity = self.find_activity(position);
-        self.activities[position] = activity;
-        let Some(value) = self.values[position].take() else {
+        if *self.activities.get(position) != activity {
+            self.activities.set(position, activity);
+        }
+        if self.values.get(position).is_none() {
             return;
-        };
+        }
         let name = self.space.decision_at(position).name();
         if activity != Activity::Active {
             self.problems
                 .push(ConfigurationError::InactiveDecision { name: name.clone() });
+            self.values.take(position);
+            self.forget_chosen(position);
             return;
         }
+        let is_held = self.scope == Scope::Incremental && !self.given.contains(&position);
+        if is_held {
+            return;
+        }
+        let Some(value) = self.values.take(position) else {
+            return;
+        };
+        self.forget_chosen(position);
         let accepted = match self.space.decision_at(position) {
             Decision::Choice(choice) => self.check_choice_value(position, choice, value),
-            Decision::Variable(_)
-                if self.value_check == ValueCheck::Extend && !self.is_given[position] =>
-            {
-                Some(value)
-            }
             Decision::Variable(variable) => self.check_variable_value(variable, value),
         };
-        self.values[position] = accepted;
+        if accepted.is_some() {
+            self.values.set(position, accepted);
+        }
+    }
+
+    /// Forget the alternative the choice at `position` chose, if any.
+    fn forget_chosen(&mut self, position: usize) {
+        if self.chosen.get(position).is_some() {
+            self.chosen.set(position, None);
+        }
     }
 
     /// Return `value` if it names an alternative of `choice`, at
@@ -728,7 +807,7 @@ impl<'a> Checker<'a> {
             });
             return None;
         };
-        self.chosen[position] = Some(index);
+        self.chosen.set(position, Some(index));
         Some(value)
     }
 
@@ -741,9 +820,7 @@ impl<'a> Checker<'a> {
         let variable = variable.get();
         let param = variable.param().clone();
         let assigned = match self.value_check {
-            ValueCheck::New | ValueCheck::Extend => {
-                ParamAssignment::new(param, value, self.context)
-            }
+            ValueCheck::New => ParamAssignment::new(param, value, self.context),
             ValueCheck::Restore => ParamAssignment::restore(param, value, self.context),
         };
         match assigned {
@@ -764,8 +841,8 @@ impl<'a> Checker<'a> {
     fn find_activity(&mut self, position: usize) -> Activity {
         let from_parent = match self.space.parent_at(position) {
             None => Activity::Active,
-            Some((choice, alternative)) => match self.activities[choice] {
-                Activity::Active => match self.chosen[choice] {
+            Some((choice, alternative)) => match *self.activities.get(choice) {
+                Activity::Active => match *self.chosen.get(choice) {
                     None => Activity::Pending,
                     Some(index) if index == alternative => Activity::Active,
                     Some(_) => Activity::Inactive,
@@ -781,7 +858,7 @@ impl<'a> Checker<'a> {
         };
         if references
             .iter()
-            .any(|&reference| self.activities[reference] == Activity::Inactive)
+            .any(|&reference| *self.activities.get(reference) == Activity::Inactive)
         {
             return Activity::Inactive;
         }
@@ -815,29 +892,28 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Check every forbidden clause whose decisions are all active and
-    /// assigned.
-    fn check_forbidden_clauses(&mut self) {
-        for (index, clause) in self.space.forbidden().iter().enumerate() {
-            let references = self.space.forbidden_references(index);
-            let Some(bindings) =
-                bind_if_decided(self.space, references, &self.activities, &self.values)
-            else {
-                continue;
-            };
-            match evaluate(clause.when(), &bindings, self.context) {
-                Ok(Outcome::Satisfied) => {
-                    self.problems.push(ConfigurationError::Forbidden { index });
-                }
-                Ok(Outcome::Violated) => {}
-                Ok(Outcome::Undecided) => {
-                    self.problems
-                        .push(ConfigurationError::UndecidedForbidden { index });
-                }
-                Err(error) => self
-                    .problems
-                    .push(ConfigurationError::FailedForbidden { index, error }),
+    /// Check the forbidden clause at `index`, if its decisions are all
+    /// active and assigned.
+    fn check_forbidden_clause(&mut self, index: usize) {
+        let clause = &self.space.forbidden()[index];
+        let references = self.space.forbidden_references(index);
+        let Some(bindings) =
+            bind_if_decided(self.space, references, &self.activities, &self.values)
+        else {
+            return;
+        };
+        match evaluate(clause.when(), &bindings, self.context) {
+            Ok(Outcome::Satisfied) => {
+                self.problems.push(ConfigurationError::Forbidden { index });
             }
+            Ok(Outcome::Violated) => {}
+            Ok(Outcome::Undecided) => {
+                self.problems
+                    .push(ConfigurationError::UndecidedForbidden { index });
+            }
+            Err(error) => self
+                .problems
+                .push(ConfigurationError::FailedForbidden { index, error }),
         }
     }
 
@@ -861,16 +937,16 @@ impl<'a> Checker<'a> {
 fn bind_if_decided(
     space: &Space,
     references: &[usize],
-    activities: &[Activity],
-    values: &[Option<Value>],
+    activities: &Chunked<Activity>,
+    values: &Chunked<Option<Value>>,
 ) -> Option<Bindings> {
     references
         .iter()
         .map(|&reference| {
-            if activities[reference] != Activity::Active {
+            if *activities.get(reference) != Activity::Active {
                 return None;
             }
-            let value = values[reference].clone()?;
+            let value = values.get(reference).clone()?;
             Some((
                 space.decision_at(reference).name().clone(),
                 Binding::Value(value),
@@ -891,7 +967,9 @@ fn evaluate(
 /// The assigned decisions of a configuration, in canonical order.
 struct Entries<'a> {
     space: &'a Space,
-    values: std::iter::Enumerate<std::slice::Iter<'a, Option<Value>>>,
+    values: &'a Chunked<Option<Value>>,
+    /// The canonical position to look at next.
+    position: usize,
     remaining: usize,
 }
 
@@ -899,12 +977,15 @@ impl<'a> Iterator for Entries<'a> {
     type Item = (&'a Identifier, &'a Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (position, value) = self
-            .values
-            .by_ref()
-            .find_map(|(position, value)| Some((position, value.as_ref()?)))?;
-        self.remaining -= 1;
-        Some((self.space.decision_at(position).name(), value))
+        while self.position < self.values.len() {
+            let position = self.position;
+            self.position += 1;
+            if let Some(value) = self.values.get(position) {
+                self.remaining -= 1;
+                return Some((self.space.decision_at(position).name(), value));
+            }
+        }
+        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

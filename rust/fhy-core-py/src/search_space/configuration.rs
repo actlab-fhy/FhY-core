@@ -422,13 +422,11 @@ impl PyConfiguration {
 
     /// Return whether the decision `name` and every decision under it are
     /// assigned or inactive, or `None` if the space has no such decision.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
+    ///
+    /// Raises `TypeError` if `name` is not an `Identifier`.
     fn is_complete_under(&self, name: &Bound<'_, PyAny>) -> PyResult<Option<bool>> {
-        todo!()
+        let name = restore_identifier(name, "Configuration", "name")?;
+        Ok(self.configuration.is_complete_under(&name))
     }
 
     /// Return the `Trace` of the assigned decisions, in decision order.
