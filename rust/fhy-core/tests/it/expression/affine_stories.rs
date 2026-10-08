@@ -1,7 +1,13 @@
 //! Stories of `Rational` and of `Expression::affine_form`: the exact
-//! rational type, the behaviour table of the analysis, every shape it
+//! rational type, the affine shapes the analysis reads, every shape it
 //! declines, its two bounds, the form's std traits, and the canonical
 //! expression the form writes.
+
+use fhy_core::expression::{
+    AffineForm, BigInt, BinaryOperation, Expression, LiteralValue, Rational, UnaryOperation,
+};
+use fhy_core::identifier::Identifier;
+use rstest::rstest;
 
 use crate::support::expression::{
     build_call_or_panic, build_decimal_literal, build_deep_sum, build_doubling_dag,
@@ -9,12 +15,6 @@ use crate::support::expression::{
     expect_unary,
 };
 use crate::support::hashing::hash_of;
-
-use fhy_core::expression::{
-    AffineForm, BigInt, BinaryOperation, Expression, LiteralValue, Rational, UnaryOperation,
-};
-use fhy_core::identifier::Identifier;
-use rstest::rstest;
 
 /// Return the rational `numerator / denominator`, built by `Rational::new`.
 fn rat(numerator: i64, denominator: i64) -> Rational {
@@ -170,7 +170,7 @@ fn rational_orders_numerically() {
 }
 
 // ---------------------------------------------------------------------------
-// The behaviour table
+// Affine expressions
 // ---------------------------------------------------------------------------
 
 /// Test the form of each affine expression: its terms over `x` (index 0)

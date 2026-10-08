@@ -11,9 +11,6 @@
 
 use std::collections::HashMap;
 
-use crate::support::expression::IDENTIFIER_POOL;
-use crate::support::guard::{GUARD_CASES, draw_guard_cases};
-
 use fhy_core::expression::evaluate::{Evaluator, Scalar};
 use fhy_core::expression::registry::FunctionRegistry;
 use fhy_core::expression::{
@@ -22,6 +19,9 @@ use fhy_core::expression::{
 use fhy_core::identifier::Identifier;
 use proptest::prelude::*;
 use proptest::sample::select;
+
+use crate::support::expression::IDENTIFIER_POOL;
+use crate::support::guard::{GUARD_CASES, draw_guard_cases};
 
 /// The distance under which two evaluations count as equal. The values are
 /// exact multiples of 1/8, so any real difference is far above it; it only
