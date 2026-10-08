@@ -291,12 +291,13 @@ def test_categorical_param_deserialize_rejects_wrapped_non_leaf_values() -> None
     """Test categorical deserialize rejects wrapped container values.
 
     Under the derived format the value list lives at
-    ``payload["domain"]["__data__"]["categories"]``; a wrapped tuple is not a
-    valid categorical leaf value and must be rejected.
+    ``payload["domain"]["__data__"]["categories"]``; a wrapped tuple holding a
+    float is not a valid category (a tuple of leaf values is, but a float is
+    refused inside one too) and must be rejected.
     """
     payload = create_categorical_param({"a", "b"}).serialize_to_dict()
     payload["domain"]["__data__"]["categories"] = [  # type: ignore[index,call-overload]  # test: modify serialized
-        serialize_registry_wrapped_value(("a", "b"))
+        serialize_registry_wrapped_value(("a", 1.5))
     ]
 
     with pytest.raises(DeserializationValueError):
