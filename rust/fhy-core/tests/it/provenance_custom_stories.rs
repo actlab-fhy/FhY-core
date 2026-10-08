@@ -3,15 +3,15 @@
 //! `ProvenanceData` with a resolver, and `Provenance::fuse` over a custom
 //! source.
 
-use crate::support::hashing::hash_of;
-use crate::support::provenance::{
-    EDGE_PROPAGATION, EdgePropagation, EdgeResolver, UnwiredProvenance, build_file, build_named,
-};
-
 use fhy_core::foreign::{BuildError, ForeignError, NoForeign, Part};
 use fhy_core::provenance::wire::ProvenanceData;
 use fhy_core::provenance::{CallSiteProvenance, FusedProvenance, NamedProvenanceError, Provenance};
 use rstest::rstest;
+
+use crate::support::hashing::hash_of;
+use crate::support::provenance::{
+    EDGE_PROPAGATION, EdgePropagation, EdgeResolver, UnwiredProvenance, build_file, build_named,
+};
 
 /// The JSON text of the custom provenance of the edge `e3`.
 const EDGE_E3_JSON: &str = r#"{"custom":{"type_id":"test.edge_propagation","data":"e3"}}"#;
@@ -26,23 +26,43 @@ fn build_fused(sources: Vec<Provenance>) -> Provenance {
     Provenance::Fused(FusedProvenance::new(sources))
 }
 
-/// Return the provenance `custom` nested in a named, a call-site and a
-/// fused provenance, outermost first.
-fn nest_in_every_variant(custom: &Provenance) -> Vec<Provenance> {
-    vec![
-        build_named("n", custom.clone()),
-        build_call_site(custom.clone(), build_file("caller.fhy", None)),
-        build_call_site(build_file("callee.fhy", None), custom.clone()),
-        build_fused(vec![build_file("a.fhy", None), custom.clone()]),
-        Provenance::Fused(FusedProvenance::labelled(
+/// Where a story places a custom provenance: as it is, or inside a named,
+/// a call-site or a fused provenance.
+#[derive(Debug, Clone, Copy)]
+enum Nesting {
+    /// The custom provenance itself.
+    Bare,
+    /// The child of a named provenance.
+    Named,
+    /// The callee of a call site.
+    Callee,
+    /// The caller of a call site.
+    Caller,
+    /// A source of an unlabelled fusion.
+    Fused,
+    /// A source of a labelled fusion.
+    LabelledFused,
+    /// The child of a named provenance in a fusion in a named provenance.
+    NamedFusedNamed,
+}
+
+/// Return `custom` placed as `nesting` says.
+fn nest(custom: &Provenance, nesting: Nesting) -> Provenance {
+    match nesting {
+        Nesting::Bare => custom.clone(),
+        Nesting::Named => build_named("n", custom.clone()),
+        Nesting::Callee => build_call_site(custom.clone(), build_file("caller.fhy", None)),
+        Nesting::Caller => build_call_site(build_file("callee.fhy", None), custom.clone()),
+        Nesting::Fused => build_fused(vec![build_file("a.fhy", None), custom.clone()]),
+        Nesting::LabelledFused => Provenance::Fused(FusedProvenance::labelled(
             vec![custom.clone(), build_file("b.fhy", None)],
             "label",
         )),
-        build_named(
+        Nesting::NamedFusedNamed => build_named(
             "outer",
             build_fused(vec![build_named("inner", custom.clone())]),
         ),
-    ]
+    }
 }
 
 /// Return the JSON text of `provenance`.
@@ -102,18 +122,27 @@ fn custom_provenance_of_different_data_is_unequal() {
 }
 
 /// Test a provenance holding a custom part is equal to one holding an equal
-/// part, at any depth.
-#[test]
-fn custom_provenance_equality_holds_at_depth() {
-    let left = nest_in_every_variant(&EdgePropagation::build("e3"));
-    let right = nest_in_every_variant(&EdgePropagation::build("e3"));
-    let other = nest_in_every_variant(&EdgePropagation::build("e4"));
+/// part, with an equal hash, and unequal to one holding another part, at
+/// any depth.
+#[rstest]
+fn custom_provenance_equality_holds_at_depth(
+    #[values(
+        Nesting::Named,
+        Nesting::Callee,
+        Nesting::Caller,
+        Nesting::Fused,
+        Nesting::LabelledFused,
+        Nesting::NamedFusedNamed
+    )]
+    nesting: Nesting,
+) {
+    let left = nest(&EdgePropagation::build("e3"), nesting);
+    let right = nest(&EdgePropagation::build("e3"), nesting);
+    let other = nest(&EdgePropagation::build("e4"), nesting);
 
-    for ((left, right), other) in left.iter().zip(&right).zip(&other) {
-        assert_eq!(left, right);
-        assert_eq!(hash_of(left), hash_of(right));
-        assert_ne!(left, other);
-    }
+    assert_eq!(left, right);
+    assert_eq!(hash_of(&left), hash_of(&right));
+    assert_ne!(left, other);
 }
 
 /// Test a part that keeps the default `eq_part` is equal to itself and its
@@ -170,20 +199,29 @@ fn custom_provenance_serializes_inside_a_named_provenance() {
 
 /// Test a part with no wire form fails serialization, naming its type, in
 /// any variant that holds it.
-#[test]
-fn custom_provenance_with_no_wire_form_fails_to_serialize() {
-    let unwired = UnwiredProvenance::build("p");
+#[rstest]
+fn custom_provenance_with_no_wire_form_fails_to_serialize(
+    #[values(
+        Nesting::Bare,
+        Nesting::Named,
+        Nesting::Callee,
+        Nesting::Caller,
+        Nesting::Fused,
+        Nesting::LabelledFused,
+        Nesting::NamedFusedNamed
+    )]
+    nesting: Nesting,
+) {
+    let provenance = nest(&UnwiredProvenance::build("p"), nesting);
 
-    for provenance in std::iter::once(unwired.clone()).chain(nest_in_every_variant(&unwired)) {
-        let error = serde_json::to_string(&provenance).expect_err("no wire form");
+    let error = serde_json::to_string(&provenance).expect_err("no wire form");
 
-        assert!(
-            error
-                .to_string()
-                .contains("`UnwiredProvenance` has no wire form"),
-            "{error}"
-        );
-    }
+    assert!(
+        error
+            .to_string()
+            .contains("`UnwiredProvenance` has no wire form"),
+        "{error}"
+    );
 }
 
 /// Test postcard refuses a part with no wire form too.
@@ -201,22 +239,29 @@ fn custom_provenance_with_no_wire_form_fails_to_serialize_as_postcard() {
 
 /// Test `Provenance`'s own decoding refuses a custom provenance, naming its
 /// type id, wherever it occurs.
-#[test]
-fn provenance_deserialize_refuses_a_custom_provenance_at_any_depth() {
-    let custom = EdgePropagation::build("e3");
+#[rstest]
+fn provenance_deserialize_refuses_a_custom_provenance_at_any_depth(
+    #[values(
+        Nesting::Bare,
+        Nesting::Named,
+        Nesting::Callee,
+        Nesting::Caller,
+        Nesting::Fused,
+        Nesting::LabelledFused,
+        Nesting::NamedFusedNamed
+    )]
+    nesting: Nesting,
+) {
+    let text = write_json(&nest(&EdgePropagation::build("e3"), nesting));
 
-    for provenance in std::iter::once(custom.clone()).chain(nest_in_every_variant(&custom)) {
-        let text = write_json(&provenance);
+    let error = serde_json::from_str::<Provenance>(&text).expect_err("no resolver");
 
-        let error = serde_json::from_str::<Provenance>(&text).expect_err("no resolver");
-
-        assert!(
-            error
-                .to_string()
-                .contains("no implementation for the foreign part `test.edge_propagation`"),
-            "{text}: {error}"
-        );
-    }
+    assert!(
+        error
+            .to_string()
+            .contains("no implementation for the foreign part `test.edge_propagation`"),
+        "{text}: {error}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -224,17 +269,25 @@ fn provenance_deserialize_refuses_a_custom_provenance_at_any_depth() {
 // ---------------------------------------------------------------------------
 
 /// Test the wire form of `ProvenanceData::of` is the provenance's own JSON.
-#[test]
-fn provenance_data_of_serializes_as_the_provenance_does() {
-    let custom = EdgePropagation::build("e3");
+#[rstest]
+fn provenance_data_of_serializes_as_the_provenance_does(
+    #[values(
+        Nesting::Bare,
+        Nesting::Named,
+        Nesting::Callee,
+        Nesting::Caller,
+        Nesting::Fused,
+        Nesting::LabelledFused,
+        Nesting::NamedFusedNamed
+    )]
+    nesting: Nesting,
+) {
+    let provenance = nest(&EdgePropagation::build("e3"), nesting);
+    let data = ProvenanceData::of(&provenance).expect("a wire form");
 
-    for provenance in std::iter::once(custom.clone()).chain(nest_in_every_variant(&custom)) {
-        let data = ProvenanceData::of(&provenance).expect("a wire form");
+    let text = serde_json::to_string(&data).expect("encodes");
 
-        let text = serde_json::to_string(&data).expect("encodes");
-
-        assert_eq!(text, write_json(&provenance));
-    }
+    assert_eq!(text, write_json(&provenance));
 }
 
 /// Test the data of a custom provenance, written as JSON and read back,
@@ -254,34 +307,51 @@ fn provenance_data_round_trips_a_custom_provenance_through_json() {
 
 /// Test the round trip holds inside a named, a call-site and a fused
 /// provenance, and nested deeper.
-#[test]
-fn provenance_data_round_trips_nested_custom_provenances_through_json() {
-    for provenance in nest_in_every_variant(&EdgePropagation::build("e3")) {
-        let data = ProvenanceData::of(&provenance).expect("a wire form");
-        let text = serde_json::to_string(&data).expect("encodes");
+#[rstest]
+fn provenance_data_round_trips_nested_custom_provenances_through_json(
+    #[values(
+        Nesting::Named,
+        Nesting::Callee,
+        Nesting::Caller,
+        Nesting::Fused,
+        Nesting::LabelledFused,
+        Nesting::NamedFusedNamed
+    )]
+    nesting: Nesting,
+) {
+    let provenance = nest(&EdgePropagation::build("e3"), nesting);
+    let data = ProvenanceData::of(&provenance).expect("a wire form");
+    let text = serde_json::to_string(&data).expect("encodes");
 
-        let decoded: ProvenanceData = serde_json::from_str(&text).expect("decodes");
-        let built = decoded.build(&EdgeResolver).expect("the resolver reads it");
+    let decoded: ProvenanceData = serde_json::from_str(&text).expect("decodes");
+    let built = decoded.build(&EdgeResolver).expect("the resolver reads it");
 
-        assert_eq!(built, provenance, "{text}");
-    }
+    assert_eq!(built, provenance, "{text}");
 }
 
 /// Test the round trip through postcard builds an equal provenance, nested
 /// or not.
-#[test]
-fn provenance_data_round_trips_custom_provenances_through_postcard() {
-    let custom = EdgePropagation::build("e3");
+#[rstest]
+fn provenance_data_round_trips_custom_provenances_through_postcard(
+    #[values(
+        Nesting::Bare,
+        Nesting::Named,
+        Nesting::Callee,
+        Nesting::Caller,
+        Nesting::Fused,
+        Nesting::LabelledFused,
+        Nesting::NamedFusedNamed
+    )]
+    nesting: Nesting,
+) {
+    let provenance = nest(&EdgePropagation::build("e3"), nesting);
+    let data = ProvenanceData::of(&provenance).expect("a wire form");
+    let bytes = postcard::to_allocvec(&data).expect("encodes");
 
-    for provenance in std::iter::once(custom.clone()).chain(nest_in_every_variant(&custom)) {
-        let data = ProvenanceData::of(&provenance).expect("a wire form");
-        let bytes = postcard::to_allocvec(&data).expect("encodes");
+    let decoded: ProvenanceData = postcard::from_bytes(&bytes).expect("decodes");
+    let built = decoded.build(&EdgeResolver).expect("the resolver reads it");
 
-        let decoded: ProvenanceData = postcard::from_bytes(&bytes).expect("decodes");
-        let built = decoded.build(&EdgeResolver).expect("the resolver reads it");
-
-        assert_eq!(built, provenance);
-    }
+    assert_eq!(built, provenance);
 }
 
 /// Test the data reads the bytes `Provenance` itself writes in postcard.
@@ -312,24 +382,32 @@ fn provenance_data_of_a_provenance_without_custom_parts_builds_without_a_resolve
 
 /// Test a resolver that does not know the part's type id refuses it as
 /// unresolved, at any depth.
-#[test]
-fn provenance_data_build_reports_an_unresolved_custom_provenance() {
-    let custom = EdgePropagation::build("e3");
+#[rstest]
+fn provenance_data_build_reports_an_unresolved_custom_provenance(
+    #[values(
+        Nesting::Bare,
+        Nesting::Named,
+        Nesting::Callee,
+        Nesting::Caller,
+        Nesting::Fused,
+        Nesting::LabelledFused,
+        Nesting::NamedFusedNamed
+    )]
+    nesting: Nesting,
+) {
+    let data =
+        ProvenanceData::of(&nest(&EdgePropagation::build("e3"), nesting)).expect("a wire form");
 
-    for provenance in std::iter::once(custom.clone()).chain(nest_in_every_variant(&custom)) {
-        let data = ProvenanceData::of(&provenance).expect("a wire form");
+    let result = data.build(&NoForeign);
 
-        let result = data.build(&NoForeign);
-
-        assert!(
-            matches!(
-                &result,
-                Err(BuildError::Foreign(ForeignError::Unresolved { type_id }))
-                    if type_id == EDGE_PROPAGATION
-            ),
-            "{result:?}"
-        );
-    }
+    assert!(
+        matches!(
+            &result,
+            Err(BuildError::Foreign(ForeignError::Unresolved { type_id }))
+                if type_id == EDGE_PROPAGATION
+        ),
+        "{result:?}"
+    );
 }
 
 /// Test a named provenance with an empty name decodes as data and fails to
@@ -360,21 +438,30 @@ fn provenance_data_build_reports_an_empty_name_as_invalid(#[case] text: &str) {
 }
 
 /// Test a part with no wire form has no data, at any depth.
-#[test]
-fn provenance_data_of_a_part_with_no_wire_form_fails() {
-    let unwired = UnwiredProvenance::build("p");
+#[rstest]
+fn provenance_data_of_a_part_with_no_wire_form_fails(
+    #[values(
+        Nesting::Bare,
+        Nesting::Named,
+        Nesting::Callee,
+        Nesting::Caller,
+        Nesting::Fused,
+        Nesting::LabelledFused,
+        Nesting::NamedFusedNamed
+    )]
+    nesting: Nesting,
+) {
+    let provenance = nest(&UnwiredProvenance::build("p"), nesting);
 
-    for provenance in std::iter::once(unwired.clone()).chain(nest_in_every_variant(&unwired)) {
-        let result = ProvenanceData::of(&provenance);
+    let result = ProvenanceData::of(&provenance);
 
-        assert!(
-            matches!(
-                &result,
-                Err(ForeignError::NoWireForm { type_name }) if type_name == "UnwiredProvenance"
-            ),
-            "{result:?}"
-        );
-    }
+    assert!(
+        matches!(
+            &result,
+            Err(ForeignError::NoWireForm { type_name }) if type_name == "UnwiredProvenance"
+        ),
+        "{result:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
