@@ -499,6 +499,10 @@ impl SearchOracle for CallFallback {
 /// it fits and is admissible, and the oracle `fallback` answers the rest.
 ///
 /// The fallback is read as an oracle argument at each step it answers.
+///
+/// One oracle guides one run: the dynamic steps it takes are used up, so a
+/// second run with it gets no dynamic guidance. Build a new one, from the
+/// same guide, for each run.
 #[pyclass(frozen, module = "fhy_core._rs", name = "GuidedOracle")]
 pub(crate) struct PyGuidedOracle {
     /// The guiding `Trace`.

@@ -483,6 +483,10 @@ impl SearchOracle for ReplayOracle {
 /// whose guide answer does not fit, goes to the fallback, whose error stops
 /// the run as it would stop it unguided.
 ///
+/// One oracle guides one run: the dynamic steps it takes are used up and
+/// never given back, so a second run with the same oracle gets no dynamic
+/// guidance. Build a new one, from the same guide, for each run.
+///
 /// Guiding by canonical position makes a trace of one space guide a run
 /// over an alpha-equivalent one, whose names differ; to carry values over
 /// to an [edited](super::Space::with_decisions) space, whose positions may
