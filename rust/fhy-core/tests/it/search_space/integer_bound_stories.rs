@@ -4,7 +4,7 @@
 //! a constraint no bound decides needs a simplifier and fails the same way
 //! everywhere.
 
-use fhy_core::constraint::{EquationConstraint, Value};
+use fhy_core::constraint::{Constraint, EquationConstraint, Value};
 use fhy_core::expression::{BigInt, LiteralValue};
 use fhy_core::identifier::Identifier;
 use fhy_core::param::{
@@ -83,7 +83,7 @@ fn build_address_space(k: &Identifier) -> Space {
 /// multiple by a solver.
 fn build_multiples_space(k: &Identifier) -> Space {
     let param = build_interval_param(Sign::Any, (0, true), (40, true));
-    let multiple_of_four = fhy_core::constraint::Constraint::from(EquationConstraint::new(
+    let multiple_of_four = Constraint::from(EquationConstraint::new(
         reference(param.variable())
             .floor_mod(literal(4))
             .equals(literal(0)),
@@ -95,13 +95,14 @@ fn build_multiples_space(k: &Identifier) -> Space {
     build_one_variable_space(k, param)
 }
 
-/// Return the problem `result` stopped with: the one assignment of `k`.
+/// Assert that `result` stopped with one problem: an assignment error of
+/// `k` whose constraint failed to evaluate.
 ///
 /// # Panics
 ///
-/// Panics if `result` is not a `TraceError::Configuration` holding one
-/// problem, an assignment error of a constraint that failed to evaluate.
-fn constraint_failure<T: std::fmt::Debug>(result: Result<T, TraceError>, k: &Identifier) {
+/// Panics if `result` is not a `TraceError::Configuration` holding that one
+/// problem.
+fn assert_failed_constraint<T: std::fmt::Debug>(result: Result<T, TraceError>, k: &Identifier) {
     let Err(TraceError::Configuration(errors)) = result else {
         panic!("expected a configuration error, got {result:?}");
     };
@@ -139,26 +140,26 @@ fn space_cardinality_of_a_bounded_natural_is_exact_without_a_simplifier() {
 
 /// Test sampling the bounded natural under a solver without a simplifier
 /// draws a value inside the bounds, as the count says there are.
-#[test]
-fn space_sample_of_a_bounded_natural_draws_a_value_in_its_bounds_without_a_simplifier() {
+#[rstest]
+fn space_sample_of_a_bounded_natural_draws_a_value_in_its_bounds_without_a_simplifier(
+    #[values(0, 1, 2, 3, 4, 5, 6, 7)] seed: u64,
+) {
     let k = Identifier::new("address");
     let space = build_address_space(&k);
     let solver = Solver::new();
 
-    for seed in 0..8 {
-        let recorded = space
-            .sample(&mut RandomOracle::new(seed), &ParamContext::new(&solver))
-            .expect("a value inside the bounds is admissible");
+    let recorded = space
+        .sample(&mut RandomOracle::new(seed), &ParamContext::new(&solver))
+        .expect("a value inside the bounds is admissible");
 
-        let configuration = recorded.configuration().expect("a run over a space");
-        let Some(Value::Int(value)) = configuration.value(&k) else {
-            panic!("an integer value, got {:?}", configuration.value(&k));
-        };
-        assert!(
-            (BigInt::from(16)..=BigInt::from(4095)).contains(value),
-            "seed {seed} drew {value}"
-        );
-    }
+    let configuration = recorded.configuration().expect("a run over a space");
+    let Some(Value::Int(value)) = configuration.value(&k) else {
+        panic!("an integer value, got {:?}", configuration.value(&k));
+    };
+    assert!(
+        (BigInt::from(16)..=BigInt::from(4095)).contains(value),
+        "drew {value}"
+    );
 }
 
 /// Test a uniform draw over the bounded natural under a solver without a
@@ -246,7 +247,7 @@ fn space_sample_over_a_constraint_no_bound_decides_fails_without_a_simplifier() 
 
     let result = space.sample(&mut RandomOracle::new(0), &ParamContext::new(&solver));
 
-    constraint_failure(result, &k);
+    assert_failed_constraint(result, &k);
 }
 
 /// Test counting such a space under a solver without a simplifier stops
@@ -259,7 +260,7 @@ fn space_cardinality_over_a_constraint_no_bound_decides_fails_without_a_simplifi
 
     let result = space.cardinality(&ParamContext::new(&solver), 1_000);
 
-    constraint_failure(result, &k);
+    assert_failed_constraint(result, &k);
 }
 
 /// Test mutating a configuration of such a space, built under a ground
@@ -279,7 +280,7 @@ fn space_mutate_over_a_constraint_no_bound_decides_fails_without_a_simplifier() 
         attempts(4),
     );
 
-    constraint_failure(result, &k);
+    assert_failed_constraint(result, &k);
 }
 
 // ---------------------------------------------------------------------------
