@@ -13,6 +13,41 @@ use crate::support::search::{
 };
 use crate::support::serde::{check_serde_round_trip, json_of};
 
+/// Return the one-step trace of kind `kind_name` over `domain`, answered
+/// `answer`, about a fresh subject.
+fn build_dynamic_trace(kind_name: &str, domain: &StepDomain, answer: Coordinate) -> Trace {
+    Trace::new(vec![
+        TraceStep::dynamic(kind(kind_name), Identifier::new("s"), domain, answer)
+            .expect("the answer is in the domain"),
+    ])
+}
+
+/// Return the trace of the steps of `first` followed by those of `second`.
+fn concatenate(first: &Trace, second: &Trace) -> Trace {
+    Trace::new([first.steps(), second.steps()].concat())
+}
+
+/// Return the JSON text of a key of one dynamic step of `kind_name` over
+/// the one run `[start, stop)`, answered with `coordinate`.
+fn build_key_text(
+    kind_name: &str,
+    start: i64,
+    stop: i64,
+    coordinate: &serde_json::Value,
+) -> String {
+    json!({"steps": [{
+        "kind": kind_name,
+        "decision": null,
+        "domain": {"strided": [{
+            "start": start.to_string(),
+            "stop": stop.to_string(),
+            "stride": "1",
+        }]},
+        "coordinate": coordinate,
+    }]})
+    .to_string()
+}
+
 // ---------------------------------------------------------------------------
 // What a key is of
 // ---------------------------------------------------------------------------
@@ -59,32 +94,34 @@ fn trace_key_is_equal_across_alpha_equivalent_spaces() {
     assert_eq!(left_trace.key(), right_trace.key());
 }
 
-/// Build the one-step trace of kind `kind_name` over `domain`, answered
-/// `answer`, about a fresh subject.
-fn build_dynamic_trace(kind_name: &str, domain: &StepDomain, answer: Coordinate) -> Trace {
-    Trace::new(vec![
-        TraceStep::dynamic(kind(kind_name), Identifier::new("s"), domain, answer)
-            .expect("the answer is in the domain"),
-    ])
-}
-
 /// Test a key tells apart the kind of a step, the domain it was asked over
 /// and the order the steps were asked in.
-#[test]
-fn trace_key_differs_on_the_kind_the_domain_and_the_order_of_the_steps() {
-    let base = build_dynamic_trace("address", &strided(&[(0, 8)]), index(3));
-    let other_kind = build_dynamic_trace("option", &strided(&[(0, 8)]), index(3));
-    let other_domain = build_dynamic_trace("address", &strided(&[(8, 16)]), index(3));
-    let (first, second) = (
-        build_dynamic_trace("address", &strided(&[(0, 8)]), index(3)),
-        build_dynamic_trace("option", &strided(&[(0, 4)]), index(1)),
-    );
-    let forward = Trace::new([first.steps(), second.steps()].concat());
-    let backward = Trace::new([second.steps(), first.steps()].concat());
+#[rstest]
+#[case::kind(
+    build_dynamic_trace("address", &strided(&[(0, 8)]), index(3)),
+    build_dynamic_trace("option", &strided(&[(0, 8)]), index(3)),
+)]
+#[case::domain(
+    build_dynamic_trace("address", &strided(&[(0, 8)]), index(3)),
+    build_dynamic_trace("address", &strided(&[(8, 16)]), index(3)),
+)]
+#[case::order_of_the_steps(
+    concatenate(
+        &build_dynamic_trace("address", &strided(&[(0, 8)]), index(3)),
+        &build_dynamic_trace("option", &strided(&[(0, 4)]), index(1)),
+    ),
+    concatenate(
+        &build_dynamic_trace("option", &strided(&[(0, 4)]), index(1)),
+        &build_dynamic_trace("address", &strided(&[(0, 8)]), index(3)),
+    ),
+)]
+fn trace_key_differs_on_the_kind_the_domain_and_the_order_of_the_steps(
+    #[case] trace: Trace,
+    #[case] other: Trace,
+) {
+    let key = trace.key();
 
-    assert_ne!(base.key(), other_kind.key());
-    assert_ne!(base.key(), other_domain.key());
-    assert_ne!(forward.key(), backward.key());
+    assert_ne!(key, other.key());
 }
 
 /// Test a key keeps the coordinate of an order step, as the ordering a run
@@ -204,48 +241,18 @@ fn trace_key_of_an_empty_trace_serializes_as_no_steps() {
     assert_eq!(json_of(&Trace::default().key()), json!({"steps": []}));
 }
 
-/// Test a key, of static and dynamic steps, round-trips through JSON and
-/// postcard.
-#[test]
-fn trace_key_round_trips_through_json_and_postcard() {
-    let tiling = build_tiling_space();
-    let (trace, _) = record_tiling_run(&tiling, 63, &Identifier::new("buffer"));
-
-    let result = check_serde_round_trip(&trace.key());
-
-    result.unwrap_or_else(|failure| panic!("{failure}"));
-}
-
-/// Test the key of an order step and of an empty trace round-trip through
-/// JSON and postcard.
+/// Test a key round-trips through JSON and postcard: of a run of static and
+/// dynamic steps, of an order step, and of an empty trace.
 #[rstest]
-#[case::empty(Trace::default())]
+#[case::static_and_dynamic_steps(
+    record_tiling_run(&build_tiling_space(), 63, &Identifier::new("buffer")).0
+)]
 #[case::order(build_dynamic_trace("walk", &order_of(&[&Identifier::new("i"), &Identifier::new("j")]), order(&[1, 0])))]
-fn trace_key_of_other_runs_round_trips_through_json_and_postcard(#[case] trace: Trace) {
+#[case::empty(Trace::default())]
+fn trace_key_round_trips_through_json_and_postcard(#[case] trace: Trace) {
     let result = check_serde_round_trip(&trace.key());
 
     result.unwrap_or_else(|failure| panic!("{failure}"));
-}
-
-/// Return the JSON text of a key of one dynamic step of `kind_name` over
-/// the one run `[start, stop)`, answered with `coordinate`.
-fn build_key_text(
-    kind_name: &str,
-    start: i64,
-    stop: i64,
-    coordinate: &serde_json::Value,
-) -> String {
-    json!({"steps": [{
-        "kind": kind_name,
-        "decision": null,
-        "domain": {"strided": [{
-            "start": start.to_string(),
-            "stop": stop.to_string(),
-            "stride": "1",
-        }]},
-        "coordinate": coordinate,
-    }]})
-    .to_string()
 }
 
 /// Test a well-formed key decodes: the control of the refusals below.

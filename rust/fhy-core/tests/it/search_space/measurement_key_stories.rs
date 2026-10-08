@@ -38,6 +38,18 @@ fn measure_latency(key: impl Into<MeasurementKey>, value: f64) -> Measurement {
     Measurement::ok(key, vec![(latency(), value)]).expect("a finite value")
 }
 
+/// Return the configuration key `measurement` holds.
+///
+/// # Panics
+///
+/// Panics if the measurement is of a run.
+fn configuration_key_of(measurement: &Measurement) -> ConfigurationKey {
+    match measurement.key() {
+        MeasurementKey::Configuration(key) => key.clone(),
+        MeasurementKey::Trace(key) => panic!("expected a configuration key, got {key:?}"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Conversions and comparisons
 // ---------------------------------------------------------------------------
@@ -168,18 +180,6 @@ fn measurements_of_runs_and_of_their_configuration_differ_by_key() {
     assert_eq!(configuration_key_of(&of_configuration), configuration);
 }
 
-/// Return the configuration key `measurement` holds.
-///
-/// # Panics
-///
-/// Panics if the measurement is of a run.
-fn configuration_key_of(measurement: &Measurement) -> ConfigurationKey {
-    match measurement.key() {
-        MeasurementKey::Configuration(key) => key.clone(),
-        MeasurementKey::Trace(key) => panic!("expected a configuration key, got {key:?}"),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Wire form
 // ---------------------------------------------------------------------------
@@ -214,16 +214,21 @@ fn measurement_key_serializes_tagged_by_its_variant() {
 
 /// Test a measurement key of either variant round-trips through JSON and
 /// postcard.
-#[test]
-fn measurement_key_round_trips_through_json_and_postcard() {
-    let (trace_key, configuration_key) = record_keys(17);
-
-    for key in [
-        MeasurementKey::Trace(trace_key),
-        MeasurementKey::Configuration(configuration_key),
-    ] {
-        check_serde_round_trip(&key).unwrap_or_else(|failure| panic!("{failure}"));
+#[rstest]
+#[case::trace(|(trace_key, _): (TraceKey, ConfigurationKey)| MeasurementKey::Trace(trace_key))]
+#[case::configuration(
+    |(_, configuration_key): (TraceKey, ConfigurationKey)| {
+        MeasurementKey::Configuration(configuration_key)
     }
+)]
+fn measurement_key_round_trips_through_json_and_postcard(
+    #[case] select: fn((TraceKey, ConfigurationKey)) -> MeasurementKey,
+) {
+    let key = select(record_keys(17));
+
+    let result = check_serde_round_trip(&key);
+
+    result.unwrap_or_else(|failure| panic!("{failure}"));
 }
 
 /// Test a measurement of a run, of every status, round-trips through JSON
