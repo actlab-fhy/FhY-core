@@ -122,7 +122,7 @@ fn configuration_key_over_tuple_categories_tells_the_shapes_apart() {
 /// Test a configuration refuses a tuple that is no category, and a leaf.
 #[rstest]
 #[case::other_shape(shape(5, 5))]
-#[case::transposed_prefix(Value::Tuple(vec![int(4)]))]
+#[case::prefix_of_a_shape(Value::Tuple(vec![int(4)]))]
 #[case::leaf(int(4))]
 fn configuration_new_refuses_a_value_that_is_no_shape(#[case] value: Value) {
     let (space, tile) = build_tile_space();

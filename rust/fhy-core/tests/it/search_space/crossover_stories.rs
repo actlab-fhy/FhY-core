@@ -232,7 +232,7 @@ fn space_crossover_repairs_a_forbidden_combination() {
     let first = configure(&space, [(x.clone(), int(1)), (y.clone(), int(2))]);
     let second = configure(&space, [(x.clone(), int(2)), (y.clone(), int(1))]);
 
-    let children: Vec<(bool, [Option<Value>; 2])> = (0..64)
+    let children: Vec<(bool, [Option<Value>; 2])> = (0..128)
         .map(|seed| {
             let child = cross_complete(&space, &first, &second, seed);
             (

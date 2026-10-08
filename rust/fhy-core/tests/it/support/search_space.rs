@@ -28,6 +28,7 @@ use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
 use serde::{Deserialize, Serialize};
 
 use super::constraint::{int, member_set};
+use super::param::{literal, reference};
 
 /// Return a solver whose simplifier decides ground equations, so the
 /// conditions and forbidden clauses over numeric variables evaluate.
@@ -133,9 +134,7 @@ pub(crate) fn natural_param() -> Param {
 /// decides, so a param holding it asks the solver to check a value.
 pub(crate) fn odd(variable: &Identifier) -> Constraint {
     Constraint::from(EquationConstraint::new(
-        super::param::reference(variable)
-            .floor_mod(super::param::literal(2))
-            .equals(super::param::literal(1)),
+        reference(variable).floor_mod(literal(2)).equals(literal(1)),
     ))
 }
 
