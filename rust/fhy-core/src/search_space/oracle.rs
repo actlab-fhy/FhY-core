@@ -74,6 +74,10 @@ pub struct PendingStep<'a> {
     /// A static step's decision and its canonical position.
     decision: Option<(Decision<'a>, usize)>,
     configuration: Option<&'a Configuration>,
+    /// For a run that keeps fixed values it has not reached, the run's
+    /// configuration together with them: a coordinate is admissible only
+    /// when this configuration with its value is accepted too.
+    lookahead: Option<&'a Configuration>,
     context: &'a ParamContext<'a>,
     /// The last coordinate [`admits`](Self::admits) accepted, with the
     /// configuration it extended the run's to, so the recorder that asked
@@ -102,6 +106,7 @@ impl<'a> PendingStep<'a> {
             position,
             decision: None,
             configuration: None,
+            lookahead: None,
             context,
             admitted: RefCell::new(None),
         }
@@ -135,9 +140,18 @@ impl<'a> PendingStep<'a> {
             position,
             decision: Some((decision, canonical)),
             configuration: Some(configuration),
+            lookahead: None,
             context,
             admitted: RefCell::new(None),
         })
+    }
+
+    /// Return the step admitting a coordinate only when `lookahead`, the
+    /// run's configuration with the fixed values it has not reached, with
+    /// its value is accepted too.
+    pub(super) fn with_lookahead(mut self, lookahead: &'a Configuration) -> Self {
+        self.lookahead = Some(lookahead);
+        self
     }
 
     /// Return what the step is about.
@@ -205,6 +219,13 @@ impl<'a> PendingStep<'a> {
         let Some(value) = self.domain.value_at(coordinate) else {
             return Ok(false);
         };
+        if let Some(lookahead) = self.lookahead {
+            let is_admissible =
+                try_extend(lookahead, self.subject, value.clone(), self.context)?.is_some();
+            if !is_admissible {
+                return Ok(false);
+            }
+        }
         let extended = try_extend(configuration, self.subject, value, self.context)?;
         let is_admissible = extended.is_some();
         if let Some(extended) = extended {

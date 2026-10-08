@@ -52,6 +52,10 @@ impl Space {
     /// [`replay`](Self::replay) turns it into the completed configuration.
     /// A complete configuration is returned as it is, with its trace.
     ///
+    /// An answer is admissible only when it also leaves the assigned
+    /// decisions not yet reached possible, so a forbidden clause naming
+    /// an assigned decision and an earlier unassigned one is kept clear of.
+    ///
     /// # Errors
     ///
     /// Returns [`TraceError::OtherSpace`] for a configuration of another
