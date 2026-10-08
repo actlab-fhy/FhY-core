@@ -7,8 +7,6 @@ value from one of them, repairing a combination the space forbids and
 drawing only when neither parent has an admissible value.
 """
 
-import gc
-import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -33,7 +31,9 @@ from fhy_core.search_space import (
 )
 from fhy_core.symbolic.constraint import InSetConstraint
 
+from ..conftest import is_cycle_collected
 from .conftest import (
+    FailingOracle,
     build_dynamic_trace,
     build_tiling_space,
     make_alternative,
@@ -61,23 +61,6 @@ class _Counting:
             for coordinate in range(step.domain.cardinality)
             if step.admits(coordinate)
         )
-
-
-class _Failing:
-    """A fallback oracle that raises a given exception when asked."""
-
-    def __init__(self, error: Exception) -> None:
-        self._error = error
-
-    def decide(self, step: Any) -> int:
-        raise self._error
-
-
-def _collects(build: Callable[[], object]) -> bool:
-    """Return whether the cycle `build` makes is freed by `gc.collect()`."""
-    watched = weakref.ref(build())
-    gc.collect()
-    return watched() is None
 
 
 def _tiled(tiling: Any, unroll: int, tile: int) -> Configuration:
@@ -262,7 +245,7 @@ def test_an_exception_from_the_fallback_propagates_as_itself() -> None:
     tiling = build_tiling_space()
 
     with pytest.raises(_Boom, match="the fallback failed") as info:
-        tiling.space.sample(GuidedOracle(Trace(), _Failing(error)))
+        tiling.space.sample(GuidedOracle(Trace(), FailingOracle(error)))
 
     assert info.value is error
 
@@ -273,7 +256,7 @@ def test_a_guided_run_only_reaches_the_fallback_where_the_guide_fails() -> None:
     configuration = _tiled(tiling, unroll=2, tile=4)
 
     sampled, _ = tiling.space.sample(
-        GuidedOracle(configuration.trace(), _Failing(_Boom("never")))
+        GuidedOracle(configuration.trace(), FailingOracle(_Boom("never")))
     )
 
     assert sampled.key() == configuration.key()
@@ -288,7 +271,7 @@ def test_a_fallback_holding_its_guided_oracle_is_collected() -> None:
         fallback.owner = oracle  # type: ignore[attr-defined]
         return fallback
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 # ===========================================================================

@@ -8,9 +8,6 @@ the life of the process.
 """
 
 import dataclasses
-import gc
-import weakref
-from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -51,22 +48,12 @@ from fhy_core.types import (
 from fhy_core.utils.override import override
 from fhy_core.utils.poset import PartiallyOrderedSet
 
+from .conftest import is_cycle_collected
 from .symbolic.param.test_domain_rust_binding import _Rank
 from .symbolic.param.test_param_rust_binding import _EvenDomain
 from .types.test_types_rust_binding import _Opaque, _Tagged
 
 _Py_TPFLAGS_HAVE_GC = 1 << 14
-
-
-def _collects(build: Callable[[], object]) -> bool:
-    """Return whether the cycle `build` makes is freed by `gc.collect()`.
-
-    `build` returns the object a weak reference watches; the cycle is
-    otherwise unreachable once `build` returns.
-    """
-    watched = weakref.ref(build())
-    gc.collect()
-    return watched() is None
 
 
 class _Node:
@@ -83,7 +70,7 @@ def test_a_plain_python_cycle_is_collected() -> None:
         first.other, second.other = second, first
         return first
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 class _ManagedPass(CompilerPass[Any, Any]):
@@ -106,7 +93,7 @@ def test_a_pass_keeping_its_manager_is_collected() -> None:
         compiler_pass.manager = manager
         return compiler_pass
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_rewrite_callback_closing_over_its_rule_list_is_collected() -> None:
@@ -121,7 +108,7 @@ def test_a_rewrite_callback_closing_over_its_rule_list_is_collected() -> None:
         rules.append(RewriteRule(WildcardPattern(), rewrite))
         return rewrite
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_rewrite_guard_closing_over_its_rule_is_collected() -> None:
@@ -139,7 +126,7 @@ def test_a_rewrite_guard_closing_over_its_rule_is_collected() -> None:
         holder.append(RewriteRule(WildcardPattern(), rewrite, guard=guard))
         return guard
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 class _SolverHoldingSimplifier(Simplifier):
@@ -160,7 +147,7 @@ def test_a_simplifier_holding_its_solver_is_collected() -> None:
         simplifier.solver = Solver(simplifier=simplifier)
         return simplifier
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_fallback_holding_its_ground_simplifier_is_collected() -> None:
@@ -172,7 +159,7 @@ def test_a_fallback_holding_its_ground_simplifier_is_collected() -> None:
         fallback.solver = Solver(simplifier=ground)
         return fallback
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 class _Element:
@@ -192,7 +179,7 @@ def test_an_element_pointing_at_its_order_is_collected(order_class: type) -> Non
         element.container = order
         return element
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -213,7 +200,7 @@ def test_a_frame_pointing_at_its_symbol_table_is_collected() -> None:
         object.__setattr__(frame, "table", table)
         return frame
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_domain_pointing_at_its_param_is_collected() -> None:
@@ -228,7 +215,7 @@ def test_a_domain_pointing_at_its_param_is_collected() -> None:
         domain.calls.append(Param(domain))  # type: ignore[arg-type]
         return domain
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_native_function_whose_implementation_holds_it_is_collected() -> None:
@@ -247,7 +234,7 @@ def test_a_native_function_whose_implementation_holds_it_is_collected() -> None:
         )
         return implementation
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 @pytest.mark.parametrize("domain_class", [CategoricalDomain, OrdinalDomain])
@@ -266,7 +253,7 @@ def test_an_opaque_member_pointing_at_its_domain_is_collected(
         member.owner = domain  # type: ignore[attr-defined]
         return member
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_bound_data_type_pointing_at_its_environment_is_collected() -> None:
@@ -281,7 +268,7 @@ def test_a_bound_data_type_pointing_at_its_environment_is_collected() -> None:
         object.__setattr__(data_type, "owner", environment)
         return data_type
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_frame_s_type_pointing_at_the_frame_is_collected() -> None:
@@ -293,7 +280,7 @@ def test_a_frame_s_type_pointing_at_the_frame_is_collected() -> None:
         object.__setattr__(ty, "owner", frame)
         return ty
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_data_type_pointing_at_its_numerical_type_is_collected() -> None:
@@ -305,7 +292,7 @@ def test_a_data_type_pointing_at_its_numerical_type_is_collected() -> None:
         object.__setattr__(data_type, "owner", numerical)
         return data_type
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def _ranked_space() -> tuple[Space, Variable[Any], Variable[Any]]:
@@ -331,7 +318,7 @@ def test_a_value_pointing_at_its_configuration_is_collected() -> None:
         value.owner = Configuration(space, {ranked.name: value})  # type: ignore[attr-defined]
         return value
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_value_kept_by_a_changed_configuration_is_collected() -> None:
@@ -348,7 +335,7 @@ def test_a_value_kept_by_a_changed_configuration_is_collected() -> None:
         value.owner = given.with_entry(counted.name, 1)  # type: ignore[attr-defined]
         return value
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_value_kept_by_a_reduced_configuration_is_collected() -> None:
@@ -366,7 +353,7 @@ def test_a_value_kept_by_a_reduced_configuration_is_collected() -> None:
         value.owner = given.without_entry(counted.name)  # type: ignore[attr-defined]
         return value
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_value_pointing_at_its_configuration_s_key_is_collected() -> None:
@@ -379,7 +366,7 @@ def test_a_value_pointing_at_its_configuration_s_key_is_collected() -> None:
         value.owner = key  # type: ignore[attr-defined]
         return value
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_value_pointing_at_its_measurement_is_collected() -> None:
@@ -394,7 +381,7 @@ def test_a_value_pointing_at_its_measurement_is_collected() -> None:
         value.owner = measurement.with_notes(())  # type: ignore[attr-defined]
         return value
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_value_pointing_at_a_measurement_s_key_is_collected() -> None:
@@ -407,7 +394,7 @@ def test_a_value_pointing_at_a_measurement_s_key_is_collected() -> None:
         value.owner = Measurement.timeout(key).key  # type: ignore[attr-defined]
         return value
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 _NOT_TRACKED = {

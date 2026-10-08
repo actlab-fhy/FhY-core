@@ -28,25 +28,16 @@ from fhy_core.serialization import DeserializationValueError
 from fhy_core.traits import FrozenMixin
 
 from .conftest import (
+    AnsweringOracle,
     build_complete_configuration,
     build_dynamic_trace,
     build_tiling_space,
 )
 
 
-class _Answers:
-    """An oracle answering the given coordinates, one per step, in order."""
-
-    def __init__(self, *coordinates: Any) -> None:
-        self._coordinates = iter(coordinates)
-
-    def decide(self, step: Any) -> Any:
-        return next(self._coordinates)
-
-
 def _single_step(kind: str, domain: Any, coordinate: Any) -> Trace:
     """Return the trace of one dynamic step of `kind` answered `coordinate`."""
-    recorder = Recorder(_Answers(coordinate))
+    recorder = Recorder(AnsweringOracle(coordinate))
     recorder.decide_dynamic(kind, Identifier("subject"), domain)
     return recorder.trace
 
@@ -86,7 +77,7 @@ def test_a_key_has_the_traces_length_and_coordinates() -> None:
 def test_a_key_holds_an_order_coordinate_as_a_tuple() -> None:
     """Test the coordinate of an order step is the tuple of positions."""
     elements = tuple(Identifier(name) for name in ("p", "q", "r"))
-    recorder = Recorder(_Answers((2, 0, 1)))
+    recorder = Recorder(AnsweringOracle((2, 0, 1)))
     recorder.decide_dynamic("tests.order", Identifier("subject"), OrderDomain(elements))
 
     key = recorder.trace.key()
@@ -159,7 +150,7 @@ def test_the_order_of_the_steps_matters() -> None:
     domain = ChoiceDomain(("a", "b", "c"))
 
     def run(first: int, second: int) -> Trace:
-        recorder = Recorder(_Answers(first, second))
+        recorder = Recorder(AnsweringOracle(first, second))
         recorder.decide_dynamic("tests.one", Identifier("subject"), domain)
         recorder.decide_dynamic("tests.one", Identifier("subject"), domain)
         return recorder.trace

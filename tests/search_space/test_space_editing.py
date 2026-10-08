@@ -27,6 +27,7 @@ from fhy_core.search_space import (
 from fhy_core.symbolic.constraint import InSetConstraint
 
 from .conftest import (
+    FailingOracle,
     build_complete_configuration,
     build_tiling_space,
     categorical,
@@ -56,16 +57,6 @@ class _Forbidden:
 
 class _Boom(Exception):
     """The exception the failing oracle raises."""
-
-
-class _Failing:
-    """An oracle that raises a given exception when asked."""
-
-    def __init__(self, error: Exception) -> None:
-        self._error = error
-
-    def decide(self, step: Any) -> Any:
-        raise self._error
 
 
 # ===========================================================================
@@ -496,7 +487,7 @@ def test_complete_propagates_an_exception_of_the_oracle() -> None:
     error = _Boom("the oracle failed")
 
     with pytest.raises(_Boom, match="the oracle failed") as info:
-        tiling.space.complete(Configuration(tiling.space), _Failing(error))
+        tiling.space.complete(Configuration(tiling.space), FailingOracle(error))
 
     assert info.value is error
 

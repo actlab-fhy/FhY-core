@@ -36,8 +36,10 @@ from fhy_core.utils.override import override
 
 __all__ = [
     "EXPLOSIONS",
+    "AnsweringOracle",
     "ExplodingConstraint",
     "Explosion",
+    "FailingOracle",
     "TilingSpace",
     "build_chain",
     "build_complete_configuration",
@@ -152,6 +154,26 @@ def build_complete_configuration(tiling: TilingSpace, tile: int = 4) -> Configur
     )
 
 
+class AnsweringOracle:
+    """An oracle answering the given coordinates, one per step, in order."""
+
+    def __init__(self, *coordinates: Any) -> None:
+        self._coordinates = iter(coordinates)
+
+    def decide(self, step: Any) -> Any:
+        return next(self._coordinates)
+
+
+class FailingOracle:
+    """An oracle that raises a given exception when asked."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def decide(self, step: Any) -> Any:
+        raise self._error
+
+
 def build_dynamic_trace(
     subject: Identifier | None = None, option: int = 1, address: int = 5
 ) -> Trace:
@@ -163,16 +185,7 @@ def build_dynamic_trace(
     another trace and the same trace key.
     """
 
-    class _Answers:
-        """An oracle answering the given coordinates, one per step."""
-
-        def __init__(self, *coordinates: int) -> None:
-            self._coordinates = iter(coordinates)
-
-        def decide(self, step: Any) -> int:
-            return next(self._coordinates)
-
-    recorder = Recorder(_Answers(option, address))
+    recorder = Recorder(AnsweringOracle(option, address))
     owner = subject if subject is not None else Identifier("subject")
     recorder.decide_dynamic("tests.option", owner, ChoiceDomain(("a", "b", "c")))
     recorder.decide_dynamic("tests.address", owner, StridedDomain((StridedRun(0, 64),)))

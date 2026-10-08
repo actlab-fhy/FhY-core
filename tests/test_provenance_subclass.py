@@ -10,9 +10,7 @@ JSON, pickle and `copy.deepcopy`, surfaces an exception its `__eq__` or
 """
 
 import copy
-import gc
 import pickle
-import weakref
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError, dataclass
 from pathlib import Path
@@ -35,6 +33,7 @@ from fhy_core.serialization import (
 )
 from fhy_core.utils.override import override
 
+from .conftest import is_cycle_collected
 from .v1 import writing_v1
 
 _TYPE_ID = "tests.provenance.edge_propagation"
@@ -106,13 +105,6 @@ class _ExplodingHashProvenance(Provenance):
 def _edge(label: str = "e3") -> EdgePropagationProvenance:
     """Return an edge provenance over a fresh identifier named `label`."""
     return EdgePropagationProvenance(edge_id=Identifier(label))
-
-
-def _collects(build: Callable[[], object]) -> bool:
-    """Return whether the cycle `build` makes is freed by `gc.collect()`."""
-    watched = weakref.ref(build())
-    gc.collect()
-    return watched() is None
 
 
 # ===========================================================================
@@ -435,7 +427,7 @@ def test_a_cycle_through_a_subclass_child_is_collected() -> None:
         object.__setattr__(edge, "owner", named)
         return edge
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_cycle_through_a_compared_subclass_child_is_collected() -> None:
@@ -451,7 +443,7 @@ def test_a_cycle_through_a_compared_subclass_child_is_collected() -> None:
         object.__setattr__(first, "owner", left)
         return first
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 def test_a_cycle_through_a_fused_subclass_source_is_collected() -> None:
@@ -463,7 +455,7 @@ def test_a_cycle_through_a_fused_subclass_source_is_collected() -> None:
         object.__setattr__(edge, "owner", fused)
         return edge
 
-    assert _collects(build)
+    assert is_cycle_collected(build)
 
 
 # ===========================================================================
