@@ -17,6 +17,7 @@ from fhy_core.search_space import (
     Condition,
     Configuration,
     DuplicateNameError,
+    Forbidden,
     RandomOracle,
     SearchSpaceError,
     Space,
@@ -471,6 +472,36 @@ def test_complete_is_deterministic_from_a_seeded_oracle() -> None:
 
     assert left[0].key() == right[0].key()
     assert left[1] == right[1]
+
+
+def test_complete_keeps_an_earlier_decision_clear_of_a_clause_with_a_fixed_one() -> (
+    None
+):
+    """Test a clause naming a fixed decision and an earlier open one is honoured.
+
+    With `a == 1 and b == 1` forbidden and `b` fixed at 1, every seed
+    completes with `a == 0`, and the returned trace replays into it.
+    """
+    first, second = make_variable("a", 0, 1), make_variable("b", 0, 1)
+    space = Space(
+        variables=(first, second),
+        forbidden=(
+            Forbidden(
+                (
+                    InSetConstraint(first.name, {1}),
+                    InSetConstraint(second.name, {1}),
+                )
+            ),
+        ),
+    )
+    partial = Configuration(space, {second.name: 1})
+
+    for seed in range(64):
+        completed, trace = space.complete(partial, RandomOracle(seed=seed))
+
+        assert completed.value(first.name) == 0, seed
+        assert completed.value(second.name) == 1, seed
+        assert space.replay(trace).key() == completed.key(), seed
 
 
 def test_complete_refuses_a_configuration_of_another_space() -> None:
