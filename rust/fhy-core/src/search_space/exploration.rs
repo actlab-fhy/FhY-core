@@ -188,7 +188,9 @@ impl Space {
     /// [`cardinality`](Self::cardinality) splits the space. In a component
     /// counted in closed form every other value of a variable may be taken,
     /// and every other alternative of a choice whose decisions all admit a
-    /// value. In any other component it searches the component's
+    /// value drawn from a finite domain: an alternative under which some
+    /// decision has no finite domain is no option, since no value of it can
+    /// be drawn. In any other component it searches the component's
     /// completions, at most 1024 runs per value, and takes a value whose
     /// search is unfinished as one that may be taken.
     ///

@@ -172,10 +172,12 @@ fn count_relaxed(
 }
 
 /// Return whether the alternative `alternative` of the choice at
-/// `position` admits a completion when no condition, forbidden clause or
-/// param constraint beyond integer bounds reaches under it: the relaxed
-/// counts of the decisions under it, a variable whose param admits no
-/// value counted as none, multiply to anything but zero.
+/// `position` admits a completion a search can draw when no condition,
+/// forbidden clause or param constraint beyond integer bounds reaches under
+/// it: the relaxed counts of the decisions under it, a variable whose param
+/// admits no value counted as none, multiply to a finite number other than
+/// zero. An unbounded or unknown count means some decision under it has no
+/// finite domain to draw from, so the alternative is no option.
 ///
 /// # Errors
 ///
@@ -192,7 +194,7 @@ pub(super) fn admits_completion(
         .iter()
         .map(|&child| count_relaxed(space, tree, child, EmptyVariable::Empty))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(!matches!(Count::product(counts), Count::Finite(count) if count == BigUint::ZERO))
+    Ok(matches!(Count::product(counts), Count::Finite(count) if count != BigUint::ZERO))
 }
 
 /// Return the relaxed counts of every decision, by canonical position, an
