@@ -11,14 +11,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use num_bigint::BigInt;
+use num_traits::{One, Signed, Zero};
 
 use crate::identifier::Identifier;
 use crate::tree::{BuildIdentityHasher, NodeHandle, NodeIdentity};
 
+use super::literal::exact::MAX_FRACTION_BITS;
 use super::node::{BinaryExpression, Expression, ExpressionKind};
-use super::{
-    BinaryOperation, LiteralValue, Rational, UnaryOperation, compute_arithmetic, raise_to_power,
-};
+use super::{BinaryOperation, LiteralValue, Rational, UnaryOperation, compute_arithmetic};
 
 /// The deepest tree [`Expression::affine_form`] reads, the ground
 /// simplifier's bound: a node nested deeper makes the analysis decline.
@@ -26,7 +26,55 @@ const MAX_DEPTH: usize = 256;
 
 /// The most bits a numerator or a denominator of a coefficient or of the
 /// constant may have, the ground simplifier's bound on fractions.
-const MAX_PART_BITS: u64 = 4096;
+const MAX_PART_BITS: u64 = MAX_FRACTION_BITS;
+
+/// An identifier ordered by its id, so a form's terms iterate in one
+/// order in every run.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct OrderedIdentifier(Identifier);
+
+impl PartialOrd for OrderedIdentifier {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrderedIdentifier {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.id().cmp(&other.0.id())
+    }
+}
+
+/// Return the integer literal of an integer `number` and the quotient of
+/// two integer literals of any other.
+fn build_number(number: &Rational) -> Expression {
+    let numerator = Expression::literal(number.numerator().clone());
+    if number.is_integer() {
+        numerator
+    } else {
+        Expression::new_binary(
+            BinaryOperation::Divide,
+            numerator,
+            Expression::literal(number.denominator().clone()),
+        )
+    }
+}
+
+/// Return the term `coefficient * reference` as the canonical expression
+/// writes it: `reference` alone for 1, `-reference` for -1.
+fn build_term(coefficient: &Rational, reference: Expression) -> Expression {
+    match coefficient.to_integer() {
+        Some(integer) if integer.is_one() => reference,
+        Some(integer) if integer.is_negative() && integer.magnitude().is_one() => {
+            Expression::new_unary(UnaryOperation::Negate, reference)
+        }
+        _ => Expression::new_binary(
+            BinaryOperation::Multiply,
+            build_number(coefficient),
+            reference,
+        ),
+    }
+}
 
 /// An expression as `c_1 * x_1 + ... + c_n * x_n + c_0`: a non-zero exact
 /// coefficient per free identifier and an exact constant.
@@ -63,23 +111,6 @@ pub struct AffineForm {
     constant: Rational,
 }
 
-/// An identifier ordered by its id, so a form's terms iterate in one
-/// order in every run.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct OrderedIdentifier(Identifier);
-
-impl PartialOrd for OrderedIdentifier {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for OrderedIdentifier {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.id().cmp(&other.0.id())
-    }
-}
-
 impl AffineForm {
     /// Return the form of the constant `value`.
     fn of_constant(value: Rational) -> Self {
@@ -89,13 +120,24 @@ impl AffineForm {
         }
     }
 
+    /// Return the form of `identifier` alone, with coefficient 1.
+    fn of_identifier(identifier: &Identifier) -> Self {
+        Self {
+            terms: BTreeMap::from([(
+                OrderedIdentifier(identifier.clone()),
+                Rational::from(BigInt::one()),
+            )]),
+            constant: Rational::from(BigInt::zero()),
+        }
+    }
+
     /// Return the coefficient of `identifier`: zero for an identifier the
     /// form does not hold.
     #[must_use]
     pub fn coefficient(&self, identifier: &Identifier) -> Rational {
         self.terms
             .get(&OrderedIdentifier(identifier.clone()))
-            .map_or_else(|| Rational::from(BigInt::from(0)), Rational::clone)
+            .map_or_else(|| Rational::from(BigInt::zero()), Rational::clone)
     }
 
     /// Return the constant term.
@@ -127,18 +169,7 @@ impl AffineForm {
     #[must_use]
     pub fn to_expression(&self) -> Expression {
         let terms = self.terms.iter().map(|(identifier, coefficient)| {
-            let reference = Expression::from(&identifier.0);
-            if coefficient.numerator() == &BigInt::from(1) && coefficient.is_integer() {
-                reference
-            } else if coefficient.numerator() == &BigInt::from(-1) && coefficient.is_integer() {
-                Expression::new_unary(UnaryOperation::Negate, reference)
-            } else {
-                Expression::new_binary(
-                    BinaryOperation::Multiply,
-                    build_number(coefficient),
-                    reference,
-                )
-            }
+            build_term(coefficient, Expression::from(&identifier.0))
         });
         let constant = (!self.constant.is_zero() || self.terms.is_empty())
             .then(|| build_number(&self.constant));
@@ -146,21 +177,6 @@ impl AffineForm {
             .chain(constant)
             .reduce(|sum, term| Expression::new_binary(BinaryOperation::Add, sum, term))
             .unwrap_or_else(|| unreachable!("a form with no term writes its constant"))
-    }
-}
-
-/// Return the integer literal of an integer `number` and the quotient of
-/// two integer literals of any other.
-fn build_number(number: &Rational) -> Expression {
-    let numerator = Expression::literal(number.numerator().clone());
-    if number.is_integer() {
-        numerator
-    } else {
-        Expression::new_binary(
-            BinaryOperation::Divide,
-            numerator,
-            Expression::literal(number.denominator().clone()),
-        )
     }
 }
 
@@ -182,7 +198,19 @@ fn compute(operation: BinaryOperation, left: &Rational, right: &Rational) -> Opt
     keep_within_bounds(compute_arithmetic(operation, left, right)?)
 }
 
-/// Return the form `left + right`, or `left - right` for a `subtraction`.
+/// Return the form `-form`.
+fn negate(form: AffineForm) -> AffineForm {
+    AffineForm {
+        terms: form
+            .terms
+            .into_iter()
+            .map(|(identifier, coefficient)| (identifier, -coefficient))
+            .collect(),
+        constant: -form.constant,
+    }
+}
+
+/// Return the form `left + right`, or `left - right` for `Subtract`.
 fn combine(
     mut left: AffineForm,
     right: AffineForm,
@@ -202,7 +230,7 @@ fn combine(
     Some(left)
 }
 
-/// Return `form * factor`, or `form / factor` for a `Divide`, exactly.
+/// Return `form * factor`, or `form / factor` for `Divide`, exactly.
 fn scale(form: AffineForm, operation: BinaryOperation, factor: &Rational) -> Option<AffineForm> {
     let mut terms = BTreeMap::new();
     for (identifier, coefficient) in form.terms {
@@ -215,6 +243,37 @@ fn scale(form: AffineForm, operation: BinaryOperation, factor: &Rational) -> Opt
         terms,
         constant: compute(operation, &form.constant, factor)?,
     })
+}
+
+/// Return the form `left op right` of two forms, or `None` when it is not
+/// affine or not exact within the bounds.
+fn apply(operation: BinaryOperation, left: AffineForm, right: AffineForm) -> Option<AffineForm> {
+    let are_constant = left.is_constant() && right.is_constant();
+    match operation {
+        BinaryOperation::Add | BinaryOperation::Subtract => combine(left, right, operation),
+        BinaryOperation::Multiply if left.is_constant() => scale(right, operation, &left.constant),
+        BinaryOperation::Multiply if right.is_constant() => scale(left, operation, &right.constant),
+        BinaryOperation::Divide if right.is_constant() && !right.constant.is_zero() => {
+            scale(left, operation, &right.constant)
+        }
+        BinaryOperation::FloorDivide | BinaryOperation::FloorMod if are_constant => {
+            compute(operation, &left.constant, &right.constant).map(AffineForm::of_constant)
+        }
+        BinaryOperation::Power if are_constant && right.constant.is_integer() => {
+            compute(operation, &left.constant, &right.constant).map(AffineForm::of_constant)
+        }
+        BinaryOperation::Multiply
+        | BinaryOperation::Divide
+        | BinaryOperation::FloorDivide
+        | BinaryOperation::FloorMod
+        | BinaryOperation::Power
+        | BinaryOperation::Equal
+        | BinaryOperation::NotEqual
+        | BinaryOperation::Less
+        | BinaryOperation::LessEqual
+        | BinaryOperation::Greater
+        | BinaryOperation::GreaterEqual => None,
+    }
 }
 
 /// The forms of the nodes read so far, by node, each with the height of
@@ -230,65 +289,14 @@ fn read_binary(
     memo: &mut Memo,
 ) -> Option<(AffineForm, usize)> {
     let operation = node.operation();
-    if !matches!(
-        operation,
-        BinaryOperation::Add
-            | BinaryOperation::Subtract
-            | BinaryOperation::Multiply
-            | BinaryOperation::Divide
-            | BinaryOperation::FloorDivide
-            | BinaryOperation::FloorMod
-            | BinaryOperation::Power
-    ) {
+    // A comparison is never affine, whatever its operands are.
+    if !operation.is_arithmetic() {
         return None;
     }
     let (left, left_height) = read(node.left(), depth + 1, memo)?;
     let (right, right_height) = read(node.right(), depth + 1, memo)?;
-    let height = left_height.max(right_height) + 1;
-    let form = match operation {
-        BinaryOperation::Add | BinaryOperation::Subtract => combine(left, right, operation),
-        BinaryOperation::Multiply => {
-            if left.is_constant() {
-                scale(right, operation, &left.constant)
-            } else if right.is_constant() {
-                scale(left, operation, &right.constant)
-            } else {
-                None
-            }
-        }
-        BinaryOperation::Divide => {
-            if !right.is_constant() || right.constant.is_zero() {
-                return None;
-            }
-            scale(left, operation, &right.constant)
-        }
-        BinaryOperation::FloorDivide | BinaryOperation::FloorMod => {
-            if !(left.is_constant() && right.is_constant()) {
-                return None;
-            }
-            compute(operation, &left.constant, &right.constant).map(AffineForm::of_constant)
-        }
-        BinaryOperation::Power => {
-            if !(left.is_constant() && right.is_constant() && right.constant.is_integer()) {
-                return None;
-            }
-            let power = compute_power(&left.constant, &right.constant)?;
-            Some(AffineForm::of_constant(power))
-        }
-        BinaryOperation::Equal
-        | BinaryOperation::NotEqual
-        | BinaryOperation::Less
-        | BinaryOperation::LessEqual
-        | BinaryOperation::Greater
-        | BinaryOperation::GreaterEqual => None,
-    }?;
-    Some((form, height))
-}
-
-/// Return `base ** exponent`, exact and within the bounds, for an integer
-/// exponent, or `None`.
-fn compute_power(base: &Rational, exponent: &Rational) -> Option<Rational> {
-    keep_within_bounds(raise_to_power(base, exponent)?)
+    let form = apply(operation, left, right)?;
+    Some((form, left_height.max(right_height) + 1))
 }
 
 /// Return the form of `expression` at nesting `depth` and the height of its
@@ -317,16 +325,7 @@ fn read_node(
     memo: &mut Memo,
 ) -> Option<(AffineForm, usize)> {
     match expression.kind() {
-        ExpressionKind::Identifier(identifier) => Some((
-            AffineForm {
-                terms: BTreeMap::from([(
-                    OrderedIdentifier(identifier.clone()),
-                    Rational::from(BigInt::from(1)),
-                )]),
-                constant: Rational::from(BigInt::from(0)),
-            },
-            0,
-        )),
+        ExpressionKind::Identifier(identifier) => Some((AffineForm::of_identifier(identifier), 0)),
         ExpressionKind::Literal(LiteralValue::Int(value)) => {
             keep_within_bounds(Rational::from(value.clone()))
                 .map(|constant| (AffineForm::of_constant(constant), 0))
@@ -341,21 +340,12 @@ fn read_node(
         | ExpressionKind::Call(_) => None,
         ExpressionKind::Unary(node) => {
             let (operand, height) = read(node.operand(), depth + 1, memo)?;
-            match node.operation() {
-                UnaryOperation::Positive => Some((operand, height + 1)),
-                UnaryOperation::Negate => Some((
-                    AffineForm {
-                        terms: operand
-                            .terms
-                            .into_iter()
-                            .map(|(identifier, coefficient)| (identifier, -coefficient))
-                            .collect(),
-                        constant: -operand.constant,
-                    },
-                    height + 1,
-                )),
-                UnaryOperation::LogicalNot => None,
-            }
+            let form = match node.operation() {
+                UnaryOperation::Positive => operand,
+                UnaryOperation::Negate => negate(operand),
+                UnaryOperation::LogicalNot => return None,
+            };
+            Some((form, height + 1))
         }
         ExpressionKind::Binary(node) => read_binary(node, depth, memo),
     }
