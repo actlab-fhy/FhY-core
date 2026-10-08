@@ -562,7 +562,10 @@ umbrella distribution (working name `fhy-native`) whose extension is the
 aggregate of every `-py` crate of the stack, whose version is pinned to the
 matching releases of `fhy_core` and of each product, and that declares the
 `fhy_core.native` entry point; the products depend on it through an optional
-extra. `fhy_core` alone keeps shipping its own `fhy_core._rs`, so nothing
+extra. A `-py` crate depends on the exact `fhy-core-py` release,
+`fhy-core-py = "=X.Y.Z"`, of the `fhy_core` it is installed with: the
+loader refuses an aggregate whose `__fhy_core_version__` is not
+`fhy_core`'s. `fhy_core` alone keeps shipping its own `fhy_core._rs`, so nothing
 changes for users without the umbrella. Until the umbrella exists, a single
 downstream product, which is the only one with Rust code, may ship its own
 aggregate under the same entry point and hand the role to the umbrella when a

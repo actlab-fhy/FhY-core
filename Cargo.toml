@@ -34,7 +34,9 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 rstest = "0.27"
 # The z3 backend of `fhy_core::solver`, behind the off-by-default `z3` feature.
 z3 = "0.21"
-fhy-core = { path = "rust/fhy-core" }
+# Exact, and equal to the workspace version: fhy-core-py of a release is
+# published against fhy-core of the same release.
+fhy-core = { path = "rust/fhy-core", version = "=0.2.0" }
 
 [workspace.lints.rust]
 # docs.rs builds with `--cfg docsrs` (fhy-core's `[package.metadata.docs.rs]`).

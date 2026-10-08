@@ -1,9 +1,10 @@
-name: Release and Upload Rust Crate
+name: Release and Upload Rust Crates
 
-# A published release also publishes the fhy-core crate to crates.io, through
-# Trusted Publishing (OIDC). crates.io accepts a trusted publisher only for a
-# crate that already exists, so the first version is published by hand, and a
-# version already on crates.io is skipped rather than refused.
+# A published release also publishes the fhy-core and fhy-core-py crates to
+# crates.io, through Trusted Publishing (OIDC). crates.io accepts a trusted
+# publisher only for a crate that already exists, so each crate's first
+# version is published by hand, and a version already on crates.io is skipped
+# rather than refused.
 
 on:
   release:
@@ -42,29 +43,37 @@ jobs:
       - name: Check the Release Tag and the Published Versions
         # The tag must name the workspace version, `v<version>`. The crates.io
         # API asks every client for a User-Agent that identifies it.
-        id: crate
+        id: crates
         run: |
           VERSION="$(cargo metadata --no-deps --format-version 1 --locked \
             | jq -r '.packages[] | select(.name == "fhy-core") | .version')"
           if [[ "v$VERSION" != "$GITHUB_REF_NAME" ]]; then
-            echo "::error::Release tag $GITHUB_REF_NAME does not name fhy-core $VERSION."
+            echo "::error::Release tag $GITHUB_REF_NAME does not name version $VERSION."
             exit 1
           fi
-          STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-            --user-agent 'FhY-core release workflow (https://github.com/actlab-fhy/FhY-core)' \
-            "https://crates.io/api/v1/crates/fhy-core/$VERSION")"
-          if [[ "$STATUS" == "200" ]]; then
-            echo "::notice::fhy-core $VERSION is already on crates.io; skipping."
-            echo "published=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "published=false" >> "$GITHUB_OUTPUT"
-          fi
+          UNPUBLISHED=()
+          for CRATE in fhy-core fhy-core-py; do
+            STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --user-agent 'FhY-core release workflow (https://github.com/actlab-fhy/FhY-core)' \
+              "https://crates.io/api/v1/crates/$CRATE/$VERSION")"
+            if [[ "$STATUS" == "200" ]]; then
+              echo "::notice::$CRATE $VERSION is already on crates.io; skipping."
+            else
+              UNPUBLISHED+=("$CRATE")
+            fi
+          done
+          echo "unpublished=${UNPUBLISHED[*]}" >> "$GITHUB_OUTPUT"
       - name: Authenticate with crates.io
-        if: steps.crate.outputs.published == 'false'
+        if: steps.crates.outputs.unpublished != ''
         id: auth
         uses: rust-lang/crates-io-auth-action@v1
-      - name: Publish fhy-core
-        if: steps.crate.outputs.published == 'false'
-        run: cargo publish --locked --package fhy-core
+      - name: Publish the Crates
+        # In dependency order: fhy-core-py depends on the fhy-core of the
+        # same release, and cargo waits until a published crate is usable.
+        if: steps.crates.outputs.unpublished != ''
+        run: |
+          for CRATE in ${{ steps.crates.outputs.unpublished }}; do
+            cargo publish --locked --package "$CRATE"
+          done
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

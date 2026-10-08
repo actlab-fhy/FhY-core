@@ -176,7 +176,7 @@ Parts of FhY Core are implemented in Rust, in the crate `fhy-core` under `rust/f
 - **Standalone Rust library**: usable by any Rust project, from crates.io: `fhy-core = "0.2"`.
 - **Python extension module**: the separate `fhy-core-py` crate under `rust/fhy-core-py/` depends on `fhy-core` and wraps it with [PyO3](https://pyo3.rs/) bindings, as a library whose `register` function adds them to an extension module; downstream products call it to build one combined extension for the whole process. [maturin](https://www.maturin.rs/) compiles the thin `fhy-core-ext` crate over it into the Python package as `fhy_core._rs`, which the package requires (or loads a combined extension in its place, see `CONTRIBUTING.md`): the interned tags, diagnostics, provenance, expressions, patterns, the pass infrastructure, the term traits' renaming and engines, the constraints, the params, and the SymPy simplifier's lowering, simplification and lifting are Rust-backed, and `Identifier` draws its ids from the Rust counter.
 
-`fhy-core` itself has no PyO3 dependency, so pure-Rust consumers never pull in a Python dependency; only `fhy-core-py` does.
+`fhy-core` itself has no PyO3 dependency, so pure-Rust consumers never pull in a Python dependency; only `fhy-core-py` does. `fhy-core-py` is on crates.io too; a downstream crate pins the exact release of the `fhy_core` it is installed with, `fhy-core-py = "=0.2.0"`.
 
 ### Building and Testing the Rust Crate
 
