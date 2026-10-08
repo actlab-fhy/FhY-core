@@ -5,17 +5,14 @@
 //! `{"named": {"name", "child"}}`, `{"call_site": {"callee", "caller"}}`,
 //! `{"fused": {"sources", "label"}}` and `{"custom": {"type_id", "data"}}`.
 
-#![expect(
-    unused_variables,
-    clippy::todo,
-    reason = "interface stub; bodies are todo!() until implementation"
-)]
-
 use serde::{Deserialize, Serialize};
 
 use crate::foreign::{BuildError, Foreign, ForeignError, Part, Resolve};
 
-use super::{CustomProvenance, FileProvenance, Provenance};
+use super::{
+    CallSiteProvenance, CustomProvenance, FileProvenance, FusedProvenance, NamedProvenance,
+    Provenance,
+};
 
 /// The wire form of a [`Provenance`], its custom provenances unresolved.
 ///
@@ -71,7 +68,27 @@ impl ProvenanceData {
     /// Returns the error of a custom provenance, at any depth, that cannot
     /// give its foreign form.
     pub fn of(provenance: &Provenance) -> Result<Self, ForeignError> {
-        todo!()
+        Ok(Self(match provenance {
+            Provenance::Unknown => ProvenanceRepr::Unknown(UnknownRepr {}),
+            Provenance::File(file) => ProvenanceRepr::File(file.clone()),
+            Provenance::Named(named) => ProvenanceRepr::Named(NamedRepr {
+                name: named.name().to_owned(),
+                child: Box::new(Self::of(named.child())?),
+            }),
+            Provenance::CallSite(call_site) => ProvenanceRepr::CallSite(CallSiteRepr {
+                callee: Box::new(Self::of(call_site.callee())?),
+                caller: Box::new(Self::of(call_site.caller())?),
+            }),
+            Provenance::Fused(fused) => ProvenanceRepr::Fused(FusedRepr {
+                sources: fused
+                    .sources()
+                    .iter()
+                    .map(Self::of)
+                    .collect::<Result<_, _>>()?,
+                label: fused.label().map(str::to_owned),
+            }),
+            Provenance::Custom(custom) => ProvenanceRepr::Custom(custom.get().to_foreign()?),
+        }))
     }
 
     /// Return the provenance, each custom part resolved by `resolver`.
@@ -86,6 +103,26 @@ impl ProvenanceData {
         self,
         resolver: &R,
     ) -> Result<Provenance, BuildError> {
-        todo!()
+        Ok(match self.0 {
+            ProvenanceRepr::Unknown(UnknownRepr {}) => Provenance::Unknown,
+            ProvenanceRepr::File(file) => Provenance::File(file),
+            ProvenanceRepr::Named(NamedRepr { name, child }) => Provenance::Named(
+                NamedProvenance::new(name, child.build(resolver)?).map_err(BuildError::invalid)?,
+            ),
+            ProvenanceRepr::CallSite(CallSiteRepr { callee, caller }) => Provenance::CallSite(
+                CallSiteProvenance::new(callee.build(resolver)?, caller.build(resolver)?),
+            ),
+            ProvenanceRepr::Fused(FusedRepr { sources, label }) => {
+                let sources = sources
+                    .into_iter()
+                    .map(|source| source.build(resolver))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Provenance::Fused(match label {
+                    Some(label) => FusedProvenance::labelled(sources, label),
+                    None => FusedProvenance::new(sources),
+                })
+            }
+            ProvenanceRepr::Custom(foreign) => Provenance::Custom(resolver.resolve(&foreign)?),
+        })
     }
 }
