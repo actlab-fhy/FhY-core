@@ -1058,7 +1058,7 @@ None reaches a released version: v0.1.8 has no Rust search space and no
 Rust provenance binding. In Python, `_rs.Provenance` gaining a constructor
 restores 0.1.8 behaviour.
 
-## Needs the user
+## Needs the user (decided 2026-10-07)
 
 N1. **`#[derive(AlphaEquivalence)]` in a new `fhy-core-derive` crate.**
 MOGA-VM has about 15 IR classes using `DerivedEquivalenceMixin`. A
