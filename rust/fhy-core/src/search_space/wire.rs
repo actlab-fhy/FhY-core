@@ -46,6 +46,7 @@
 //! reading their insides.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt;
 use std::sync::Arc;
 
@@ -146,10 +147,6 @@ pub type CustomDomainResolverFn = fn(&Foreign) -> Result<Part<dyn CustomDomain>,
 /// assert_eq!(read, space);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[expect(
-    dead_code,
-    reason = "interface stub; bodies are todo!() until implementation"
-)]
 #[derive(Debug, Clone, Default)]
 pub struct ResolverRegistry {
     variables: HashMap<Arc<str>, VariableResolverFn>,
@@ -159,15 +156,50 @@ pub struct ResolverRegistry {
     custom_domains: HashMap<Arc<str>, CustomDomainResolverFn>,
 }
 
+/// Register `resolve` under `type_id` in `table`.
+///
+/// # Errors
+///
+/// Returns [`RegistryError::RepeatedTypeId`] for a type id the table
+/// holds.
+fn register<F>(
+    table: &mut HashMap<Arc<str>, F>,
+    type_id: &str,
+    resolve: F,
+) -> Result<(), RegistryError> {
+    match table.entry(Arc::from(type_id)) {
+        Entry::Occupied(_) => Err(RegistryError::RepeatedTypeId {
+            type_id: type_id.to_owned(),
+        }),
+        Entry::Vacant(slot) => {
+            slot.insert(resolve);
+            Ok(())
+        }
+    }
+}
+
+/// Move the functions of `other` into `table`.
+///
+/// # Errors
+///
+/// Returns [`RegistryError::RepeatedTypeId`] for the least type id both
+/// hold; `table` is then unspecified.
+fn absorb<F>(
+    table: &mut HashMap<Arc<str>, F>,
+    other: HashMap<Arc<str>, F>,
+) -> Result<(), RegistryError> {
+    let mut entries: Vec<(Arc<str>, F)> = other.into_iter().collect();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries
+        .into_iter()
+        .try_for_each(|(type_id, resolve)| register(table, &type_id, resolve))
+}
+
 impl ResolverRegistry {
     /// Return the registry holding no function.
     #[must_use]
-    #[expect(
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn new() -> Self {
-        todo!()
+        Self::default()
     }
 
     /// Return this registry with `resolve` building the variables of kind
@@ -178,17 +210,18 @@ impl ResolverRegistry {
     /// Returns [`RegistryError::ReservedTypeId`] for
     /// [`PlainVariable::KIND`] and [`RegistryError::RepeatedTypeId`] for a
     /// kind already registered.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn with_variable_kind(
-        self,
+        mut self,
         type_id: &str,
         resolve: VariableResolverFn,
     ) -> Result<Self, RegistryError> {
-        todo!()
+        if type_id == PlainVariable::KIND {
+            return Err(RegistryError::ReservedTypeId {
+                type_id: type_id.to_owned(),
+            });
+        }
+        register(&mut self.variables, type_id, resolve)?;
+        Ok(self)
     }
 
     /// Return this registry with `resolve` building the alternatives of
@@ -199,17 +232,18 @@ impl ResolverRegistry {
     /// Returns [`RegistryError::ReservedTypeId`] for
     /// [`PlainAlternative::KIND`] and [`RegistryError::RepeatedTypeId`] for
     /// a kind already registered.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn with_alternative_kind(
-        self,
+        mut self,
         type_id: &str,
         resolve: AlternativeResolverFn,
     ) -> Result<Self, RegistryError> {
-        todo!()
+        if type_id == PlainAlternative::KIND {
+            return Err(RegistryError::ReservedTypeId {
+                type_id: type_id.to_owned(),
+            });
+        }
+        register(&mut self.alternatives, type_id, resolve)?;
+        Ok(self)
     }
 
     /// Return this registry with `resolve` building the opaque values of
@@ -219,17 +253,13 @@ impl ResolverRegistry {
     ///
     /// Returns [`RegistryError::RepeatedTypeId`] for a type already
     /// registered.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn with_opaque_value(
-        self,
+        mut self,
         type_id: &str,
         resolve: OpaqueValueResolverFn,
     ) -> Result<Self, RegistryError> {
-        todo!()
+        register(&mut self.opaque_values, type_id, resolve)?;
+        Ok(self)
     }
 
     /// Return this registry with `resolve` building the custom constraints
@@ -239,17 +269,13 @@ impl ResolverRegistry {
     ///
     /// Returns [`RegistryError::RepeatedTypeId`] for a type already
     /// registered.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn with_custom_constraint(
-        self,
+        mut self,
         type_id: &str,
         resolve: CustomConstraintResolverFn,
     ) -> Result<Self, RegistryError> {
-        todo!()
+        register(&mut self.custom_constraints, type_id, resolve)?;
+        Ok(self)
     }
 
     /// Return this registry with `resolve` building the custom domains of
@@ -259,17 +285,13 @@ impl ResolverRegistry {
     ///
     /// Returns [`RegistryError::RepeatedTypeId`] for a type already
     /// registered.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn with_custom_domain(
-        self,
+        mut self,
         type_id: &str,
         resolve: CustomDomainResolverFn,
     ) -> Result<Self, RegistryError> {
-        todo!()
+        register(&mut self.custom_domains, type_id, resolve)?;
+        Ok(self)
     }
 
     /// Return the registry holding the functions of this one and of
@@ -280,93 +302,97 @@ impl ResolverRegistry {
     /// Returns [`RegistryError::RepeatedTypeId`] for the first type id,
     /// in a family, that both hold, in the order of the families above
     /// and then of the ids.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        clippy::needless_pass_by_value,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
-    pub fn merge(self, other: Self) -> Result<Self, RegistryError> {
-        todo!()
+    pub fn merge(mut self, other: Self) -> Result<Self, RegistryError> {
+        absorb(&mut self.variables, other.variables)?;
+        absorb(&mut self.alternatives, other.alternatives)?;
+        absorb(&mut self.opaque_values, other.opaque_values)?;
+        absorb(&mut self.custom_constraints, other.custom_constraints)?;
+        absorb(&mut self.custom_domains, other.custom_domains)?;
+        Ok(self)
     }
 
     /// Return the resolver building the parts this registry holds, their
     /// params under `context`.
     #[must_use]
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
-    pub fn resolver<'a, 'c>(&'a self, context: &'a ParamContext<'c>) -> RegistryResolver<'a, 'c> {
-        todo!()
+    pub const fn resolver<'a, 'c>(
+        &'a self,
+        context: &'a ParamContext<'c>,
+    ) -> RegistryResolver<'a, 'c> {
+        RegistryResolver {
+            registry: self,
+            context,
+        }
     }
 }
 
 /// A [`ResolverRegistry`] lent with the context params are built under: a
 /// [`SearchSpaceResolver`], from [`ResolverRegistry::resolver`].
-#[expect(
-    dead_code,
-    reason = "interface stub; bodies are todo!() until implementation"
-)]
 #[derive(Debug, Clone, Copy)]
 pub struct RegistryResolver<'a, 'c> {
     registry: &'a ResolverRegistry,
     context: &'a ParamContext<'c>,
 }
 
+/// Return the error for the part `foreign`, whose type id the registry
+/// does not hold, as [`NoForeign`] refuses it.
+fn unresolved(foreign: &Foreign) -> ForeignError {
+    ForeignError::Unresolved {
+        type_id: foreign.type_id().to_owned(),
+    }
+}
+
 impl Resolve<Part<dyn Variable>> for RegistryResolver<'_, '_> {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Variable>, ForeignError> {
-        todo!()
+        let build = self
+            .registry
+            .variables
+            .get(foreign.type_id())
+            .ok_or_else(|| unresolved(foreign))?;
+        build(foreign, self, self.context)
     }
 }
 
 impl Resolve<Part<dyn Alternative>> for RegistryResolver<'_, '_> {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Alternative>, ForeignError> {
-        todo!()
+        let build = self
+            .registry
+            .alternatives
+            .get(foreign.type_id())
+            .ok_or_else(|| unresolved(foreign))?;
+        build(foreign, self, self.context)
     }
 }
 
 impl Resolve<Part<dyn OpaqueValue>> for RegistryResolver<'_, '_> {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
-        todo!()
+        let build = self
+            .registry
+            .opaque_values
+            .get(foreign.type_id())
+            .ok_or_else(|| unresolved(foreign))?;
+        build(foreign)
     }
 }
 
 impl Resolve<Part<dyn CustomConstraint>> for RegistryResolver<'_, '_> {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomConstraint>, ForeignError> {
-        todo!()
+        let build = self
+            .registry
+            .custom_constraints
+            .get(foreign.type_id())
+            .ok_or_else(|| unresolved(foreign))?;
+        build(foreign)
     }
 }
 
 impl Resolve<Part<dyn CustomDomain>> for RegistryResolver<'_, '_> {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomDomain>, ForeignError> {
-        todo!()
+        let build = self
+            .registry
+            .custom_domains
+            .get(foreign.type_id())
+            .ok_or_else(|| unresolved(foreign))?;
+        build(foreign)
     }
 }
 
