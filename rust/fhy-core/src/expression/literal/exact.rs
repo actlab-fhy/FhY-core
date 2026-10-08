@@ -1,6 +1,8 @@
 //! Exact arithmetic on the numbers literals denote: rationals, the exact
-//! value of a binary64 float and of a decimal, and the exact order of two
-//! numeric literals.
+//! value of a binary64 float and of a decimal, the exact order of two
+//! numeric literals, and the arithmetic operations on rationals, bounded in
+//! size, that the ground simplifier's strategies and the affine analysis
+//! share.
 //!
 //! This is the one place the crate turns a float or a decimal into the
 //! rational it denotes, so the solver lowering, the param bounds, the
@@ -25,6 +27,26 @@ const LEAST_EXPONENT: i64 = -1074;
 
 /// The exponent of the greatest binary64 float's leading bit, `2^1023`.
 const GREATEST_EXPONENT: i64 = 1023;
+
+/// The most bits an integer may have as the result of an operation, past
+/// which the exact arithmetic declines rather than compute a number of that
+/// size.
+const MAX_POWER_BITS: u64 = 1 << 20;
+
+/// The most bits a part of a number that is not an integer may have, past
+/// which the exact arithmetic declines rather than reduce or expand it.
+/// Reducing a fraction by its greatest common divisor, and finding out
+/// whether it is a decimal, take time quadratic in its size, so this keeps
+/// one operation to milliseconds. An integer is bounded by
+/// [`MAX_POWER_BITS`] instead.
+///
+/// A floor division or a floor modulo of integers takes time about the
+/// product of the divisor's and the quotient's sizes, so it is declined
+/// when both have more bits than this.
+pub(in crate::expression) const MAX_FRACTION_BITS: u64 = 4096;
+
+/// The greatest root index taken: the denominator of a rational exponent.
+const MAX_ROOT_INDEX: u32 = 4096;
 
 /// Return the greatest common divisor of `left` and `right`, non-negative.
 pub(crate) fn gcd(left: &BigInt, right: &BigInt) -> BigInt {
@@ -307,26 +329,8 @@ impl Decimal {
     }
 }
 
-/// The most bits an integer may have as the result of an operation, past
-/// which the strategies decline rather than compute a number of that size.
-const MAX_POWER_BITS: u64 = 1 << 20;
-
-/// The most bits a part of a number that is not an integer may have, past
-/// which the strategies decline rather than reduce or expand it. Reducing a
-/// fraction by its greatest common divisor, and finding out whether it is a
-/// decimal, take time quadratic in its size, so this keeps one operation
-/// to milliseconds. An integer is bounded by [`MAX_POWER_BITS`] instead.
-///
-/// A floor division or a floor modulo of integers takes time about the
-/// product of the divisor's and the quotient's sizes, so it is declined
-/// when both have more bits than this.
-const MAX_FRACTION_BITS: u64 = 4096;
-
-/// The greatest root index taken: the denominator of a rational exponent.
-const MAX_ROOT_INDEX: u32 = 4096;
-
 /// Return the rational `numerator / denominator`, reduced, or `None` for a
-/// zero denominator or a result the strategies decline to hold (see
+/// zero denominator or a result the exact arithmetic declines to hold (see
 /// [`keep_within_limits`]). It declines before the reduction when it would
 /// take too long, so the cost of one call is bounded by the sizes.
 pub(crate) fn reduce(numerator: BigInt, denominator: BigInt) -> Option<Rational> {
@@ -336,7 +340,8 @@ pub(crate) fn reduce(numerator: BigInt, denominator: BigInt) -> Option<Rational>
     keep_within_limits(Rational::new(numerator, denominator)?)
 }
 
-/// Return `rational`, or `None` when the strategies decline to hold it: an
+/// Return `rational`, or `None` when the exact arithmetic declines to hold
+/// it: an
 /// integer of more than [`MAX_POWER_BITS`] bits, or a fraction with a part
 /// of more than [`MAX_FRACTION_BITS`].
 pub(crate) fn keep_within_limits(rational: Rational) -> Option<Rational> {
@@ -352,14 +357,17 @@ pub(crate) fn keep_within_limits(rational: Rational) -> Option<Rational> {
     (bits <= limit).then_some(rational)
 }
 
+/// Return the integer `value` as a rational.
 pub(crate) fn build_integer(value: BigInt) -> Rational {
     Rational::integer(value)
 }
 
+/// Return the rational zero.
 pub(crate) fn build_zero() -> Rational {
     build_integer(BigInt::zero())
 }
 
+/// Return the numerator and the denominator of `number`.
 pub(crate) fn borrow_parts(number: &Rational) -> (&BigInt, &BigInt) {
     (number.numerator(), number.denominator())
 }
@@ -399,9 +407,9 @@ fn is_beyond_limits(numerator: (&BigInt, &BigInt), denominator: (&BigInt, &BigIn
 /// divisor and quotient both have more bits than that), or an operation
 /// that is not arithmetic.
 ///
-/// The operands are within the same limits, as `read_number` holds them
-/// to, which is what lets an operation that is surely past the limits
-/// decline before it multiplies.
+/// The operands must be within the same limits, as
+/// [`keep_within_limits`] holds a rational to them, which is what lets an
+/// operation that is surely past the limits decline before it multiplies.
 pub(crate) fn compute_arithmetic(
     operation: BinaryOperation,
     left: &Rational,
@@ -513,6 +521,7 @@ pub(crate) fn floor(number: &Rational) -> BigInt {
         quotient
     }
 }
+
 /// Return `base ** exponent` where it is an exact rational, and `None`
 /// where it is not, is undefined, or is too large.
 pub(crate) fn raise_to_power(base: &Rational, exponent: &Rational) -> Option<Rational> {

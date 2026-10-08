@@ -7,10 +7,7 @@ use num_traits::{One, Signed, ToPrimitive};
 use crate::expression::builtins::BuiltinFunction;
 use crate::expression::{
     BinaryOperation, Callee, Decimal, Expression, ExpressionKind, LiteralValue, Rational,
-    UnaryOperation, borrow_parts, keep_within_limits, reduce,
-};
-pub(super) use crate::expression::{
-    build_integer, build_zero, compute_arithmetic, floor, raise_to_power, take_root,
+    UnaryOperation, borrow_parts, build_integer, floor, keep_within_limits, reduce,
 };
 
 /// The most bits of an argument whose logarithm is taken.

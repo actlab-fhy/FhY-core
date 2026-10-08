@@ -2,11 +2,13 @@
 
 use std::borrow::Cow;
 
-use crate::expression::{BinaryOperation, Expression, ExpressionKind, UnaryOperation};
+use crate::expression::{
+    BinaryOperation, Expression, ExpressionKind, UnaryOperation, compute_arithmetic,
+};
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
-use super::exact::{build_number_expression, compute_arithmetic, fold_small_integers, read_number};
+use super::exact::{build_number_expression, fold_small_integers, read_number};
 
 /// Rewrites `+`, `-`, `*`, `/`, `//` (floor division), `%` (the floor
 /// modulo) and `**` of exact numbers, and the unary `-` and `+`, to the
