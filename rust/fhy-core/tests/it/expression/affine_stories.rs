@@ -4,8 +4,9 @@
 //! expression the form writes.
 
 use crate::support::expression::{
-    build_call_or_panic, build_decimal_literal, build_deep_sum, build_identifier, build_literal,
-    build_piecewise_or_panic, expect_binary, expect_literal, expect_unary,
+    build_call_or_panic, build_decimal_literal, build_deep_sum, build_doubling_dag,
+    build_identifier, build_literal, build_piecewise_or_panic, expect_binary, expect_literal,
+    expect_unary,
 };
 use crate::support::hashing::hash_of;
 
@@ -630,4 +631,32 @@ fn affine_form_displays_its_canonical_expression(
 
     assert_eq!(text, expected);
     assert_eq!(text, form.to_expression().to_string());
+}
+
+/// Test a doubling DAG, `x + x` stacked 256 levels with both operands one
+/// shared node, has the coefficient `2^256`: the analysis visits each
+/// distinct node once, so it finishes though the tree has `2^257 - 1`
+/// occurrences.
+#[test]
+fn affine_form_of_a_doubling_dag_visits_each_shared_node_once() {
+    let (x, reference) = build_identifier("x");
+    let dag = build_doubling_dag(&reference, 256);
+
+    let form = dag.affine_form().expect("a doubling DAG is affine");
+
+    let expected = Rational::new(BigInt::from(1) << 256_usize, BigInt::from(1)).expect("one");
+    assert_eq!(collect_terms(&form), vec![(x, expected)]);
+    assert!(form.constant().is_zero());
+}
+
+/// Test a doubling DAG one level past the depth bound is declined, also
+/// without visiting every occurrence.
+#[test]
+fn affine_form_declines_a_doubling_dag_past_the_depth_bound() {
+    let (_, reference) = build_identifier("x");
+    let dag = build_doubling_dag(&reference, 257);
+
+    let form = dag.affine_form();
+
+    assert_eq!(form, None);
 }

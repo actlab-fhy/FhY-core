@@ -422,3 +422,15 @@ def test_the_names_are_exported_from_the_expression_package() -> None:
 def test_affine_form_is_a_function_not_a_method_of_expression() -> None:
     """Test `Expression` gains no `affine_form` method."""
     assert not hasattr(Expression, "affine_form")
+
+
+def test_a_doubling_dag_of_shared_nodes_has_the_coefficient_two_to_the_depth() -> None:
+    """Test `x + x` stacked 256 levels over one shared node reads in one pass."""
+    dag: Expression = _id(_X)
+    for _ in range(256):
+        dag = dag + dag
+
+    form = _form(dag)
+
+    assert form.coefficient(_X) == Fraction(2**256)
+    assert form.constant == 0
