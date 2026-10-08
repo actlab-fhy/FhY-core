@@ -266,7 +266,13 @@ impl Param {
     }
 
     /// Evaluate the constraints under `environment`, member by member, as
-    /// [`evaluate_constraints`] does.
+    /// [`evaluate_constraints`] does, except that a member that is an
+    /// integer bound of the param's variable (`x >= c`, `x > c`, `x <= c`
+    /// or `x < c` for an integer literal `c`, as
+    /// [`with_bound`](Self::with_bound) writes one), while `environment`
+    /// binds the variable to an integer value, is decided by comparing the
+    /// two integers, without asking the context's solver and without
+    /// reporting a member event.
     ///
     /// # Errors
     ///

@@ -371,7 +371,8 @@ pub struct RealDomain;
 pub struct OrdinalDomain(Arc<FiniteValues>);
 
 /// A finite, unordered set of categories, kept in the members' canonical
-/// order. Cloning one shares it.
+/// order. A category is a leaf value or a tuple or frozen set of
+/// categories, such as a tile shape `(8, 8)`. Cloning one shares it.
 #[derive(Debug, Clone)]
 pub struct CategoricalDomain(Arc<FiniteValues>);
 
@@ -482,8 +483,9 @@ impl CategoricalDomain {
     ///
     /// In order: [`DomainError::EmptyValues`] for no value;
     /// [`DomainError::NotALeafValue`] for a value that is no Boolean,
-    /// integer, string, identifier or member-shaped opaque value, a float
-    /// included; and
+    /// integer, string, identifier or member-shaped opaque value, or tuple
+    /// or frozen set of such values at any depth (a float or a decimal
+    /// refused, inside a tuple too); and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
         let members = read_leaf_values(DomainKind::Categorical, values, false)?;
