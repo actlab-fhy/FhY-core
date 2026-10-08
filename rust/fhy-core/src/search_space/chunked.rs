@@ -23,16 +23,7 @@ pub(super) struct Chunked<T> {
     length: usize,
 }
 
-impl<T: Clone> Chunked<T> {
-    /// Return the sequence of `length` copies of `element`.
-    pub(super) fn filled(length: usize, element: &T) -> Self {
-        let chunks = (0..length)
-            .step_by(CHUNK_LENGTH)
-            .map(|start| Arc::new(vec![element.clone(); CHUNK_LENGTH.min(length - start)]))
-            .collect();
-        Self { chunks, length }
-    }
-
+impl<T> Chunked<T> {
     /// Return the number of elements.
     pub(super) fn len(&self) -> usize {
         self.length
@@ -47,6 +38,22 @@ impl<T: Clone> Chunked<T> {
         &self.chunks[index / CHUNK_LENGTH][index % CHUNK_LENGTH]
     }
 
+    /// Return the elements, in order.
+    pub(super) fn iter(&self) -> impl Iterator<Item = &T> + '_ {
+        self.chunks.iter().flat_map(|chunk| chunk.iter())
+    }
+}
+
+impl<T: Clone> Chunked<T> {
+    /// Return the sequence of `length` copies of `element`.
+    pub(super) fn filled(length: usize, element: &T) -> Self {
+        let chunks = (0..length)
+            .step_by(CHUNK_LENGTH)
+            .map(|start| Arc::new(vec![element.clone(); CHUNK_LENGTH.min(length - start)]))
+            .collect();
+        Self { chunks, length }
+    }
+
     /// Put `element` at `index`, copying its chunk first if another
     /// sequence shares it.
     ///
@@ -55,11 +62,6 @@ impl<T: Clone> Chunked<T> {
     /// Panics if `index` is not below [`len`](Self::len).
     pub(super) fn set(&mut self, index: usize, element: T) {
         Arc::make_mut(&mut self.chunks[index / CHUNK_LENGTH])[index % CHUNK_LENGTH] = element;
-    }
-
-    /// Return the elements, in order.
-    pub(super) fn iter(&self) -> impl Iterator<Item = &T> + '_ {
-        self.chunks.iter().flat_map(|chunk| chunk.iter())
     }
 }
 
@@ -94,10 +96,8 @@ impl<T: Hash> Hash for Chunked<T> {
     /// Feed the length, then each element in order.
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.length.hash(state);
-        for chunk in &self.chunks {
-            for element in chunk.iter() {
-                element.hash(state);
-            }
+        for element in self.iter() {
+            element.hash(state);
         }
     }
 }

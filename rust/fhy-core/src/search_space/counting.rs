@@ -380,33 +380,7 @@ impl Components {
     /// Return the components of `space`.
     pub(super) fn of(space: &Space, tree: &Tree) -> Self {
         let count = space.decision_count();
-        let mut leader: Vec<usize> = (0..count).collect();
-        let link = |left: usize, right: usize, leader: &mut Vec<usize>| {
-            let (left, right) = (root(leader, left), root(leader, right));
-            if left != right {
-                leader[left.max(right)] = left.min(right);
-            }
-        };
-        for position in 0..count {
-            if let Some((_, references)) = space.condition_with_references_at(position) {
-                let target = find_top(space, position);
-                for &reference in references {
-                    link(target, find_top(space, reference), &mut leader);
-                }
-            }
-        }
-        for index in 0..space.forbidden().len() {
-            let references = space.forbidden_references(index);
-            if let Some((&first, rest)) = references.split_first() {
-                for &reference in rest {
-                    link(
-                        find_top(space, first),
-                        find_top(space, reference),
-                        &mut leader,
-                    );
-                }
-            }
-        }
+        let mut leader = link_top_level_decisions(space);
         let mut tops: Vec<Vec<usize>> = Vec::new();
         let mut by_root: HashMap<usize, usize> = HashMap::new();
         for &top in &tree.tops {
@@ -441,6 +415,36 @@ impl Components {
     pub(super) fn is_closed_form(&self, index: usize) -> bool {
         self.closed[index]
     }
+}
+
+/// Return the union-find forest, per canonical position its leader, that
+/// links the top-level decisions a condition or a forbidden clause names
+/// together; [`root`] finds a decision's group.
+fn link_top_level_decisions(space: &Space) -> Vec<usize> {
+    let mut leader: Vec<usize> = (0..space.decision_count()).collect();
+    let mut link = |left: usize, right: usize| {
+        let (left, right) = (root(&mut leader, left), root(&mut leader, right));
+        if left != right {
+            leader[left.max(right)] = left.min(right);
+        }
+    };
+    for position in 0..space.decision_count() {
+        if let Some((_, references)) = space.condition_with_references_at(position) {
+            let target = find_top(space, position);
+            for &reference in references {
+                link(target, find_top(space, reference));
+            }
+        }
+    }
+    for index in 0..space.forbidden().len() {
+        let references = space.forbidden_references(index);
+        if let Some((&first, rest)) = references.split_first() {
+            for &reference in rest {
+                link(find_top(space, first), find_top(space, reference));
+            }
+        }
+    }
+    leader
 }
 
 /// Return the top-level decision the decision at `position` is at or
