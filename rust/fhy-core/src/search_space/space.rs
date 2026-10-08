@@ -339,28 +339,11 @@ impl Space {
         variables: Vec<Part<dyn Variable>>,
         choices: Vec<Choice>,
     ) -> Result<Self, SpaceError> {
-        let mut edited_variables = self.0.variables.clone();
-        for variable in variables {
-            let name = variable.get().name();
-            match edited_variables
-                .iter()
-                .position(|held| held.get().name() == name)
-            {
-                Some(slot) => edited_variables[slot] = variable,
-                None => edited_variables.push(variable),
-            }
-        }
-        let mut edited_choices = self.0.choices.clone();
-        for choice in choices {
-            match edited_choices
-                .iter()
-                .position(|held| held.name() == choice.name())
-            {
-                Some(slot) => edited_choices[slot] = choice,
-                None => edited_choices.push(choice),
-            }
-        }
-        self.rebuild(edited_variables, edited_choices, self.0.conditions.clone())
+        let variables = replace_or_append(&self.0.variables, variables, |variable| {
+            variable.get().name()
+        });
+        let choices = replace_or_append(&self.0.choices, choices, Choice::name);
+        self.rebuild(variables, choices, self.0.conditions.clone())
     }
 
     /// Return this space without the top-level decisions `names`, and
@@ -585,7 +568,7 @@ impl Space {
 
     /// Return the positions of the forbidden clauses naming the decision at
     /// `position`, ascending.
-    pub(super) fn forbidden_naming(&self, position: usize) -> &[usize] {
+    pub(super) fn forbidden_naming_at(&self, position: usize) -> &[usize] {
         &self.0.forbidden_naming[position]
     }
 
@@ -597,7 +580,7 @@ impl Space {
     }
 
     /// Return the rank of the decision at `position` in decision order.
-    pub(super) fn order_rank(&self, position: usize) -> usize {
+    pub(super) fn order_rank_at(&self, position: usize) -> usize {
         self.0.order_ranks[position]
     }
 
@@ -606,6 +589,26 @@ impl Space {
     pub(super) fn subtree_end_at(&self, position: usize) -> usize {
         self.0.nodes[position].subtree_end
     }
+}
+
+/// Return `held` with each of `given` in place of the one of the same
+/// name, keeping its slot, or appended after the last, in the order given.
+fn replace_or_append<T: Clone>(
+    held: &[T],
+    given: Vec<T>,
+    name_of: impl Fn(&T) -> &Identifier,
+) -> Vec<T> {
+    let mut edited = held.to_vec();
+    for item in given {
+        match edited
+            .iter()
+            .position(|kept| name_of(kept) == name_of(&item))
+        {
+            Some(slot) => edited[slot] = item,
+            None => edited.push(item),
+        }
+    }
+    edited
 }
 
 /// The conditions on one target, gathered: their members, and the
@@ -636,16 +639,8 @@ fn build(
         .collect::<Result<Vec<_>, _>>()?;
     let merged = merge_conditions(gathered, &mut nodes)?;
     let (order_positions, dependents) = find_decision_order(&nodes)?;
-    let mut order_ranks = vec![0; nodes.len()];
-    for (rank, &position) in order_positions.iter().enumerate() {
-        order_ranks[position] = rank;
-    }
-    let mut forbidden_naming = vec![Vec::new(); nodes.len()];
-    for (index, references) in forbidden_references.iter().enumerate() {
-        for &reference in references {
-            forbidden_naming[reference].push(index);
-        }
-    }
+    let order_ranks = rank_by_position(&order_positions);
+    let forbidden_naming = index_clauses_by_decision(&forbidden_references, nodes.len());
     let label_positions = labels
         .iter()
         .enumerate()
@@ -672,6 +667,29 @@ fn build(
         dependents,
         order_ranks,
     })
+}
+
+/// Return, per canonical position, the rank of its decision in
+/// `order_positions`, the decisions' positions in decision order.
+fn rank_by_position(order_positions: &[usize]) -> Vec<usize> {
+    let mut ranks = vec![0; order_positions.len()];
+    for (rank, &position) in order_positions.iter().enumerate() {
+        ranks[position] = rank;
+    }
+    ranks
+}
+
+/// Return, per canonical position of a space of `count` decisions, the
+/// indices of the forbidden clauses naming its decision, ascending, given
+/// each clause's `references`.
+fn index_clauses_by_decision(references: &[Vec<usize>], count: usize) -> Vec<Vec<usize>> {
+    let mut naming = vec![Vec::new(); count];
+    for (index, clause_references) in references.iter().enumerate() {
+        for &reference in clause_references {
+            naming[reference].push(index);
+        }
+    }
+    naming
 }
 
 /// Return the space's names, its own first, refusing a repeated one.

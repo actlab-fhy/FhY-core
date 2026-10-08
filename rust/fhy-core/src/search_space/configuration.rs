@@ -669,12 +669,12 @@ impl<'a> Checker<'a> {
     /// changed decisions keeps its outcome.
     fn run_incrementally(mut self) -> Result<Configuration, ConfigurationErrors> {
         let space = self.space;
-        let mut queued: HashSet<usize> = self.given.clone();
-        let mut queue: BinaryHeap<Reverse<(usize, usize)>> = queued
+        let mut queued = self.given.clone();
+        let mut queue: BinaryHeap<_> = queued
             .iter()
-            .map(|&position| Reverse((space.order_rank(position), position)))
+            .map(|&position| Reverse((space.order_rank_at(position), position)))
             .collect();
-        let mut changed: Vec<usize> = Vec::new();
+        let mut changed = Vec::new();
         while let Some(Reverse((_, position))) = queue.pop() {
             let before = self.read_state(position);
             self.check_decision(position);
@@ -684,13 +684,13 @@ impl<'a> Checker<'a> {
             changed.push(position);
             for &dependent in space.dependents_at(position) {
                 if queued.insert(dependent) {
-                    queue.push(Reverse((space.order_rank(dependent), dependent)));
+                    queue.push(Reverse((space.order_rank_at(dependent), dependent)));
                 }
             }
         }
         let mut clauses: Vec<usize> = changed
             .iter()
-            .flat_map(|&position| space.forbidden_naming(position).iter().copied())
+            .flat_map(|&position| space.forbidden_naming_at(position).iter().copied())
             .collect();
         clauses.sort_unstable();
         clauses.dedup();
@@ -750,18 +750,11 @@ impl<'a> Checker<'a> {
         if *self.activities.get(position) != activity {
             self.activities.set(position, activity);
         }
-        if self.values.get(position).is_none() {
-            return;
-        }
-        let name = self.space.decision_at(position).name();
-        if activity != Activity::Active {
-            self.problems
-                .push(ConfigurationError::InactiveDecision { name: name.clone() });
-            self.values.take(position);
-            self.forget_chosen(position);
-            return;
-        }
-        let is_held = self.scope == Scope::Incremental && !self.given.contains(&position);
+        // A held value of an active decision is one the configuration's own
+        // check accepted.
+        let is_held = activity == Activity::Active
+            && self.scope == Scope::Incremental
+            && !self.given.contains(&position);
         if is_held {
             return;
         }
@@ -769,6 +762,12 @@ impl<'a> Checker<'a> {
             return;
         };
         self.forget_chosen(position);
+        if activity != Activity::Active {
+            let name = self.space.decision_at(position).name().clone();
+            self.problems
+                .push(ConfigurationError::InactiveDecision { name });
+            return;
+        }
         let accepted = match self.space.decision_at(position) {
             Decision::Choice(choice) => self.check_choice_value(position, choice, value),
             Decision::Variable(variable) => self.check_variable_value(variable, value),
