@@ -56,8 +56,15 @@ class SerializableOrderableValue(Orderable, _SerializableValueLike, Protocol):
 
 
 # CategoricalValue omits `float`: floating-point equality is unreliable for
-# category membership.
-CategoricalValue: TypeAlias = bool | int | str | SerializableEqualValue
+# category membership. A tuple or frozen set of categorical values is one too.
+CategoricalValue: TypeAlias = (
+    bool
+    | int
+    | str
+    | SerializableEqualValue
+    | tuple["CategoricalValue", ...]
+    | frozenset["CategoricalValue"]
+)
 OrdinalValue: TypeAlias = bool | int | float | str | SerializableOrderableValue
 PermutationMemberValue: TypeAlias = bool | int | float | str | SerializableEqualValue
 

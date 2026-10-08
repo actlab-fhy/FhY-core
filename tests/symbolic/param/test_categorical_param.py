@@ -367,8 +367,8 @@ def test_categorical_param_bool_and_int_categories_round_trip_distinctly() -> No
 # =============================================================================
 
 
-def _tile_shapes() -> Any:
-    """Return the tile shapes `(4, 4)` and `(8, 8)`, untyped as categories."""
+def _tile_shapes() -> tuple[tuple[int, int], ...]:
+    """Return the tile shapes `(4, 4)` and `(8, 8)`."""
     return ((8, 8), (4, 4))
 
 
@@ -382,8 +382,8 @@ def test_categorical_domain_accepts_tuple_categories() -> None:
 
 def test_tuple_categories_come_back_in_a_canonical_order() -> None:
     """Test the categories' order does not depend on the order they were given in."""
-    ascending: Any = ((4, 4), (8, 8))
-    descending: Any = ((8, 8), (4, 4))
+    ascending = ((4, 4), (8, 8))
+    descending = ((8, 8), (4, 4))
 
     forward = CategoricalDomain(ascending).categories
     backward = CategoricalDomain(descending).categories
@@ -393,7 +393,7 @@ def test_tuple_categories_come_back_in_a_canonical_order() -> None:
 
 def test_tuple_categories_may_mix_leaf_kinds_and_nest() -> None:
     """Test a tuple of a string and an int, and a nested tuple, are categories."""
-    categories: Any = (("x", 4), (1, (2, 3)), (True, "y"))
+    categories = (("x", 4), (1, (2, 3)), (True, "y"))
 
     domain = CategoricalDomain(categories)
 
@@ -404,7 +404,7 @@ def test_tuple_categories_may_mix_leaf_kinds_and_nest() -> None:
 
 def test_a_frozen_set_is_a_category() -> None:
     """Test a frozen set of leaf values is a category."""
-    categories: Any = (frozenset({1, 2}), frozenset({3}))
+    categories = (frozenset({1, 2}), frozenset({3}))
 
     domain = CategoricalDomain(categories)
 
@@ -436,7 +436,7 @@ def test_a_categorical_param_over_tuples_assigns_a_tuple() -> None:
 
 def test_tuple_categories_that_repeat_are_refused() -> None:
     """Test two equal tuples are one category twice: `ParamError`."""
-    repeated: Any = ((4, 4), (4, 4))
+    repeated = ((4, 4), (4, 4))
 
     with pytest.raises(ParamError, match="unique"):
         CategoricalDomain(repeated)
@@ -488,7 +488,7 @@ def test_ordinal_and_permutation_domains_still_refuse_tuples() -> None:
 
 def test_a_list_is_not_admissible_for_a_tuple_category() -> None:
     """Test `[8, 8]` is not `(8, 8)`, for the domain and for the param."""
-    categories: Any = _tile_shapes()
+    categories = _tile_shapes()
     domain = CategoricalDomain(categories)
     param = create_categorical_param(categories)
 
