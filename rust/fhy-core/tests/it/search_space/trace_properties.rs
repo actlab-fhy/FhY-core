@@ -736,6 +736,18 @@ fn has_excluding_clause(model: &Model) -> bool {
     }
 }
 
+/// Return whether some complete configuration of `model` can be mutated:
+/// the oracle finds a changeable decision for it.
+fn has_changeable_configuration(model: &Model) -> bool {
+    let (space, names) = build_space(model);
+    let configurations = build_reference_configurations(model, &space, &names);
+    configurations.iter().any(|original| {
+        compute_takeable_values(&space, &configurations, original)
+            .iter()
+            .any(|values| !values.is_empty())
+    })
+}
+
 #[test]
 fn most_generated_models_have_two_or_more_configurations() {
     let models = draw_guard_cases(&generate_model());
@@ -800,29 +812,16 @@ fn some_generated_models_have_no_configuration() {
     );
 }
 
-/// Return whether some complete configuration of `model` can be mutated:
-/// the oracle finds a changeable decision for it.
-fn has_changeable_configuration(model: &Model) -> bool {
-    let (space, names) = build_space(model);
-    let configurations = build_reference_configurations(model, &space, &names);
-    configurations.iter().any(|original| {
-        compute_takeable_values(&space, &configurations, original)
-            .iter()
-            .any(|values| !values.is_empty())
-    })
-}
-
+/// Test the strategy behind the mutation property (a guard of the
+/// strategy, not of `mutate`) draws models with a configuration that can be
+/// mutated often enough for the oracle's allowed values to matter.
 #[test]
-fn many_generated_models_can_be_mutated_and_some_cannot() {
+fn many_generated_models_can_be_mutated() {
     let models = draw_guard_cases(&generate_model());
 
     let mutable = models
         .iter()
         .filter(|model| has_changeable_configuration(model))
-        .count();
-    let immutable = models
-        .iter()
-        .filter(|model| compute_reference_points(model).len() == 1)
         .count();
 
     assert!(
@@ -830,6 +829,20 @@ fn many_generated_models_can_be_mutated_and_some_cannot() {
         "{mutable} of {GUARD_CASES} models have a mutable configuration; the oracle's \
          allowed values are exercised only on those"
     );
+}
+
+/// Test the strategy draws models with exactly one configuration, which no
+/// mutation can change, often enough for the refusal to be exercised (a
+/// guard of the strategy).
+#[test]
+fn some_generated_models_cannot_be_mutated() {
+    let models = draw_guard_cases(&generate_model());
+
+    let immutable = models
+        .iter()
+        .filter(|model| compute_reference_points(model).len() == 1)
+        .count();
+
     assert!(
         immutable >= 8,
         "{immutable} of {GUARD_CASES} models have exactly one configuration; the refusal \
@@ -837,6 +850,9 @@ fn many_generated_models_can_be_mutated_and_some_cannot() {
     );
 }
 
+/// Test the strategy draws mutable models with a condition or a forbidden
+/// clause often enough for repair after a mutation to be exercised (a
+/// guard of the strategy).
 #[test]
 fn many_mutable_models_have_a_condition_or_a_forbidden_clause() {
     let models = draw_guard_cases(&generate_model());
