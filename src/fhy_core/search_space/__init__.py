@@ -28,9 +28,10 @@ it fits and asks another oracle where it does not, and
 
 A :class:`Measurer` measures a realization of a configuration, or of one
 run, and returns a :class:`Measurement`: the configuration's key or the
-run's :class:`TraceKey`, a :class:`MeasurementStatus`
-and, when it succeeded, a value per :class:`Objective`, whose
-:class:`Direction` says which way is better.
+run's :class:`TraceKey`, a :class:`MeasurementStatus` and, when it
+succeeded, a value per :class:`Objective`, whose :class:`Direction` says
+which way is better. :func:`non_dominated` keeps the measurements no other
+one dominates.
 """
 
 __all__ = [
