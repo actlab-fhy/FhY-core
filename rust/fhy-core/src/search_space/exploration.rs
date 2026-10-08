@@ -3,6 +3,7 @@
 //! replaying a trace into a configuration; enumerating and counting the
 //! complete configurations; and mutating one or crossing two.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::num::{NonZeroU32, NonZeroU64};
 
@@ -201,21 +202,18 @@ impl Space {
     ) -> Result<Recorded, TraceError> {
         mutate_configuration(self, configuration, rng, context, attempts)
     }
-}
 
-impl Space {
     /// Return a configuration crossing `first` and `second`, repaired to a
     /// complete one, and its trace.
     ///
     /// For each decision, in canonical order, a draw `rng.below(2)` picks
     /// the parent it inherits from: the first on 0, the second on 1. The
-    /// run walks decision order as a [`GuidedOracle`](super::GuidedOracle)
-    /// guided by the inherited coordinates walks it: a decision takes its
-    /// picked parent's value when that parent assigns it and the value is
-    /// admissible, else the other parent's under the same condition, and
-    /// otherwise a value drawn uniformly from its admissible ones with
-    /// `rng`. A repair that reaches a dead end starts again with new picks.
-    /// The parents need not be complete.
+    /// run then walks decision order: a decision takes its picked parent's
+    /// value when that parent assigns it and the value is admissible, else
+    /// the other parent's under the same condition, and otherwise a value
+    /// drawn uniformly from its admissible ones with `rng`. A repair that
+    /// reaches a dead end starts again with new picks. The parents need not
+    /// be complete.
     ///
     /// # Errors
     ///
@@ -381,6 +379,68 @@ fn walk_from(
     recorder.finish()
 }
 
+/// Ask `oracle` every active decision of the space of `empty`, its empty
+/// configuration, whose canonical position `includes` holds, in decision
+/// order, starting from `empty`: for the runs of one search, which share
+/// the empty configuration instead of each building it.
+///
+/// # Errors
+///
+/// As [`walk`].
+fn walk_from_empty(
+    empty: &Configuration,
+    includes: impl Fn(usize) -> bool,
+    oracle: &mut dyn SearchOracle,
+    context: &ParamContext<'_>,
+) -> Result<Recorded, TraceError> {
+    let recorder = Recorder::over_empty(empty.clone());
+    walk_from(recorder, empty.space(), includes, oracle, context)
+}
+
+/// Run `attempt` until it returns a configuration, at most `attempts`
+/// times: a run that reaches a dead end or an inadmissible answer is run
+/// again, and any other error stops.
+///
+/// # Errors
+///
+/// Returns [`TraceError::AttemptsExhausted`] when every attempt reached a
+/// dead end, and the first other error a run returns.
+fn retry_after_dead_ends(
+    attempts: NonZeroU32,
+    mut attempt: impl FnMut() -> Result<Recorded, TraceError>,
+) -> Result<Recorded, TraceError> {
+    for _ in 0..attempts.get() {
+        match attempt() {
+            Ok(recorded) => return Ok(recorded),
+            Err(TraceError::DeadEnd { .. } | TraceError::Inadmissible { .. }) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(TraceError::AttemptsExhausted {
+        attempts: attempts.get(),
+    })
+}
+
+/// Return the first of `preferred` that `step` admits, or else a
+/// coordinate drawn uniformly from its admissible ones with `rng`.
+///
+/// # Errors
+///
+/// Returns what [`PendingStep::admits`] and
+/// [`PendingStep::draw_uniform`] return.
+fn answer_first_admissible<'c>(
+    step: &PendingStep<'_>,
+    preferred: impl IntoIterator<Item = Cow<'c, Coordinate>>,
+    rng: &mut Rng,
+) -> Result<Coordinate, TraceError> {
+    for coordinate in preferred {
+        if step.admits(&coordinate)? {
+            return Ok(coordinate.into_owned());
+        }
+    }
+    step.draw_uniform(rng)
+}
+
 /// Return the configuration of `space` the static steps of `trace`
 /// describe, as [`Space::replay`] documents.
 fn replay_trace(
@@ -493,6 +553,11 @@ impl Options {
         }
     }
 
+    /// Return whether there is no coordinate.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Return the coordinate at `index`, below [`len`](Self::len).
     fn nth(&self, index: u64) -> Option<Coordinate> {
         match self {
@@ -525,7 +590,7 @@ impl Options {
 }
 
 /// A decision a mutation may change: its canonical position and the other
-/// coordinates it may take.
+/// coordinates it may take, at least one.
 struct Candidate {
     position: usize,
     options: Options,
@@ -550,28 +615,20 @@ fn mutate_configuration(
     let Some(count) = NonZeroU64::new(u64::try_from(candidates.len()).unwrap_or(u64::MAX)) else {
         return Err(TraceError::NothingToMutate);
     };
-    for _ in 0..attempts.get() {
+    retry_after_dead_ends(attempts, || {
         let candidate = &candidates[usize::try_from(rng.below(count)).unwrap_or(0)];
-        let Some(options) = NonZeroU64::new(candidate.options.len()) else {
-            continue;
-        };
-        let Some(target) = candidate.options.nth(rng.below(options)) else {
-            continue;
-        };
+        let options = NonZeroU64::new(candidate.options.len())
+            .expect("a candidate is kept only with an option");
+        let target = candidate
+            .options
+            .nth(rng.below(options))
+            .expect("every index below the options' length names one");
         let mut oracle = RepairOracle {
             target: (candidate.position, target),
             previous: &previous,
-            rng,
+            rng: &mut *rng,
         };
-        let run = Recorder::from_configuration(empty.clone());
-        match walk_from(run, space, |_| true, &mut oracle, context) {
-            Ok(recorded) => return Ok(recorded),
-            Err(TraceError::DeadEnd { .. } | TraceError::Inadmissible { .. }) => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Err(TraceError::AttemptsExhausted {
-        attempts: attempts.get(),
+        walk_from_empty(&empty, |_| true, &mut oracle, context)
     })
 }
 
@@ -606,39 +663,23 @@ fn find_candidates(
             .ok_or(TraceError::CoordinateOutOfDomain { position: 0 })?;
         let all_others = Options::all_others(&domain, &coordinate);
         let component = components.component_of(position);
-        let options = match node {
-            _ if !components.is_closed_form(component) => {
-                let includes = |member: usize| components.component_of(member) == component;
-                let pinned = Pinned {
-                    previous: &previous,
-                    target: position,
-                };
-                let mut listed = Vec::new();
-                for option in all_others.iter() {
-                    if completes(space, &includes, &pinned, &option, empty, context)? {
-                        listed.push(option);
-                    }
+        let options = if components.is_closed_form(component) {
+            match node {
+                Decision::Choice(_) => {
+                    find_completable_alternatives(space, &tree, position, &all_others)?
                 }
-                Options::Listed(listed)
+                Decision::Variable(_) => all_others,
             }
-            Decision::Choice(_) => {
-                let mut listed = Vec::new();
-                for option in all_others.iter() {
-                    let Coordinate::Index(index) = option else {
-                        continue;
-                    };
-                    let Ok(alternative) = usize::try_from(index) else {
-                        continue;
-                    };
-                    if admits_completion(space, &tree, position, alternative)? {
-                        listed.push(option);
-                    }
-                }
-                Options::Listed(listed)
-            }
-            Decision::Variable(_) => all_others,
+        } else {
+            let search = ComponentSearch {
+                empty,
+                includes: |member: usize| components.component_of(member) == component,
+                previous: &previous,
+                context,
+            };
+            search.find_options(position, &all_others)?
         };
-        if options.len() > 0 {
+        if !options.is_empty() {
             candidates.push(Candidate { position, options });
         }
         previous.insert(position, coordinate);
@@ -646,60 +687,105 @@ fn find_candidates(
     Ok((previous, candidates))
 }
 
-/// The coordinates a completion search pins: the decisions before the
-/// changed one, and the changed one.
-struct Pinned<'a> {
-    previous: &'a HashMap<usize, Coordinate>,
-    target: usize,
-}
-
-/// Return whether a complete configuration of the component whose
-/// decisions `includes` holds takes the `pinned` coordinates and `option`
-/// at the pinned target, searching at most [`COMPLETION_BUDGET`] runs from
-/// `empty` and taking an unfinished search as a yes.
-fn completes(
+/// Return the alternatives of `others` the choice at `position` of a
+/// component counted in closed form may move to: those whose relaxed count
+/// is not zero.
+///
+/// # Errors
+///
+/// Returns what [`admits_completion`] returns.
+fn find_completable_alternatives(
     space: &Space,
-    includes: &impl Fn(usize) -> bool,
-    pinned: &Pinned<'_>,
-    option: &Coordinate,
-    empty: &Configuration,
-    context: &ParamContext<'_>,
-) -> Result<bool, TraceError> {
-    let mut oracle = PinnedOracle {
-        pinned,
-        option,
-        rest: ExhaustiveOracle::new(),
-    };
-    for _ in 0..COMPLETION_BUDGET {
-        let run = Recorder::from_configuration(empty.clone());
-        match walk_from(run, space, includes, &mut oracle, context) {
-            Ok(_) => return Ok(true),
-            Err(TraceError::Inadmissible { .. }) => return Ok(false),
-            Err(error) if ExhaustiveOracle::is_dead_branch(&error) => {}
-            Err(error) => return Err(error),
-        }
-        if !oracle.rest.advance() {
-            return Ok(false);
+    tree: &Tree,
+    position: usize,
+    others: &Options,
+) -> Result<Options, TraceError> {
+    let mut listed = Vec::new();
+    for option in others.iter() {
+        let Coordinate::Index(index) = option else {
+            continue;
+        };
+        let Ok(alternative) = usize::try_from(index) else {
+            continue;
+        };
+        if admits_completion(space, tree, position, alternative)? {
+            listed.push(option);
         }
     }
-    Ok(true)
+    Ok(Options::Listed(listed))
 }
 
-/// Answers the pinned decisions with their coordinates and every other
-/// step exhaustively.
+/// The completion search of one component no closed form counts: runs from
+/// `empty`, the space's empty configuration, over the decisions `includes`
+/// holds, each decision before the changed one answered with its
+/// coordinate in `previous`.
+struct ComponentSearch<'a, 'c, F> {
+    empty: &'a Configuration,
+    includes: F,
+    previous: &'a HashMap<usize, Coordinate>,
+    context: &'a ParamContext<'c>,
+}
+
+impl<F: Fn(usize) -> bool> ComponentSearch<'_, '_, F> {
+    /// Return the coordinates of `others` the decision at `target` may move
+    /// to: those a complete configuration of the component takes.
+    ///
+    /// # Errors
+    ///
+    /// Returns what a run returns other than a dead end.
+    fn find_options(&self, target: usize, others: &Options) -> Result<Options, TraceError> {
+        let mut listed = Vec::new();
+        for option in others.iter() {
+            if self.completes(target, &option)? {
+                listed.push(option);
+            }
+        }
+        Ok(Options::Listed(listed))
+    }
+
+    /// Return whether a complete configuration of the component takes
+    /// `option` at `target`, searching at most [`COMPLETION_BUDGET`] runs
+    /// and taking an unfinished search as a yes.
+    ///
+    /// # Errors
+    ///
+    /// Returns what a run returns other than a dead end.
+    fn completes(&self, target: usize, option: &Coordinate) -> Result<bool, TraceError> {
+        let mut oracle = PinnedOracle {
+            previous: self.previous,
+            target: (target, option),
+            rest: ExhaustiveOracle::new(),
+        };
+        for _ in 0..COMPLETION_BUDGET {
+            match walk_from_empty(self.empty, &self.includes, &mut oracle, self.context) {
+                Ok(_) => return Ok(true),
+                Err(TraceError::Inadmissible { .. }) => return Ok(false),
+                Err(error) if ExhaustiveOracle::is_dead_branch(&error) => {}
+                Err(error) => return Err(error),
+            }
+            if !oracle.rest.advance() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// Answers the changed decision with its new coordinate, each decision
+/// before it with its old one, and every other step exhaustively.
 struct PinnedOracle<'a> {
-    pinned: &'a Pinned<'a>,
-    option: &'a Coordinate,
+    previous: &'a HashMap<usize, Coordinate>,
+    target: (usize, &'a Coordinate),
     rest: ExhaustiveOracle,
 }
 
 impl SearchOracle for PinnedOracle<'_> {
     fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
         let position = step.decision_position();
-        if position == Some(self.pinned.target) {
-            return Ok(self.option.clone());
+        if position == Some(self.target.0) {
+            return Ok(self.target.1.clone());
         }
-        match position.and_then(|position| self.pinned.previous.get(&position)) {
+        match position.and_then(|position| self.previous.get(&position)) {
             Some(coordinate) => Ok(coordinate.clone()),
             None => self.rest.decide(step),
         }
@@ -721,12 +807,12 @@ impl SearchOracle for RepairOracle<'_> {
         if position == Some(self.target.0) {
             return Ok(self.target.1.clone());
         }
-        if let Some(previous) = position.and_then(|position| self.previous.get(&position)) {
-            if step.admits(previous)? {
-                return Ok(previous.clone());
-            }
-        }
-        Ok(step.draw_uniform(self.rng)?)
+        let previous = position.and_then(|position| self.previous.get(&position));
+        Ok(answer_first_admissible(
+            step,
+            previous.map(Cow::Borrowed),
+            self.rng,
+        )?)
     }
 }
 
@@ -745,24 +831,16 @@ fn cross_configurations(
         return Err(TraceError::OtherSpace);
     }
     let empty = Configuration::empty(space);
-    for _ in 0..attempts.get() {
+    retry_after_dead_ends(attempts, || {
         let picks: Vec<bool> = (0..space.decision_count())
             .map(|_| rng.below(PARENTS) == 1)
             .collect();
         let mut oracle = CrossoverOracle {
             parents,
             picks: &picks,
-            rng,
+            rng: &mut *rng,
         };
-        let run = Recorder::from_configuration(empty.clone());
-        match walk_from(run, space, |_| true, &mut oracle, context) {
-            Ok(recorded) => return Ok(recorded),
-            Err(TraceError::DeadEnd { .. } | TraceError::Inadmissible { .. }) => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Err(TraceError::AttemptsExhausted {
-        attempts: attempts.get(),
+        walk_from_empty(&empty, |_| true, &mut oracle, context)
     })
 }
 
@@ -779,25 +857,16 @@ struct CrossoverOracle<'a> {
 
 impl SearchOracle for CrossoverOracle<'_> {
     fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
-        if let Some(position) = step.decision_position() {
-            let [first, second] = self.parents;
-            let order = if self.picks[position] {
-                [second, first]
-            } else {
-                [first, second]
-            };
-            for parent in order {
-                let Some(value) = parent.value(step.subject()) else {
-                    continue;
-                };
-                let Some(coordinate) = step.domain().coordinate_of(value) else {
-                    continue;
-                };
-                if step.admits(&coordinate)? {
-                    return Ok(coordinate);
-                }
-            }
-        }
-        Ok(step.draw_uniform(self.rng)?)
+        let [first, second] = self.parents;
+        let parents = match step.decision_position() {
+            Some(position) if self.picks[position] => [Some(second), Some(first)],
+            Some(_) => [Some(first), Some(second)],
+            None => [None, None],
+        };
+        let inherited = parents.into_iter().flatten().filter_map(|parent| {
+            let value = parent.value(step.subject())?;
+            step.domain().coordinate_of(value).map(Cow::Owned)
+        });
+        Ok(answer_first_admissible(step, inherited, self.rng)?)
     }
 }

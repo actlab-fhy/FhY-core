@@ -56,19 +56,15 @@ impl Recorder {
     /// configuration.
     #[must_use]
     pub fn over(space: &Space) -> Self {
-        Self {
-            configuration: Some(Configuration::empty(space)),
-            preset: None,
-            steps: Vec::new(),
-        }
+        Self::over_empty(Configuration::empty(space))
     }
 
-    /// Return the recorder of a run over `configuration`'s space that
-    /// starts from `configuration`, asking only the decisions it leaves
-    /// unassigned.
-    pub(super) fn from_configuration(configuration: Configuration) -> Self {
+    /// Return the recorder of a run over the space of `empty`, its empty
+    /// configuration, from `empty`: for the runs of one search, which share
+    /// the empty configuration instead of each building it.
+    pub(super) fn over_empty(empty: Configuration) -> Self {
         Self {
-            configuration: Some(configuration),
+            configuration: Some(empty),
             preset: None,
             steps: Vec::new(),
         }
