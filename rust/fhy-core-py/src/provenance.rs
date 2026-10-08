@@ -846,6 +846,29 @@ impl PyProvenance {
         )))
     }
 
+    /// Raise `TypeError` if `cls` defines no `__init__` of its own, so that
+    /// `object.__init__` would take `args` and `kwargs`, and any is given:
+    /// as the interpreter refuses arguments for `object()`, rather than
+    /// dropping them.
+    fn refuse_dropped_arguments(
+        cls: &Bound<'_, PyType>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        if args.is_empty() && kwargs.is_none_or(PyDictMethods::is_empty) {
+            return Ok(());
+        }
+        let py = cls.py();
+        let object_init = py.get_type::<PyAny>().getattr(intern!(py, "__init__"))?;
+        if !cls.getattr(intern!(py, "__init__"))?.is(&object_init) {
+            return Ok(());
+        }
+        Err(PyTypeError::new_err(format!(
+            "{}() takes no arguments",
+            cls.name()?
+        )))
+    }
+
     /// Raise `TypeError` if `cls` has abstract methods, as `object.__new__`
     /// does for an abstract class.
     ///
@@ -951,18 +974,20 @@ impl PyProvenance {
     /// `fhy_core`, whose own `__init__` takes the arguments.
     ///
     /// Raises `TypeError` for this class itself, whose instance would be no
-    /// provenance, and for a class with abstract methods, such as
-    /// `fhy_core.provenance.Provenance`.
+    /// provenance, for a class with abstract methods, such as
+    /// `fhy_core.provenance.Provenance`, and for arguments given to a class
+    /// that defines no `__init__` to take them.
     #[new]
     #[classmethod]
-    #[pyo3(signature = (*_args, **_kwargs))]
+    #[pyo3(signature = (*args, **kwargs))]
     fn new(
         cls: &Bound<'_, PyType>,
-        _args: &Bound<'_, PyTuple>,
-        _kwargs: Option<&Bound<'_, PyDict>>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         Self::refuse_base_class(cls)?;
         Self::refuse_abstract_class(cls)?;
+        Self::refuse_dropped_arguments(cls, args, kwargs)?;
         Ok(Self {
             provenance: None,
             depth: 1,
