@@ -25,9 +25,15 @@ from fhy_core.search_space import (
     Measurer,
     Objective,
     SearchSpaceError,
+    TraceKey,
+    non_dominated,
 )
 
-from .conftest import build_complete_configuration, build_tiling_space
+from .conftest import (
+    build_complete_configuration,
+    build_dynamic_trace,
+    build_tiling_space,
+)
 
 
 def _latency() -> Objective:
@@ -48,6 +54,11 @@ def _power() -> Objective:
 def _key(tile: int = 4) -> ConfigurationKey:
     """Return the key of the tiling space's complete configuration with `tile`."""
     return build_complete_configuration(build_tiling_space(), tile).key()
+
+
+def _trace_key(option: int = 1) -> TraceKey:
+    """Return the key of a run of two dynamic steps that answered `option` first."""
+    return build_dynamic_trace(option=option).key()
 
 
 def _measure(latency: float, throughput: float, power: float = 0.0) -> Measurement:
@@ -407,6 +418,111 @@ def test_value_refuses_an_argument_that_is_no_objective_or_name() -> None:
 
 
 # ===========================================================================
+# Measurements keyed by a trace
+# ===========================================================================
+
+
+def test_an_ok_measurement_keeps_a_trace_key() -> None:
+    """Test a measurement of a run holds the run's `TraceKey`, whole."""
+    key = _trace_key()
+
+    measurement = Measurement.ok(key, {_latency(): 3.0})
+
+    assert measurement.key == key
+    assert type(measurement.key) is TraceKey
+    assert measurement.status is MeasurementStatus.OK
+    assert measurement.values == {_latency(): 3.0}
+
+
+@pytest.mark.parametrize(
+    ("build", "status", "reason"),
+    [
+        (
+            lambda key: Measurement.infeasible(key, "rejected by placement"),
+            MeasurementStatus.INFEASIBLE,
+            "rejected by placement",
+        ),
+        (
+            lambda key: Measurement.failed(key, "the simulator crashed"),
+            MeasurementStatus.FAILED,
+            "the simulator crashed",
+        ),
+        (Measurement.timeout, MeasurementStatus.TIMEOUT, None),
+    ],
+    ids=["infeasible", "failed", "timeout"],
+)
+def test_a_failed_measurement_keeps_a_trace_key(
+    build: Any, status: MeasurementStatus, reason: str | None
+) -> None:
+    """Test a measurement of a run that did not succeed holds the `TraceKey`."""
+    key = _trace_key()
+
+    measurement = build(key)
+
+    assert measurement.key == key
+    assert type(measurement.key) is TraceKey
+    assert measurement.status is status
+    assert measurement.reason == reason
+    assert measurement.values == {}
+
+
+def test_a_configuration_key_stays_a_configuration_key() -> None:
+    """Test a measurement of a configuration still holds a `ConfigurationKey`."""
+    key = _key()
+
+    measurement = Measurement.ok(key, {_latency(): 3.0})
+
+    assert measurement.key == key
+    assert type(measurement.key) is ConfigurationKey
+    assert measurement.key != _trace_key()
+
+
+def test_a_trace_key_and_a_configuration_key_are_different_measurement_keys() -> None:
+    """Test measurements of the two key types never share a key."""
+    by_trace = Measurement.ok(_trace_key(), {_latency(): 1.0})
+    by_configuration = Measurement.ok(_key(), {_latency(): 1.0})
+
+    assert by_trace.key != by_configuration.key
+    assert by_configuration.key != by_trace.key
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda key: Measurement.ok(key, {_latency(): 1.0}),
+        lambda key: Measurement.infeasible(key, "r"),
+        lambda key: Measurement.failed(key, "r"),
+        Measurement.timeout,
+    ],
+    ids=["ok", "infeasible", "failed", "timeout"],
+)
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param(build_dynamic_trace, id="trace"),
+        pytest.param(lambda: build_dynamic_trace().coordinates, id="coordinates"),
+        pytest.param(lambda: "key", id="text"),
+        pytest.param(lambda: None, id="none"),
+        pytest.param(lambda: 3, id="int"),
+    ],
+)
+def test_every_constructor_refuses_a_key_of_another_type(
+    build: Any, key: Callable[[], Any]
+) -> None:
+    """Test a `Trace` in place of its key, or a non-key, is a `TypeError`."""
+    with pytest.raises(TypeError):
+        build(key())
+
+
+def test_non_dominated_mixes_both_key_types() -> None:
+    """Test the Pareto filter ignores which kind of key a measurement holds."""
+    by_trace = Measurement.ok(_trace_key(), {_latency(): 1.0})
+    by_configuration = Measurement.ok(_key(), {_latency(): 2.0})
+
+    assert non_dominated([by_configuration, by_trace]) == [by_trace]
+
+
+# ===========================================================================
 # Notes and equality
 # ===========================================================================
 
@@ -504,6 +620,143 @@ def test_dominance_refuses_an_argument_that_is_no_measurement() -> None:
 
 
 # ===========================================================================
+# non_dominated
+# ===========================================================================
+
+
+def _two(first: float, second: float) -> Measurement:
+    """Return a successful measurement of the minimized `latency` and `power`."""
+    return Measurement.ok(
+        _key(), {_latency(): first, Objective("energy", Direction.MINIMIZE): second}
+    )
+
+
+def test_non_dominated_keeps_the_pareto_front_in_order() -> None:
+    """Test the design's table: a dominated and a failed measurement are left out."""
+    best_latency, best_energy = _two(1.0, 2.0), _two(2.0, 1.0)
+    dominated, failed = _two(2.0, 2.0), Measurement.failed(_key(), "crashed")
+
+    front = non_dominated([best_latency, best_energy, dominated, failed])
+
+    assert isinstance(front, list)
+    assert len(front) == 2
+    assert front[0] is best_latency
+    assert front[1] is best_energy
+
+
+def test_non_dominated_keeps_the_order_it_was_given() -> None:
+    """Test the front is in input order, not sorted by value."""
+    first, second, third = _two(3.0, 1.0), _two(1.0, 3.0), _two(2.0, 2.0)
+
+    front = non_dominated([first, second, third])
+
+    assert [id(m) for m in front] == [id(first), id(second), id(third)]
+
+
+def test_non_dominated_of_nothing_is_nothing() -> None:
+    """Test an empty list has an empty front."""
+    assert non_dominated([]) == []
+
+
+def test_non_dominated_of_failures_only_is_nothing() -> None:
+    """Test measurements that all did not succeed leave an empty front."""
+    key = _key()
+
+    assert (
+        non_dominated(
+            [
+                Measurement.infeasible(key, "r"),
+                Measurement.failed(key, "r"),
+                Measurement.timeout(key),
+            ]
+        )
+        == []
+    )
+
+
+def test_non_dominated_keeps_both_of_two_equal_measurements() -> None:
+    """Test equal values do not dominate each other: both stay."""
+    first, second = _two(1.0, 1.0), _two(1.0, 1.0)
+
+    front = non_dominated([first, second])
+
+    assert len(front) == 2
+    assert front[0] is first
+    assert front[1] is second
+
+
+def test_non_dominated_drops_equal_measurements_a_third_dominates() -> None:
+    """Test two equal measurements both go when a third dominates them."""
+    front = non_dominated([_two(2.0, 2.0), _two(2.0, 2.0), _two(1.0, 1.0)])
+
+    assert len(front) == 1
+    assert front[0].values == _two(1.0, 1.0).values
+
+
+def test_non_dominated_takes_any_iterable() -> None:
+    """Test a generator of measurements is read once."""
+    measurements = [_two(1.0, 2.0), _two(2.0, 1.0)]
+
+    front = non_dominated(measurement for measurement in measurements)
+
+    assert [id(m) for m in front] == [id(m) for m in measurements]
+
+
+def test_non_dominated_follows_each_objectives_direction() -> None:
+    """Test a maximized objective is better higher, a reported one is not compared."""
+    lower_throughput = _measure(5.0, 1.0, power=9.0)
+    higher_throughput = _measure(5.0, 2.0, power=0.0)
+
+    front = non_dominated([lower_throughput, higher_throughput])
+
+    assert len(front) == 1
+    assert front[0] is higher_throughput
+
+
+def test_non_dominated_ignores_a_reported_difference() -> None:
+    """Test measurements differing only in a reported objective are both kept."""
+    first, second = _measure(5.0, 2.0, power=1.0), _measure(5.0, 2.0, power=100.0)
+
+    front = non_dominated([first, second])
+
+    assert len(front) == 2
+
+
+def test_non_dominated_refuses_different_objectives() -> None:
+    """Test two successful measurements over other objectives are not compared."""
+    left = Measurement.ok(_key(), {_latency(): 1.0})
+    right = Measurement.ok(_key(), {Objective("latency", "maximize"): 1.0})
+
+    with pytest.raises(MeasurementError, match="different objectives"):
+        non_dominated([left, right])
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(lambda: [3], id="int"),
+        pytest.param(lambda: [_two(1.0, 1.0), "measurement"], id="after_a_measurement"),
+        pytest.param(lambda: [None], id="none"),
+        pytest.param(lambda: [_key()], id="key"),
+    ],
+)
+def test_non_dominated_refuses_an_element_that_is_no_measurement(
+    build: Callable[[], list[Any]],
+) -> None:
+    """Test an element that is no `Measurement` is a `TypeError`."""
+    measurements = build()
+
+    with pytest.raises(TypeError):
+        non_dominated(measurements)
+
+
+def test_non_dominated_refuses_an_argument_that_is_no_iterable() -> None:
+    """Test `non_dominated(3)` is a `TypeError`."""
+    with pytest.raises(TypeError):
+        non_dominated(3)  # type: ignore[arg-type]  # test: invalid input
+
+
+# ===========================================================================
 # Measurer
 # ===========================================================================
 
@@ -544,3 +797,27 @@ def test_a_measurer_ranks_the_configurations_of_a_space() -> None:
     latencies = [m.values[_latency()] for m in feasible]
     assert _running_best(_latency(), latencies) == 4.0
     assert sorted(latencies) == [4.0, 4.0, 4.0, 8.0, 8.0, 8.0]
+
+
+class _AnyKeyMeasurer:
+    """Measures a configuration or a run: its `measure` takes either key type."""
+
+    def __init__(self) -> None:
+        self.objectives = (_latency(),)
+
+    def measure(self, key: ConfigurationKey | TraceKey, subject: Any) -> Measurement:
+        return Measurement.ok(key, {_latency(): float(subject)})
+
+
+def test_a_measurer_may_take_a_key_of_either_type() -> None:
+    """Test the protocol accepts a measurer whose `measure` takes either key."""
+    measurer = _AnyKeyMeasurer()
+
+    assert isinstance(measurer, Measurer)
+    by_configuration = measurer.measure(_key(), 4)
+    by_trace = measurer.measure(_trace_key(), 5)
+    assert by_configuration.key == _key()
+    assert type(by_configuration.key) is ConfigurationKey
+    assert by_trace.key == _trace_key()
+    assert type(by_trace.key) is TraceKey
+    assert by_trace.value(_latency()) == 5.0

@@ -1,13 +1,12 @@
 //! Tests for the wire forms of `Direction`, `Objective` and `Measurement`:
-//! the shapes pinned, round trips through JSON and postcard, and the
-//! refusals of a payload outside the constructors' rules.
+//! the shapes pinned, the key tagged as a configuration's or a trace's,
+//! round trips through JSON and postcard, and the refusals of a payload
+//! outside the constructors' rules.
 
 use fhy_core::diagnostic::Note;
 use fhy_core::foreign::NoForeign;
 use fhy_core::search_space::wire::MeasurementData;
-use fhy_core::search_space::{
-    ConfigurationKey, Direction, Measurement, MeasurementError, Objective,
-};
+use fhy_core::search_space::{Direction, Measurement, MeasurementError, MeasurementKey, Objective};
 use rstest::rstest;
 use serde::Serialize;
 use serde_json::json;
@@ -26,7 +25,7 @@ fn json_of<T: Serialize>(value: &T) -> serde_json::Value {
 /// the status `status` and the values `values`.
 fn payload(status: &serde_json::Value, values: &serde_json::Value) -> String {
     json!({
-        "key": json_of(&tiling_key(0)),
+        "key": {"configuration": json_of(&tiling_key(0))},
         "status": status,
         "values": values,
         "notes": [],
@@ -110,7 +109,7 @@ fn ok_measurement_serializes_its_fields() {
     assert_eq!(
         written,
         json!({
-            "key": json_of(&tiling_key(0)),
+            "key": {"configuration": json_of(&tiling_key(0))},
             "status": "ok",
             "values": [
                 {"objective": {"name": "latency_cycles", "direction": "minimize"}, "value": 1532.0},
@@ -140,7 +139,10 @@ fn failing_measurement_serializes_its_status(
 
     assert_eq!(written["status"], status);
     assert_eq!(written["values"], json!([]));
-    assert_eq!(written["key"], json_of(&tiling_key(1)));
+    assert_eq!(
+        written["key"],
+        json!({"configuration": json_of(&tiling_key(1))})
+    );
 }
 
 /// Test every kind of measurement round-trips through JSON and postcard.
@@ -214,7 +216,8 @@ fn measurement_decoding_refuses_what_a_constructor_refuses(
     {"objective": {"name": "a", "direction": "minimize"}, "value": "1.0"},
 ])))]
 #[case::extra_field(json!({
-    "key": json_of(&tiling_key(0)), "status": "timeout", "values": [], "notes": [], "space": null,
+    "key": {"configuration": json_of(&tiling_key(0))}, "status": "timeout", "values": [],
+    "notes": [], "space": null,
 }).to_string())]
 fn measurement_decoding_refuses_another_shape(#[case] text: String) {
     serde_json::from_str::<Measurement>(&text).expect_err("another shape is refused");
@@ -236,13 +239,13 @@ fn forge_postcard(value: f64) -> Vec<u8> {
     }
     #[derive(Serialize)]
     struct Forged {
-        key: ConfigurationKey,
+        key: MeasurementKey,
         status: Status,
         values: Vec<Entry>,
         notes: Vec<Note>,
     }
     postcard::to_allocvec(&Forged {
-        key: tiling_key(0),
+        key: MeasurementKey::Configuration(tiling_key(0)),
         status: Status::Ok,
         values: vec![Entry {
             objective: objective("latency", Direction::Minimize),

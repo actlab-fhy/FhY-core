@@ -15,8 +15,8 @@ use fhy_core::param::{
     ZeroInclusion,
 };
 use fhy_core::search_space::{
-    ChoiceDomain, Coordinate, DecisionKind, OrderDomain, PendingStep, SearchOracle, Space,
-    StepDomain, StridedDomain, StridedRun,
+    ChoiceDomain, Configuration, Coordinate, DecisionKind, OrderDomain, PendingStep, Recorder,
+    SearchOracle, Space, StepDomain, StridedDomain, StridedRun, Trace,
 };
 use fhy_core::solver::Solver;
 use num_bigint::BigUint;
@@ -283,6 +283,41 @@ pub(crate) fn tiling_entries(
         entries.push((tiling.x.clone(), int(*x)));
     }
     entries
+}
+
+/// Record a run of the tiling space: `t = 1`, `c = a`, a dynamic step of
+/// the kind `moga.cir.address` about `subject`, over `[0, 64)` and answered
+/// `address`, and `x = 2`. Return the run's trace and its complete
+/// configuration.
+///
+/// # Panics
+///
+/// Panics if an answer is refused.
+pub(crate) fn record_tiling_run(
+    tiling: &TilingSpace,
+    address: u64,
+    subject: &Identifier,
+) -> (Trace, Configuration) {
+    let mut recorder = Recorder::over(&tiling.space);
+    let mut oracle = ScriptedOracle::new([index(0), index(0), index(address), index(1)]);
+    with_context(|context| {
+        recorder.decide(&tiling.t, &mut oracle, context)?;
+        recorder.decide(&tiling.c, &mut oracle, context)?;
+        recorder.decide_dynamic(
+            &kind("moga.cir.address"),
+            subject,
+            &strided(&[(0, 64)]),
+            &mut oracle,
+            context,
+        )?;
+        recorder.decide(&tiling.x, &mut oracle, context)
+    })
+    .expect("admissible answers");
+    let configuration = recorder
+        .configuration()
+        .expect("a run over a space")
+        .clone();
+    (recorder.trace(), configuration)
 }
 
 /// Return the space `name` of one top-level variable over the natural

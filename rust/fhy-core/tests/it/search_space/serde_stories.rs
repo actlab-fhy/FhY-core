@@ -1218,11 +1218,14 @@ fn nested_choice_tree(depth: usize) -> serde_json::Value {
 fn a_postcard_key_nested_20000_deep_is_refused() {
     let refused = run_on_stack(DECODE_STACK_BYTES, || {
         let bytes = nested_key_bytes(DEEP_INPUT);
+        // A measurement's key is a `MeasurementKey`, whose variant 0 holds
+        // a configuration key.
+        let measurement_bytes = [&[0][..], &bytes].concat();
         [
             postcard::from_bytes::<ConfigurationKey>(&bytes).err(),
             postcard::from_bytes::<ConfigurationKeyData>(&bytes).err(),
-            postcard::from_bytes::<Measurement>(&bytes).err(),
-            postcard::from_bytes::<MeasurementData>(&bytes).err(),
+            postcard::from_bytes::<Measurement>(&measurement_bytes).err(),
+            postcard::from_bytes::<MeasurementData>(&measurement_bytes).err(),
         ]
         .map(|error| matches!(error, Some(postcard::Error::SerdeDeCustom)))
     });

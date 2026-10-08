@@ -20,6 +20,7 @@ from fhy_core.search_space import (
     Measurement,
     MeasurementStatus,
     Objective,
+    TraceKey,
 )
 from fhy_core.serialization import (
     DeserializationValueError,
@@ -32,7 +33,11 @@ from fhy_core.serialization import (
 from fhy_core.traits import FrozenMixin, FrozenMutationError
 from tests.v1 import writing_v1
 
-from .conftest import build_complete_configuration, build_tiling_space
+from .conftest import (
+    build_complete_configuration,
+    build_dynamic_trace,
+    build_tiling_space,
+)
 
 
 def _latency() -> Objective:
@@ -108,6 +113,14 @@ def test_the_status_and_key_are_the_public_types() -> None:
     assert type(measurement.key) is ConfigurationKey
 
 
+def test_the_key_of_a_run_is_a_trace_key() -> None:
+    """Test `key` of a measurement built over a `TraceKey` is a `TraceKey`."""
+    measurement = _trace_measurements()[1]
+
+    assert type(measurement.key) is TraceKey
+    assert measurement.key == _trace_key()
+
+
 @pytest.mark.parametrize("index", range(5), ids=["objective", *_IDS])
 def test_values_are_frozen(index: int) -> None:
     """Test no attribute can be set or deleted."""
@@ -133,13 +146,13 @@ def test_objective_payload_is_its_name_and_direction() -> None:
 
 
 def test_measurement_payload_holds_the_key_status_values_and_notes() -> None:
-    """Test a successful measurement's V2 text, the key in its own shape."""
+    """Test a successful measurement's V2 text, the key tagged `configuration`."""
     measurement = _measurements()[0]
 
     payload = json.loads(measurement.to_json())
 
     assert payload == {
-        "key": json.loads(_key_text()),
+        "key": {"configuration": json.loads(_key_text())},
         "status": "ok",
         "values": [
             {
@@ -162,6 +175,124 @@ def _key_text() -> str:
     _, (text,) = reduced
     assert isinstance(text, str)
     return text
+
+
+def _trace_key() -> TraceKey:
+    """Return the key of a run of two dynamic steps."""
+    return build_dynamic_trace().key()
+
+
+def _trace_key_text() -> str:
+    """Return the V2 text of `_trace_key()`, as its pickle writes it."""
+    reduced: Any = _trace_key().__reduce__()
+    _, (text,) = reduced
+    assert isinstance(text, str)
+    return text
+
+
+def _trace_measurements() -> list[Measurement]:
+    """Return a measurement of each status over a trace key, one with notes."""
+    key = _trace_key()
+    return [
+        Measurement.ok(key, [(_latency(), 1532.0), (_throughput(), 0.5)]).with_notes(
+            [Note("warm cache")]
+        ),
+        Measurement.infeasible(key, "rejected by validation"),
+        Measurement.failed(key, "the simulator crashed"),
+        Measurement.timeout(key),
+    ]
+
+
+def test_a_trace_key_measurement_writes_its_key_tagged_trace() -> None:
+    """Test a measurement of a run writes `"key": {"trace": <the key>}`."""
+    measurement = _trace_measurements()[0]
+
+    payload = measurement.serialize_to_dict()
+
+    assert payload["key"] == {"trace": json.loads(_trace_key_text())}
+    assert json.loads(measurement.to_json())["key"] == {
+        "trace": json.loads(_trace_key_text())
+    }
+
+
+def test_the_trace_key_payload_lists_its_steps() -> None:
+    """Test the wire form of a trace key is its steps, each with four parts."""
+    steps = json.loads(_trace_key_text())["steps"]
+
+    assert len(steps) == 2
+    for step in steps:
+        assert set(step) == {"kind", "decision", "domain", "coordinate"}
+    assert [step["coordinate"] for step in steps] == [{"index": 1}, {"index": 5}]
+    assert [step["decision"] for step in steps] == [None, None]
+
+
+@pytest.mark.parametrize("index", range(4), ids=_IDS)
+def test_a_trace_key_measurement_round_trips_through_its_payloads(index: int) -> None:
+    """Test the V2 dict and text of a run's measurement decode to its trace key."""
+    measurement = _trace_measurements()[index]
+
+    from_dict = Measurement.deserialize_from_dict(measurement.serialize_to_dict())
+    from_text = Measurement.from_json(measurement.to_json())
+
+    for decoded in (from_dict, from_text):
+        assert type(decoded) is Measurement
+        assert type(decoded.key) is TraceKey
+        assert decoded.key == measurement.key
+        assert hash(decoded.key) == hash(measurement.key)
+        assert decoded.serialize_to_dict() == measurement.serialize_to_dict()
+        assert decoded.values == measurement.values
+
+
+def test_a_trace_key_measurement_round_trips_through_the_registry() -> None:
+    """Test `deserialize_value` finds a run's measurement and its trace key."""
+    measurement = _trace_measurements()[0]
+
+    decoded: Any = deserialize_value(serialize_value(measurement))
+
+    assert type(decoded.key) is TraceKey
+    assert decoded.key == measurement.key
+
+
+@pytest.mark.parametrize("protocol", range(pickle.HIGHEST_PROTOCOL + 1))
+@pytest.mark.parametrize("index", range(4), ids=_IDS)
+def test_a_trace_key_measurement_pickles_with_its_key(
+    index: int, protocol: int
+) -> None:
+    """Test a run's measurement pickles to one with the same trace key."""
+    measurement = _trace_measurements()[index]
+
+    restored = pickle.loads(pickle.dumps(measurement, protocol=protocol))
+
+    assert type(restored.key) is TraceKey
+    assert restored.key == measurement.key
+    assert restored.serialize_to_dict() == measurement.serialize_to_dict()
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        {"trace": {"steps": "none"}},
+        {"trace": {"entries": []}},
+        {"entries": []},
+        {"configuration": {"steps": []}},
+        {"other": {}},
+        {"configuration": {"entries": []}, "trace": {"steps": []}},
+    ],
+    ids=[
+        "steps_not_a_list",
+        "configuration_shape_under_trace",
+        "untagged_configuration_key",
+        "trace_shape_under_configuration",
+        "unknown_tag",
+        "two_tags",
+    ],
+)
+def test_measurement_decoding_refuses_a_malformed_key(key: Any) -> None:
+    """Test a key that is not one tagged key is a `DeserializationValueError`."""
+    data = _payload_with(key=key)
+
+    with pytest.raises(DeserializationValueError):
+        Measurement.deserialize_from_dict(data)
 
 
 @pytest.mark.parametrize(
