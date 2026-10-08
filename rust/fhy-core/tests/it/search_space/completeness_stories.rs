@@ -19,11 +19,10 @@ use fhy_core::search_space::{Configuration, ConfigurationError, ConfigurationErr
 use fhy_core::solver::Solver;
 use fhy_core::term::AlphaRenaming;
 use proptest::prelude::*;
-use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 use rstest::rstest;
 
 use crate::support::constraint::int;
+use crate::support::guard::{GUARD_CASES, draw_guard_cases};
 use crate::support::param::{in_set, literal, reference};
 use crate::support::search::with_context;
 use crate::support::search_space::{
@@ -846,33 +845,12 @@ proptest! {
 // Non-vacuity guards
 // ---------------------------------------------------------------------------
 
-/// The cases the guard draws.
-const GUARD_CASES: usize = 256;
-
-/// Return `GUARD_CASES` models drawn by a runner with a fixed seed, so the
-/// guard's counts are the same on every run.
-fn draw_models() -> Vec<Model> {
-    let strategy = generate_model();
-    let mut runner = TestRunner::new_with_rng(
-        Config::default(),
-        TestRng::deterministic_rng(RngAlgorithm::ChaCha),
-    );
-    (0..GUARD_CASES)
-        .map(|_| {
-            strategy
-                .new_tree(&mut runner)
-                .expect("the strategy draws")
-                .current()
-        })
-        .collect()
-}
-
 /// Test the strategy reaches both accepted and refused entries, with
 /// conditions and forbidden clauses in play, so the property is not
 /// checking only trivial walks.
 #[test]
 fn generated_models_reach_accepted_and_refused_entries_conditions_and_clauses() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
     let walks: Vec<Walk> = models
         .iter()
         .map(|model| walk_entries(model).expect("the walk agrees with new"))

@@ -17,6 +17,15 @@ pub(crate) fn restored(id: u64, name: &str) -> Identifier {
     Identifier::try_restore(id, name).expect("the id is below the cap")
 }
 
+/// Return the JSON value `value` serializes to.
+///
+/// # Panics
+///
+/// Panics if `value` fails to serialize.
+pub(crate) fn json_of<T: Serialize>(value: &T) -> serde_json::Value {
+    serde_json::to_value(value).expect("the value serializes")
+}
+
 /// Check that `value` round-trips through JSON and postcard to an equal
 /// value, and that the JSON decoded re-encodes to the same text.
 ///

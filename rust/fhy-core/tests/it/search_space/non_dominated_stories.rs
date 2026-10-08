@@ -6,9 +6,9 @@
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::{Direction, Measurement, MeasurementError, Objective, non_dominated};
 use proptest::prelude::*;
-use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
+use proptest::test_runner::Config;
 
+use crate::support::guard::{GUARD_CASES, draw_guard_cases};
 use crate::support::measurement::{objective, tiling_key};
 use crate::support::search::{build_tiling_space, record_tiling_run};
 
@@ -314,27 +314,12 @@ proptest! {
     }
 }
 
-/// The populations the guard draws.
-const GUARD_CASES: usize = 256;
-
 /// Test the generated populations often hold a dominated success and a
 /// failure, and often have a front of two or more, so the property
 /// compares non-trivial fronts.
 #[test]
 fn generated_populations_reach_dominated_successes_failures_and_wide_fronts() {
-    let strategy = generate_population();
-    let mut runner = TestRunner::new_with_rng(
-        Config::default(),
-        TestRng::deterministic_rng(RngAlgorithm::ChaCha),
-    );
-    let populations: Vec<Population> = (0..GUARD_CASES)
-        .map(|_| {
-            strategy
-                .new_tree(&mut runner)
-                .expect("the strategy draws")
-                .current()
-        })
-        .collect();
+    let populations = draw_guard_cases(&generate_population());
 
     let mut dominated = 0;
     let mut with_failure = 0;

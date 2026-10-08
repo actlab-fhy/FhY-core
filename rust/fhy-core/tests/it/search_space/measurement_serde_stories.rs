@@ -14,12 +14,7 @@ use serde_json::json;
 use crate::support::measurement::{measured, objective, tiling_key};
 use crate::support::param::Level;
 use crate::support::search_space::{categorical, configure, plain_variable, space_of};
-use crate::support::serde::check_serde_round_trip;
-
-/// Return the JSON value `value` serializes to.
-fn json_of<T: Serialize>(value: &T) -> serde_json::Value {
-    serde_json::to_value(value).expect("the value serializes")
-}
+use crate::support::serde::{check_serde_round_trip, json_of};
 
 /// Return the JSON payload of a measurement of tiling configuration 0 with
 /// the status `status` and the values `values`.

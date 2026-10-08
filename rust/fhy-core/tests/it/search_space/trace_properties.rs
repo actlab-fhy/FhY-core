@@ -17,10 +17,10 @@ use fhy_core::search_space::{
 };
 use num_bigint::BigUint;
 use proptest::prelude::*;
-use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
+use proptest::test_runner::Config;
 
 use crate::support::constraint::int;
+use crate::support::guard::{GUARD_CASES, draw_guard_cases};
 use crate::support::param::in_set;
 use crate::support::search::{
     build_tiling_space, tiling_configurations, tiling_entries, with_context,
@@ -717,27 +717,6 @@ fn per_step_sampling_is_uniform_per_step() {
 // Non-vacuity guards
 // ---------------------------------------------------------------------------
 
-/// The cases each guard draws.
-const GUARD_CASES: usize = 256;
-
-/// Return `GUARD_CASES` models drawn by a runner with a fixed seed, so a
-/// guard's count is the same on every run.
-fn draw_models() -> Vec<Model> {
-    let strategy = generate_model();
-    let mut runner = TestRunner::new_with_rng(
-        Config::default(),
-        TestRng::deterministic_rng(RngAlgorithm::ChaCha),
-    );
-    (0..GUARD_CASES)
-        .map(|_| {
-            strategy
-                .new_tree(&mut runner)
-                .expect("the strategy draws")
-                .current()
-        })
-        .collect()
-}
-
 /// Return whether `model`'s condition makes its target inactive in some
 /// complete configuration.
 fn has_deactivating_condition(model: &Model) -> bool {
@@ -759,7 +738,7 @@ fn has_excluding_clause(model: &Model) -> bool {
 
 #[test]
 fn most_generated_models_have_two_or_more_configurations() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let count = models
         .iter()
@@ -775,7 +754,7 @@ fn most_generated_models_have_two_or_more_configurations() {
 
 #[test]
 fn many_generated_conditions_deactivate_their_target() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let count = models
         .iter()
@@ -791,7 +770,7 @@ fn many_generated_conditions_deactivate_their_target() {
 
 #[test]
 fn many_generated_clauses_exclude_a_configuration() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let count = models
         .iter()
@@ -807,7 +786,7 @@ fn many_generated_clauses_exclude_a_configuration() {
 
 #[test]
 fn some_generated_models_have_no_configuration() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let count = models
         .iter()
@@ -835,7 +814,7 @@ fn has_changeable_configuration(model: &Model) -> bool {
 
 #[test]
 fn many_generated_models_can_be_mutated_and_some_cannot() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let mutable = models
         .iter()
@@ -860,7 +839,7 @@ fn many_generated_models_can_be_mutated_and_some_cannot() {
 
 #[test]
 fn many_mutable_models_have_a_condition_or_a_forbidden_clause() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let constrained = models
         .iter()

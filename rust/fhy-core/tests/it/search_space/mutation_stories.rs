@@ -2,7 +2,6 @@
 //! changeable, how many times it asks a variable's hooks, and the seeded
 //! outputs it keeps.
 
-use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -15,16 +14,13 @@ use crate::support::constraint::{TestCustom, int};
 use crate::support::mutation::{
     build_counting_space, build_table_space, build_unreachable_alternative_space, describe_entries,
 };
-use crate::support::search::{build_tiling_space, permutation_param, tiling_entries, with_context};
+use crate::support::search::{
+    attempts, build_tiling_space, permutation_param, tiling_entries, with_context,
+};
 use crate::support::search_space::{
     bare_alternative, choice_of, chosen, configure, forbidden, int_variable, plain_alternative,
     plain_variable, space_of,
 };
-
-/// Return a positive attempt count.
-fn attempts(count: u32) -> NonZeroU32 {
-    NonZeroU32::new(count).expect("a positive count")
-}
 
 /// Test a mutation refuses a choice's other alternative when no completion
 /// of it exists, though the search for one outlasts the search budget: the

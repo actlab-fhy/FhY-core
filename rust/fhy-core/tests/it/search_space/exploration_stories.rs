@@ -3,7 +3,6 @@
 //! and `mutate`.
 
 use std::collections::HashSet;
-use std::num::NonZeroU32;
 
 use fhy_core::constraint::Value;
 use fhy_core::foreign::Part;
@@ -20,18 +19,13 @@ use rstest::rstest;
 use crate::support::constraint::int;
 use crate::support::param::{EvenDomain, in_set};
 use crate::support::search::{
-    ScriptedOracle, TilingSpace, build_tiling_space, index, tiling_configurations, tiling_entries,
-    unbounded_space, with_context,
+    ScriptedOracle, TilingSpace, attempts, build_tiling_space, index, tiling_configurations,
+    tiling_entries, unbounded_space, with_context,
 };
 use crate::support::search_space::{
     bare_alternative, choice_of, chosen, condition, configure, forbidden, int_variable,
     plain_alternative, plain_variable, space_of,
 };
-
-/// Return a positive attempt count.
-fn attempts(count: u32) -> NonZeroU32 {
-    NonZeroU32::new(count).expect("a positive count")
-}
 
 /// Return the keys of the tiling space's five complete configurations, in
 /// lexicographic order of their coordinates.

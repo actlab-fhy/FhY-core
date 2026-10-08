@@ -4,30 +4,24 @@
 //! exhausted attempts, and the determinism and replay of a seeded
 //! crossover.
 
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::NonZeroU64;
 
 use fhy_core::constraint::Value;
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::{Configuration, Recorded, Rng, Space, TraceError};
 use proptest::prelude::*;
-use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 use rstest::rstest;
 
 use crate::support::constraint::int;
+use crate::support::guard::{GUARD_CASES, draw_guard_cases};
 use crate::support::param::in_set;
 use crate::support::search::{
-    build_tiling_space, tiling_configurations, tiling_entries, with_context,
+    attempts, build_tiling_space, tiling_configurations, tiling_entries, with_context,
 };
 use crate::support::search_space::{
     choice_of, chosen, configure, forbidden, int_variable, plain_alternative, space_of,
     try_configure,
 };
-
-/// Return a positive attempt count.
-fn attempts(count: u32) -> NonZeroU32 {
-    NonZeroU32::new(count).expect("a positive count")
-}
 
 /// Return the crossover of `first` and `second` in `space` drawn from the
 /// seed `seed`, with `count` attempts.
@@ -629,27 +623,6 @@ proptest! {
     }
 }
 
-/// The cases each guard draws.
-const GUARD_CASES: usize = 256;
-
-/// Return `GUARD_CASES` scenarios drawn by a runner with a fixed seed, so
-/// a guard's count is the same on every run.
-fn draw_scenarios() -> Vec<Scenario> {
-    let strategy = generate_scenario();
-    let mut runner = TestRunner::new_with_rng(
-        Config::default(),
-        TestRng::deterministic_rng(RngAlgorithm::ChaCha),
-    );
-    (0..GUARD_CASES)
-        .map(|_| {
-            strategy
-                .new_tree(&mut runner)
-                .expect("the strategy draws")
-                .current()
-        })
-        .collect()
-}
-
 /// Return the number of variables the two parents of `scenario` differ on.
 fn count_differences(scenario: &Scenario) -> usize {
     let (space, names) = build_model_space(&scenario.model);
@@ -666,7 +639,7 @@ fn count_differences(scenario: &Scenario) -> usize {
 /// variables often enough for the picks to matter.
 #[test]
 fn crossover_scenarios_often_have_parents_differing_on_two_variables() {
-    let scenarios = draw_scenarios();
+    let scenarios = draw_guard_cases(&generate_scenario());
 
     let count = scenarios
         .iter()
@@ -684,7 +657,7 @@ fn crossover_scenarios_often_have_parents_differing_on_two_variables() {
 /// without one, each often enough (a guard of the strategy).
 #[test]
 fn crossover_scenarios_often_have_a_clause_and_often_have_none() {
-    let scenarios = draw_scenarios();
+    let scenarios = draw_guard_cases(&generate_scenario());
 
     let with_clause = scenarios
         .iter()
@@ -707,7 +680,7 @@ fn crossover_scenarios_often_have_a_clause_and_often_have_none() {
 /// guard of the strategy).
 #[test]
 fn crossover_scenarios_often_have_a_clause_that_excludes_a_point() {
-    let scenarios = draw_scenarios();
+    let scenarios = draw_guard_cases(&generate_scenario());
 
     let count = scenarios
         .iter()

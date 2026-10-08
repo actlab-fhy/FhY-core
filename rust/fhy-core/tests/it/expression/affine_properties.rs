@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 
 use crate::support::expression::IDENTIFIER_POOL;
+use crate::support::guard::{GUARD_CASES, draw_guard_cases};
 
 use fhy_core::expression::evaluate::{Evaluator, Scalar};
 use fhy_core::expression::registry::FunctionRegistry;
@@ -21,8 +22,6 @@ use fhy_core::expression::{
 use fhy_core::identifier::Identifier;
 use proptest::prelude::*;
 use proptest::sample::select;
-use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 
 /// The distance under which two evaluations count as equal. The values are
 /// exact multiples of 1/8, so any real difference is far above it; it only
@@ -228,32 +227,11 @@ fn factor_expression(value: &Rational) -> Expression {
 // The strategy reaches what the properties claim to cover
 // ---------------------------------------------------------------------------
 
-/// The trees each guard draws.
-const GUARD_CASES: usize = 256;
-
-/// Return `GUARD_CASES` trees drawn by a runner with a fixed seed, so a
-/// guard's count is the same on every run.
-fn draw_trees() -> Vec<Expression> {
-    let strategy = build_affine_tree_strategy();
-    let mut runner = TestRunner::new_with_rng(
-        Config::default(),
-        TestRng::deterministic_rng(RngAlgorithm::ChaCha),
-    );
-    (0..GUARD_CASES)
-        .map(|_| {
-            strategy
-                .new_tree(&mut runner)
-                .expect("the strategy draws")
-                .current()
-        })
-        .collect()
-}
-
 /// Test the generated trees mention several identifiers, divide, and are
 /// not mostly single leaves, so the properties are not vacuous.
 #[test]
 fn affine_tree_strategy_draws_trees_with_identifiers_and_divisions() {
-    let trees = draw_trees();
+    let trees = draw_guard_cases(&build_affine_tree_strategy());
 
     let with_two_identifiers = trees
         .iter()
@@ -277,7 +255,7 @@ fn affine_tree_strategy_draws_trees_with_identifiers_and_divisions() {
 /// cancelled identifier, a constant form, and a form with several terms.
 #[test]
 fn affine_tree_strategy_reaches_fractions_cancellations_and_constants() {
-    let trees = draw_trees();
+    let trees = draw_guard_cases(&build_affine_tree_strategy());
 
     let forms: Vec<_> = trees
         .iter()

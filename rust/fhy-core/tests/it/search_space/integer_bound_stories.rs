@@ -4,8 +4,6 @@
 //! a constraint no bound decides needs a simplifier and fails the same way
 //! everywhere.
 
-use std::num::NonZeroU32;
-
 use fhy_core::constraint::{EquationConstraint, Value};
 use fhy_core::expression::{BigInt, LiteralValue};
 use fhy_core::identifier::Identifier;
@@ -19,18 +17,14 @@ use fhy_core::search_space::{
 use fhy_core::solver::Solver;
 use num_bigint::BigUint;
 use proptest::prelude::*;
-use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
+use proptest::test_runner::Config;
 use rstest::rstest;
 
 use crate::support::constraint::int;
+use crate::support::guard::{GUARD_CASES, draw_guard_cases};
 use crate::support::param::{literal, reference};
+use crate::support::search::attempts;
 use crate::support::search_space::{configure, ground_solver, plain_variable, space_of};
-
-/// Return a positive attempt count.
-fn attempts(count: u32) -> NonZeroU32 {
-    NonZeroU32::new(count).expect("a positive count")
-}
 
 /// Return the param over the integers of `sign`, bounded below by
 /// `lower` and above by `upper`, each `(value, is_inclusive)`.
@@ -348,32 +342,11 @@ proptest! {
     }
 }
 
-/// The cases the guard draws.
-const GUARD_CASES: usize = 256;
-
-/// Return `GUARD_CASES` pairs of bounds drawn by a runner with a fixed
-/// seed.
-fn draw_bounds() -> Vec<((i64, bool), (i64, bool))> {
-    let strategy = generate_bounds();
-    let mut runner = TestRunner::new_with_rng(
-        Config::default(),
-        TestRng::deterministic_rng(RngAlgorithm::ChaCha),
-    );
-    (0..GUARD_CASES)
-        .map(|_| {
-            strategy
-                .new_tree(&mut runner)
-                .expect("the strategy draws")
-                .current()
-        })
-        .collect()
-}
-
 /// Test most generated bounds enclose some integer, and some enclose none:
 /// the property compares non-zero counts, and the empty count too.
 #[test]
 fn many_generated_bounds_enclose_integers_and_some_enclose_none() {
-    let bounds = draw_bounds();
+    let bounds = draw_guard_cases(&generate_bounds());
 
     let enclosing = bounds
         .iter()

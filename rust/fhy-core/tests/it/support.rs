@@ -7,6 +7,7 @@ pub(crate) mod constraint;
 pub(crate) mod error_text;
 pub(crate) mod expression;
 pub(crate) mod foreign;
+pub(crate) mod guard;
 pub(crate) mod hashing;
 pub(crate) mod lambda;
 pub(crate) mod measurement;

@@ -13,18 +13,12 @@ use fhy_core::search_space::{
     TraceKey,
 };
 use rstest::rstest;
-use serde::Serialize;
 use serde_json::json;
 
 use crate::support::hashing::hash_of;
 use crate::support::measurement::{objective, tiling_key};
 use crate::support::search::{build_tiling_space, record_tiling_run};
-use crate::support::serde::check_serde_round_trip;
-
-/// Return the JSON value `value` serializes to.
-fn json_of<T: Serialize>(value: &T) -> serde_json::Value {
-    serde_json::to_value(value).expect("the value serializes")
-}
+use crate::support::serde::{check_serde_round_trip, json_of};
 
 /// Return the key of a run of the tiling space that placed its buffer at
 /// `address`, and the key of that run's configuration.

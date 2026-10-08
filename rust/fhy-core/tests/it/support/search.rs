@@ -5,6 +5,7 @@
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
+use std::num::NonZeroU32;
 
 use fhy_core::constraint::Value;
 use fhy_core::expression::{BigInt, LiteralValue};
@@ -26,6 +27,15 @@ use super::search_space::{
     bare_alternative, choice_of, chooses, chosen, condition, forbidden, int_variable,
     plain_alternative, plain_variable,
 };
+
+/// Return the positive attempt count `count`.
+///
+/// # Panics
+///
+/// Panics if `count` is zero.
+pub(crate) fn attempts(count: u32) -> NonZeroU32 {
+    NonZeroU32::new(count).expect("a positive count")
+}
 
 /// Return the kind named `kind`.
 ///
