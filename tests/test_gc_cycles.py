@@ -440,6 +440,9 @@ _NOT_TRACKED = {
     "ExhaustiveOracle": "holds only its path's coordinates and domain "
     "signatures, which keep no value of a domain, so no Python object",
     "Objective": "holds only its name and direction, no Python object",
+    "AffineForm": "holds only identifiers and exact rationals, no Python object",
+    "TraceKey": "holds only kinds, positions, domain signatures and coordinates, "
+    "which keep no value of a domain, so no Python object",
     "SympySimplifier": "holds only the SymPy module and its classes, which "
     "`sys.modules` keeps reachable, so no garbage cycle runs through them",
 }

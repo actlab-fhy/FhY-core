@@ -17,7 +17,7 @@ import pytest
 pytest.importorskip("hypothesis")
 pytest.importorskip("sympy")
 
-import sympy
+import sympy  # type: ignore[import-untyped]
 from hypothesis import example, given
 
 from fhy_core.identifier import Identifier

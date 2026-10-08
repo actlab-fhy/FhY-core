@@ -380,8 +380,11 @@ def test_categorical_domain_accepts_tuple_categories() -> None:
 
 def test_tuple_categories_come_back_in_a_canonical_order() -> None:
     """Test the categories' order does not depend on the order they were given in."""
-    forward = CategoricalDomain(((4, 4), (8, 8))).categories
-    backward = CategoricalDomain(((8, 8), (4, 4))).categories
+    ascending: Any = ((4, 4), (8, 8))
+    descending: Any = ((8, 8), (4, 4))
+
+    forward = CategoricalDomain(ascending).categories
+    backward = CategoricalDomain(descending).categories
 
     assert forward == backward == ((4, 4), (8, 8))
 

@@ -323,7 +323,7 @@ def test_the_form_is_frozen_and_has_no_constructor() -> None:
     form = _form(_id(_X))
 
     with pytest.raises(TypeError):
-        AffineForm()  # type: ignore[call-arg]  # test: no constructor
+        AffineForm()  # test: no constructor
     with pytest.raises((AttributeError, TypeError)):
         form.extra = 1  # type: ignore[attr-defined]  # test: frozen
 
