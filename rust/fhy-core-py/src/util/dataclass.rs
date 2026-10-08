@@ -6,6 +6,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
+use pyo3::pyclass::CompareOp;
 use pyo3::types::{PyBool, PyString, PyTuple, PyType};
 
 /// Return the `TypeError` for an argument `field` of `owner` that is not a
@@ -41,6 +42,17 @@ pub fn read_str<'a, 'py>(
     match value.cast::<PyString>() {
         Ok(value) => Ok(value),
         Err(_not_a_str) => Err(build_argument_type_error(owner, field, "a str", value)?),
+    }
+}
+
+/// Return the answer of the rich comparison `op` of two values of a class
+/// that compares only for equality, `equal` saying whether they are equal:
+/// a `bool` for `==` and `!=`, and `NotImplemented` for an ordering.
+pub(crate) fn answer_equality(py: Python<'_>, equal: bool, op: CompareOp) -> Py<PyAny> {
+    match op {
+        CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
+        CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
+        CompareOp::Lt | CompareOp::Le | CompareOp::Gt | CompareOp::Ge => py.NotImplemented(),
     }
 }
 

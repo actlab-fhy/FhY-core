@@ -8,13 +8,13 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{CompareOp, PyTraverseError, PyVisit};
-use pyo3::types::{PyBool, PyDict, PyTuple, PyType};
+use pyo3::types::{PyDict, PyTuple, PyType};
 
 use fhy_core::search_space::{DecisionKind, Trace, TraceKey, TraceStep};
 
 use crate::constraint::value_to_python;
 use crate::identifier::identifier_to_python;
-use crate::util::dataclass::hash_value;
+use crate::util::dataclass::{answer_equality, hash_value};
 use crate::util::exceptions::DESERIALIZATION_VALUE_ERROR;
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::util::gc::{Slots, collect_slots};
@@ -397,11 +397,7 @@ impl PyTrace {
             return Ok(py.NotImplemented());
         };
         let equal = with_pending_errors(|| Ok(self.trace == other.get().trace))?;
-        Ok(match op {
-            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
-            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
-            _ => py.NotImplemented(),
-        })
+        Ok(answer_equality(py, equal, op))
     }
 
     /// Return the trace's hash, consistent with `==`.
@@ -515,11 +511,7 @@ impl PyTraceKey {
             return py.NotImplemented();
         };
         let equal = self.key == other.get().key;
-        match op {
-            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
-            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
-            _ => py.NotImplemented(),
-        }
+        answer_equality(py, equal, op)
     }
 
     /// Return the key's hash, consistent with `==`.

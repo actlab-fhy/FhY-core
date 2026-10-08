@@ -25,7 +25,7 @@ use fhy_core::search_space::{
 };
 
 use crate::diagnostic::note_to_python;
-use crate::util::dataclass::hash_value;
+use crate::util::dataclass::{answer_equality, hash_value};
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::util::gc::collect_slots;
 use crate::util::pending::with_pending_errors;
@@ -232,11 +232,7 @@ impl PyObjective {
             return py.NotImplemented();
         };
         let equal = self.objective == other.get().objective;
-        match op {
-            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
-            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
-            _ => py.NotImplemented(),
-        }
+        answer_equality(py, equal, op)
     }
 
     /// Return the objective's hash, consistent with `==`.

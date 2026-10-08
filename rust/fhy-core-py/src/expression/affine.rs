@@ -7,12 +7,12 @@
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
-use pyo3::types::{PyBool, PyDict, PyType};
+use pyo3::types::{PyDict, PyType};
 
 use fhy_core::expression::{AffineForm, Rational};
 
 use crate::identifier::{identifier_to_python, restore_identifier};
-use crate::util::dataclass::hash_value;
+use crate::util::dataclass::{answer_equality, hash_value};
 use crate::util::python::read_type_name;
 
 use super::literal::big_int_to_python;
@@ -92,11 +92,7 @@ impl PyAffineForm {
             return py.NotImplemented();
         };
         let equal = self.form == other.get().form;
-        match op {
-            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
-            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
-            _ => py.NotImplemented(),
-        }
+        answer_equality(py, equal, op)
     }
 
     /// Return the form's hash, consistent with `==`.
