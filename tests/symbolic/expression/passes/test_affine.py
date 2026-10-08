@@ -2,9 +2,9 @@
 
 ``affine_form`` reads an expression as exact rational multiples of its free
 identifiers plus an exact rational constant, or declines with ``None``. The
-tests pin the behavior table of the design (cancellation, rational
-coefficients, constant folding, every declined shape), the accessors of
-``AffineForm`` and its canonical expression, and the argument check.
+tests pin what it reads (cancellation, rational coefficients, constant
+folding) and every shape it declines, the accessors of ``AffineForm`` and
+its canonical expression, and the argument check.
 """
 
 from decimal import Decimal
@@ -53,7 +53,7 @@ def _form(expression: Expression) -> AffineForm:
 
 
 # ===========================================================================
-# The behavior table
+# Affine expressions
 # ===========================================================================
 
 

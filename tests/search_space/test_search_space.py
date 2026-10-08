@@ -1810,7 +1810,7 @@ def test_a_space_over_tuple_categories_counts_enumerates_and_samples() -> None:
 
 
 def test_a_forbidden_clause_over_a_tuple_category_removes_it() -> None:
-    """Test `tile in {(8, 8)}` forbids that shape, as the sketch's clause does."""
+    """Test `tile in {(8, 8)}` leaves that shape out and refuses choosing it."""
     tile = Variable(param=categorical(*((4, 4), (8, 8))), name=Identifier("tile"))
     space = Space(
         variables=(tile,),

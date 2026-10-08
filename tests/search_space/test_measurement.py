@@ -625,14 +625,14 @@ def test_dominance_refuses_an_argument_that_is_no_measurement() -> None:
 
 
 def _two(first: float, second: float) -> Measurement:
-    """Return a successful measurement of the minimized `latency` and `power`."""
+    """Return a successful measurement of the minimized `latency` and `energy`."""
     return Measurement.ok(
         _key(), {_latency(): first, Objective("energy", Direction.MINIMIZE): second}
     )
 
 
 def test_non_dominated_keeps_the_pareto_front_in_order() -> None:
-    """Test the design's table: a dominated and a failed measurement are left out."""
+    """Test a dominated and a failed measurement are left out of the front."""
     best_latency, best_energy = _two(1.0, 2.0), _two(2.0, 1.0)
     dominated, failed = _two(2.0, 2.0), Measurement.failed(_key(), "crashed")
 
@@ -687,10 +687,12 @@ def test_non_dominated_keeps_both_of_two_equal_measurements() -> None:
 
 def test_non_dominated_drops_equal_measurements_a_third_dominates() -> None:
     """Test two equal measurements both go when a third dominates them."""
-    front = non_dominated([_two(2.0, 2.0), _two(2.0, 2.0), _two(1.0, 1.0)])
+    best = _two(1.0, 1.0)
+
+    front = non_dominated([_two(2.0, 2.0), _two(2.0, 2.0), best])
 
     assert len(front) == 1
-    assert front[0].values == _two(1.0, 1.0).values
+    assert front[0] is best
 
 
 def test_non_dominated_takes_any_iterable() -> None:
