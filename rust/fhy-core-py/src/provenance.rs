@@ -753,8 +753,11 @@ fn provenance_logger(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
 /// Origin information for a compiler object, backed by the Rust
 /// [`Provenance`]; the base of the variant classes.
 ///
-/// The class itself has no constructor: every provenance is an instance of
-/// a variant class, which sets the Rust value.
+/// A variant class's constructor sets the Rust value. The class's own
+/// constructor accepts any arguments and leaves them to a Python subclass
+/// defined outside `fhy_core`, such as a frozen dataclass, whose instance
+/// reaches the core as a [`Provenance::Custom`] that asks the object for
+/// its `==`, `hash`, `str` and serialized form.
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "Provenance")]
 pub(crate) struct PyProvenance {
     provenance: Provenance,
@@ -833,6 +836,30 @@ impl PyProvenance {
 
 #[pymethods]
 impl PyProvenance {
+    /// Return the base of an instance of a Python subclass defined outside
+    /// `fhy_core`, whose own `__init__` takes the arguments.
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        todo!()
+    }
+
+    /// Pickle an instance of a Python subclass defined outside `fhy_core`
+    /// as `(copyreg.__newobj__, (cls,), state)`, its `__dict__` the state;
+    /// the variant classes pickle as a call of their class.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
     /// Return a new unknown provenance.
     #[staticmethod]
     fn unknown(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
@@ -1037,6 +1064,10 @@ fn span_to_python<'py>(py: Python<'py>, span: Option<&Span>) -> PyResult<Bound<'
 /// # Errors
 ///
 /// Raises what building an object raises.
+#[expect(
+    clippy::todo,
+    reason = "interface stub; bodies are todo!() until implementation"
+)]
 fn provenance_to_python<'py>(
     py: Python<'py>,
     provenance: &Provenance,
@@ -1064,6 +1095,7 @@ fn provenance_to_python<'py>(
                 .get(py)?
                 .call1((PyTuple::new(py, sources)?, fused.label()))
         }
+        Provenance::Custom(_) => todo!(),
     }
 }
 
