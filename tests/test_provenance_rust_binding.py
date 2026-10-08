@@ -18,7 +18,7 @@ import os
 import pickle
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -407,12 +407,15 @@ def test_named_provenance_rejects_an_empty_name_with_the_python_message() -> Non
 )
 def test_file_path_is_normalized_as_pure_posix_path_does(text: str) -> None:
     """Test a path, given as `str` or `Path`, normalizes as `PurePosixPath`."""
-    for file_path in (text, Path(text)):
+    # A `Path` is read in its POSIX form, which on Windows can differ from
+    # `text`.
+    for file_path, posix_text in ((text, text), (Path(text), Path(text).as_posix())):
         provenance = _call(FileProvenance, file_path)
+        expected = str(PurePosixPath(posix_text))
 
         assert type(provenance.file_path) is type(Path(text))
-        assert str(provenance.file_path) == str(PurePosixPath(text))
-        assert str(provenance) == str(PurePosixPath(text))
+        assert provenance.file_path == Path(expected)
+        assert str(provenance) == expected
 
 
 def test_a_path_in_normal_form_is_kept_as_given() -> None:
@@ -430,6 +433,15 @@ def test_a_str_path_is_returned_as_a_path() -> None:
 
     assert provenance.file_path == Path("src/a.fhy")
     assert provenance == FileProvenance(Path("src/a.fhy"))
+
+
+def test_a_windows_path_is_stored_in_posix_form() -> None:
+    """Test a Windows path stores `/` as its separator on every platform."""
+    provenance = FileProvenance(PureWindowsPath("src\\a.fhy"))
+
+    assert provenance == FileProvenance("src/a.fhy")
+    assert str(provenance) == "src/a.fhy"
+    assert provenance.to_json() == FileProvenance("src/a.fhy").to_json()
 
 
 class _PathLike(os.PathLike[str]):
@@ -832,7 +844,11 @@ class _GlobalRecordingUnpickler(pickle.Unpickler):
 
 
 def test_pickle_refers_only_to_the_public_classes() -> None:
-    """Test a provenance pickles as calls of the public classes, never of `_rs`."""
+    """Test a provenance pickles as calls of the public classes only.
+
+    Neither `_rs` nor `pathlib` appears: a `PosixPath` cannot be built on
+    Windows, so a path in a pickle would tie it to the platform that wrote it.
+    """
     provenances = _build_provenances()
     unpickler = _GlobalRecordingUnpickler(pickle.dumps(provenances))
 
@@ -842,9 +858,6 @@ def test_pickle_refers_only_to_the_public_classes() -> None:
     assert [type(value) for value in restored] == [type(p) for p in provenances]
     assert {module for module, _ in unpickler.found_globals} <= {
         "builtins",
-        "pathlib",
-        # Python 3.13+ defines the pathlib classes in pathlib._local.
-        "pathlib._local",
         "fhy_core.provenance",
     }
     assert ("fhy_core.provenance", "Span") in unpickler.found_globals

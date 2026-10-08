@@ -156,9 +156,10 @@ class FileProvenance(_rs.FileProvenance, Provenance):
 
     ``file_path`` must be a ``str`` or an ``os.PathLike`` of a ``str``,
     and is stored as a ``pathlib.Path`` in the normal form
-    ``pathlib.PurePosixPath`` gives it; a ``PurePath`` already in normal
-    form is kept as given. ``span`` must be a :class:`Span` or ``None``.
-    Either raises ``TypeError`` otherwise.
+    ``pathlib.PurePosixPath`` gives it; a ``PurePath`` is read in its POSIX
+    form, so a Windows path stores ``/`` as its separator, and is kept as
+    given when already in normal form. ``span`` must be a :class:`Span` or
+    ``None``. Either raises ``TypeError`` otherwise.
 
     Attributes:
         file_path: The path of the file.
