@@ -151,6 +151,39 @@ class _MutableProvenance(Provenance):
         return f"mutable<{self.value}>"
 
 
+class _ArgumentlessProvenance(Provenance):
+    """A provenance whose class defines no `__init__`."""
+
+    @override
+    def __str__(self) -> str:
+        return "argumentless"
+
+
+@pytest.mark.parametrize(
+    ("args", "kwargs"),
+    [((1,), {}), ((), {"edge": 1}), ((1, 2), {"edge": 3})],
+    ids=["positional", "keyword", "both"],
+)
+def test_a_subclass_without_init_refuses_arguments(
+    args: tuple[object, ...], kwargs: dict[str, object]
+) -> None:
+    """Test a subclass with no `__init__` refuses arguments, as `object()` does.
+
+    Its arguments would reach no `__init__`, so dropping them silently would
+    hide a mistake; the interpreter refuses them the same way for a class
+    that defines neither `__new__` nor `__init__`.
+    """
+    with pytest.raises(
+        TypeError, match=r"^_ArgumentlessProvenance\(\) takes no arguments$"
+    ):
+        _ArgumentlessProvenance(*args, **kwargs)
+
+
+def test_a_subclass_without_init_constructs_without_arguments() -> None:
+    """Test a subclass with no `__init__` still constructs with no arguments."""
+    assert str(_ArgumentlessProvenance()) == "argumentless"
+
+
 def test_a_mutable_subclass_reports_not_frozen() -> None:
     """Test a plain subclass is not frozen and `assert_frozen` raises."""
     mutable = _MutableProvenance(1)
