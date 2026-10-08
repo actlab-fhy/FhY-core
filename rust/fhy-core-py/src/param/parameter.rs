@@ -27,7 +27,7 @@ use fhy_core::term::AlphaEquivalence;
 
 use crate::constraint::{
     PythonBindings, ReadBindings, constraint_error_to_py, outcome_to_python, read_binding,
-    read_constraint, read_scoped_bindings, read_type_name, repr_text,
+    read_bound_value, read_constraint, read_scoped_bindings, read_type_name, repr_text,
 };
 use crate::expression::{
     PyExpression, coerce_to_expression, read_big_int, try_get_native_constant_for_identifier,
@@ -406,7 +406,10 @@ impl PyParam {
     /// Return whether `value` lies in the domain's value set.
     fn admits(this: &Bound<'_, Self>, value: &Bound<'_, PyAny>) -> PyResult<bool> {
         let py = this.py();
-        let candidate = read_candidate(value)?;
+        let candidate = read_candidate(
+            value,
+            matches!(this.get().core.domain(), ParamDomain::Permutation(_)),
+        )?;
         with_pending_errors(|| {
             this.get()
                 .core
@@ -1700,7 +1703,7 @@ fn build_assignment<'py>(
 fn read_assignment_value(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     Ok(match read_binding(value)? {
         Binding::Value(value) => value,
-        Binding::Expression(_) => read_candidate(value)?,
+        Binding::Expression(_) => read_bound_value(value)?,
     })
 }
 

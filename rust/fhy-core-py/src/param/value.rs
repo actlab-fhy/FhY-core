@@ -193,15 +193,16 @@ fn is_permutation_sequence(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     )
 }
 
-/// Return the core value of a candidate value, read leniently: a sequence
-/// that is no string as a tuple of its elements, since a permutation domain
-/// admits any such sequence, and anything else as a bound value.
+/// Return the core value of a candidate value for a domain: for a
+/// permutation domain (`is_permutation`), a sequence that is no string as a
+/// tuple of its elements, since that domain admits any such sequence;
+/// otherwise, and for anything else, a bound value, so a list is no tuple.
 ///
 /// # Errors
 ///
 /// Raises what reading an element raises.
-pub(super) fn read_candidate(value: &Bound<'_, PyAny>) -> PyResult<Value> {
-    if is_permutation_sequence(value)? {
+pub(super) fn read_candidate(value: &Bound<'_, PyAny>, is_permutation: bool) -> PyResult<Value> {
+    if is_permutation && is_permutation_sequence(value)? {
         let elements = value
             .try_iter()?
             .map(|element| read_bound_value(&element?))

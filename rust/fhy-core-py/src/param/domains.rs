@@ -110,7 +110,7 @@ impl DomainState {
 
     fn is_value_admissible(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
         let py = value.py();
-        let candidate = read_candidate(value)?;
+        let candidate = read_candidate(value, matches!(self.core, ParamDomain::Permutation(_)))?;
         with_pending_errors(|| {
             self.core
                 .is_value_admissible(&candidate)
