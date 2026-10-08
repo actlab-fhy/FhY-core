@@ -3,6 +3,7 @@
 //! properties.
 
 mod algebra_stories;
+mod bound_decision_stories;
 mod custom_stories;
 mod decide_stories;
 mod decision_rule_stories;

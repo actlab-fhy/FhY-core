@@ -13,6 +13,7 @@ mod error_text_stories;
 mod exploration_stories;
 mod forbidden_stories;
 mod implementor_stories;
+mod integer_bound_stories;
 mod measurement_properties;
 mod measurement_serde_stories;
 mod measurement_stories;

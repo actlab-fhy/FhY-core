@@ -22,7 +22,7 @@ use crate::support::constraint::{TestCustom, int, text};
 use crate::support::param::{at_least, failing_simplifier_solver, in_set, not_in_set};
 use crate::support::search_space::{
     bare_alternative, categorical, choice_of, chooses, chosen, condition, configure, int_variable,
-    natural_param, plain_alternative, plain_variable, try_configure,
+    natural_param, odd_natural_param, plain_alternative, plain_variable, try_configure,
 };
 
 /// Return the activity of `name` in `configuration`.
@@ -555,12 +555,18 @@ fn failing_condition_is_a_problem_naming_its_target() {
     assert!(matches!(error, ConstraintError::Solve(_)), "got {error:?}");
 }
 
+/// Test a condition over a value its variable's param refuses is not
+/// evaluated. The param's constraint `n % 2 == 1` is no integer bound, so
+/// the failing solver is asked to check the value and refuses it.
 #[test]
 fn condition_over_a_refused_value_is_not_evaluated() {
     let [n, w] = ["n", "w"].map(Identifier::new);
     let space = Space::new(
         Identifier::new("refused_value"),
-        vec![plain_variable(&n, natural_param()), int_variable(&w, &[1])],
+        vec![
+            plain_variable(&n, odd_natural_param()),
+            int_variable(&w, &[1]),
+        ],
         Vec::new(),
         vec![condition(&w, [at_least(&n, 2)])],
         Vec::new(),

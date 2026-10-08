@@ -21,7 +21,8 @@ use crate::support::constraint::{TestCustom, int};
 use crate::support::param::{at_least, failing_simplifier_solver, in_set, not_in_set};
 use crate::support::search_space::{
     bare_alternative, choice_of, chooses, chosen, configure, forbidden, ground_solver,
-    int_variable, natural_param, plain_alternative, plain_variable, try_configure,
+    int_variable, natural_param, odd_natural_param, plain_alternative, plain_variable,
+    try_configure,
 };
 
 /// A space of the variable `x` over `{1, 2, 3}` and the choice `c` among
@@ -354,12 +355,15 @@ fn failing_clause_is_a_problem_naming_its_index() {
     assert!(matches!(error, ConstraintError::Solve(_)), "got {error:?}");
 }
 
+/// Test a clause over a value its variable's param refuses is not
+/// evaluated. The param's constraint `n % 2 == 1` is no integer bound, so
+/// the failing solver is asked to check the value and refuses it.
 #[test]
 fn clause_over_a_refused_value_is_not_evaluated() {
     let n = Identifier::new("n");
     let space = Space::new(
         Identifier::new("refused_clause_value"),
-        vec![plain_variable(&n, natural_param())],
+        vec![plain_variable(&n, odd_natural_param())],
         Vec::new(),
         Vec::new(),
         vec![forbidden([at_least(&n, 5)])],

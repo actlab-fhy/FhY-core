@@ -29,7 +29,7 @@ use crate::support::param::{at_least, at_most, in_set, ints};
 use crate::support::search_space::{
     ImplementorResolver, REALIZATION, Realization, TILE_KNOB, TileKnob, bare_alternative,
     build_choice_chain, categorical, choice_of, chooses, chosen, condition, configure, forbidden,
-    ground_solver, int_param, int_variable, natural_param, plain_alternative, plain_variable,
+    ground_solver, int_param, int_variable, natural_param, odd, plain_alternative, plain_variable,
     space_of,
 };
 use crate::support::serde::{check_serde_round_trip, restored};
@@ -915,7 +915,8 @@ impl ParamObserver for SolveIsUndecided {
 }
 
 /// Return the space of one variable over the non-negative integers
-/// constrained by `p <= 10`, and the variable's name.
+/// constrained by `p % 2 == 1`, which no integer bound decides, and the
+/// variable's name.
 fn build_bounded_space() -> (Space, Identifier) {
     let name = Identifier::new("n");
     let variable = Identifier::new("p");
@@ -926,7 +927,7 @@ fn build_bounded_space() -> (Space, Identifier) {
             ZeroInclusion::Included,
         )),
         variable.clone(),
-        vec![at_most(&variable, 10)],
+        vec![odd(&variable)],
         &ParamContext::new(&solver),
     )
     .expect("the param is valid");
