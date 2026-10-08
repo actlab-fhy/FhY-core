@@ -19,6 +19,9 @@ Combining provenances during transformations is done through
 ``Provenance.fuse``, which applies a small set of reduction rules to keep
 fusion trees compact.
 
+A downstream compiler adds a provenance of its own by subclassing
+``Provenance``; the class docstring says how.
+
 ``Position``, ``Span`` and the provenance classes are backed by the Rust
 implementation. Their arguments are type-checked at construction, and
 ``FileProvenance`` stores its path as a ``pathlib.Path`` in the normal form
@@ -125,6 +128,18 @@ class Provenance(_rs.Provenance, WrappedFamilySerializable, EqualMixin, ABC):
     envelope, and are registered as virtual subclasses of
     ``FrozenMixin``. Provenances are immutable, and pickle as a call of
     their class with their fields.
+
+    A compiler defines a provenance of its own by subclassing this class,
+    for example as a frozen dataclass that implements ``__str__``,
+    registered with ``register_serializable`` and implementing
+    ``serialize_data_to_dict`` and ``deserialize_data_from_dict``. Its own
+    ``__init__`` takes the arguments, and its ``==`` and ``hash`` are its
+    own. An instance nests in each variant as itself, survives ``fuse``
+    whole, and a variant holding it compares, hashes and renders it
+    through its ``==``, ``hash`` and ``str``. It is written in the V2
+    payload as ``{"custom": {"type_id": .., "data": ..}}``, its registered
+    type id and the text of its data payload, and read back through its
+    registered class. It pickles as its class with its ``__getstate__``.
     """
 
     __slots__ = ()

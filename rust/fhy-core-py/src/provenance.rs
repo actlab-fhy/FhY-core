@@ -14,6 +14,17 @@
 //! classes inherit. The public classes register themselves with the
 //! binding at import, so a provenance the binding builds in Rust, such as
 //! the result of `Provenance.fuse`, is an instance of the public class.
+//!
+//! An instance of a Python subclass of `Provenance` defined outside
+//! `fhy_core` holds no Rust value. Wherever the core needs one, the binding
+//! builds a [`Provenance::Custom`] over a [`PythonProvenance`], which asks
+//! the object for its `==`, `hash`, `str` and serialized form; a variant
+//! given such a child keeps that value and owns its slot, so the cycle
+//! collector sees the reference.
+
+use std::borrow::Cow;
+use std::fmt;
+use std::hash::Hasher;
 
 use pyo3::exceptions::{PyOverflowError, PyRecursionError, PyTypeError, PyValueError};
 use pyo3::intern;
@@ -23,9 +34,11 @@ use pyo3::pyclass::{PyTraverseError, PyVisit};
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyDict, PyInt, PyList, PyString, PyTuple, PyType};
 
+use fhy_core::foreign::{Foreign, ForeignError, ForeignPart, Part, Resolve};
+use fhy_core::provenance::wire::ProvenanceData;
 use fhy_core::provenance::{
-    CallSiteProvenance, FileProvenance, FusedProvenance, NamedProvenance, NamedProvenanceError,
-    Position, PositionError, Provenance, Span, SpanError,
+    CallSiteProvenance, CustomProvenance, FileProvenance, FusedProvenance, NamedProvenance,
+    NamedProvenanceError, Position, PositionError, Provenance, Span, SpanError,
 };
 
 use crate::error::{IntoPyErr, IntoPyResult};
@@ -33,11 +46,17 @@ use crate::util::dataclass::{
     build_argument_type_error, collect_tuple, compare_as_dataclass, format_dataclass_repr,
     hash_value, read_str,
 };
+use crate::util::foreign::read_foreign;
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
+use crate::util::gc::{Slot, Slots, collect_slots};
+use crate::util::hook::ask;
+use crate::util::pending::with_pending_errors;
 use crate::util::public_class::PublicClass;
+use crate::util::python::read_type_name;
 use crate::util::serialization::{
     FieldShape, construct_from_decoded_fields, read_payload_fields, serialize_nested,
 };
+use crate::wire::{PyResolver, resolve_object, wrong_kind};
 
 /// The Python module that defines the public classes.
 const MODULE: &str = "fhy_core.provenance";
@@ -756,11 +775,18 @@ fn provenance_logger(py: Python<'_>) -> PyResult<&Bound<'_, PyAny>> {
 /// A variant class's constructor sets the Rust value. The class's own
 /// constructor accepts any arguments and leaves them to a Python subclass
 /// defined outside `fhy_core`, such as a frozen dataclass, whose instance
-/// reaches the core as a [`Provenance::Custom`] that asks the object for
-/// its `==`, `hash`, `str` and serialized form.
+/// holds no Rust value and reaches the core as a [`Provenance::Custom`]
+/// over a [`PythonProvenance`], which asks the object for its `==`, `hash`,
+/// `str` and serialized form.
+///
+/// The variant classes refuse attribute assignment and deletion; the base
+/// does not, since a C-level `__setattr__` on it would make the interpreter
+/// refuse the `object.__setattr__` a frozen dataclass's `__init__` calls.
 #[pyclass(subclass, frozen, module = "fhy_core._rs", name = "Provenance")]
 pub(crate) struct PyProvenance {
-    provenance: Provenance,
+    /// The variant's value, or `None` for an instance of a Python-defined
+    /// subclass.
+    provenance: Option<Provenance>,
     /// The depth of the provenance tree: 1 for a leaf, and otherwise one
     /// more than its deepest child's depth.
     depth: usize,
@@ -776,7 +802,64 @@ impl PyProvenance {
     /// Return the initializer of a variant instance holding `provenance`,
     /// a tree of depth `depth`.
     fn initializer(provenance: Provenance, depth: usize) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(Self { provenance, depth })
+        PyClassInitializer::from(Self {
+            provenance: Some(provenance),
+            depth,
+        })
+    }
+
+    /// Return the core value of `slf` for the duration of one call: the
+    /// variant's own value, or a custom provenance over the instance of a
+    /// Python-defined subclass, whose slot no object owns.
+    fn core_value<'a>(slf: &'a Bound<'_, Self>) -> Cow<'a, Provenance> {
+        match &slf.get().provenance {
+            Some(provenance) => Cow::Borrowed(provenance),
+            None => Cow::Owned(Provenance::Custom(Part::new(PythonProvenance::transient(
+                slf.as_any(),
+            )))),
+        }
+    }
+
+    /// Return the core value of `slf` as the child of a variant being
+    /// built: the variant's own value, or a custom provenance over the
+    /// instance of a Python-defined subclass, whose slot the innermost
+    /// [`collect_slots`] collects for the variant to own.
+    fn child_value(slf: &Bound<'_, Self>) -> Provenance {
+        match &slf.get().provenance {
+            Some(provenance) => provenance.clone(),
+            None => Provenance::Custom(Part::new(PythonProvenance::held(slf.as_any()))),
+        }
+    }
+
+    /// Raise `TypeError` if `cls` has abstract methods, as `object.__new__`
+    /// does for an abstract class.
+    ///
+    /// `PyO3` allocates the instance without `object.__new__`, so the check
+    /// the interpreter makes there is made here.
+    fn refuse_abstract_class(cls: &Bound<'_, PyType>) -> PyResult<()> {
+        let py = cls.py();
+        let Some(abstract_methods) = cls.getattr_opt(intern!(py, "__abstractmethods__"))? else {
+            return Ok(());
+        };
+        let mut names = abstract_methods
+            .try_iter()?
+            .map(|name| name?.str()?.to_str().map(str::to_owned))
+            .collect::<PyResult<Vec<_>>>()?;
+        if names.is_empty() {
+            return Ok(());
+        }
+        names.sort_unstable();
+        let plural = if names.len() == 1 { "" } else { "s" };
+        let names = names
+            .iter()
+            .map(|name| format!("'{name}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(PyTypeError::new_err(format!(
+            "Can't instantiate abstract class {} without an implementation for abstract \
+             method{plural} {names}",
+            cls.name()?
+        )))
     }
 
     /// Raise `RecursionError` if a tree of depth `depth` is deeper than
@@ -803,10 +886,13 @@ impl PyProvenance {
     }
 
     /// Render the provenance as the Python implementation's `__str__` does.
+    ///
+    /// Raises what the `__str__` of a Python-defined provenance inside it
+    /// raises.
     fn render(slf: &Bound<'_, Self>) -> PyResult<String> {
-        let this = slf.get();
-        Self::ensure_depth_within_recursion_limit(slf.py(), this.depth)?;
-        Ok(this.provenance.to_string())
+        Self::ensure_depth_within_recursion_limit(slf.py(), slf.get().depth)?;
+        let provenance = Self::core_value(slf);
+        with_pending_errors(|| Ok(provenance.to_string()))
     }
 
     /// Record the reductions `fuse` made in the module's debug log.
@@ -832,32 +918,64 @@ impl PyProvenance {
         )?;
         Ok(())
     }
+
+    /// Return the provenance the wire form `data` builds, an instance of
+    /// `cls`, each custom part decoded by its registered class.
+    fn build_from_data<'py>(
+        cls: &Bound<'py, PyType>,
+        data: ProvenanceData,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let provenance = crate::wire::build(cls, || data.build(&PyResolver))?;
+        crate::wire::check_instance(cls, provenance_to_python(cls.py(), &provenance)?)
+    }
 }
 
 #[pymethods]
 impl PyProvenance {
     /// Return the base of an instance of a Python subclass defined outside
     /// `fhy_core`, whose own `__init__` takes the arguments.
+    ///
+    /// Raises `TypeError` for a class with abstract methods, such as
+    /// `Provenance` itself.
     #[new]
+    #[classmethod]
     #[pyo3(signature = (*_args, **_kwargs))]
-    #[expect(
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
-    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
-        todo!()
+    fn new(
+        cls: &Bound<'_, PyType>,
+        _args: &Bound<'_, PyTuple>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        Self::refuse_abstract_class(cls)?;
+        Ok(Self {
+            provenance: None,
+            depth: 1,
+        })
     }
 
     /// Pickle an instance of a Python subclass defined outside `fhy_core`
-    /// as `(copyreg.__newobj__, (cls,), state)`, its `__dict__` the state;
-    /// the variant classes pickle as a call of their class.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
+    /// as `(copyreg.__newobj__, (cls,), state)`, the state what its
+    /// `__getstate__` returns, its `__dict__` by default; the variant
+    /// classes pickle as a call of their class.
+    ///
+    /// Raises `TypeError` for a variant instance, whose class pickles it.
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
-        todo!()
+        let py = slf.py();
+        if slf.get().provenance.is_some() {
+            return Err(PyTypeError::new_err(format!(
+                "cannot pickle a {} through Provenance.__reduce__",
+                read_type_name(slf.as_any())
+            )));
+        }
+        let new_object = crate::util::python::cached_attr!(py, "copyreg", "__newobj__")?;
+        let state = slf.call_method0(intern!(py, "__getstate__"))?;
+        PyTuple::new(
+            py,
+            [
+                new_object.clone(),
+                PyTuple::new(py, [slf.get_type()])?.into_any(),
+                state,
+            ],
+        )
     }
 
     /// Return a new unknown provenance.
@@ -870,10 +988,11 @@ impl PyProvenance {
     /// `metadata` unless it is `None`.
     ///
     /// Drops every unknown provenance and splices in the sources of every
-    /// unlabelled fused provenance, at any depth, keeping the order. The
-    /// result is a new unknown provenance when nothing survives, the single
-    /// survivor itself when exactly one survives and `metadata` is `None`,
-    /// and otherwise a new `FusedProvenance` of the survivors. Logs the
+    /// unlabelled fused provenance, at any depth, keeping the order; an
+    /// instance of a Python-defined subclass is kept whole. The result is a
+    /// new unknown provenance when nothing survives, the single survivor
+    /// itself when exactly one survives and `metadata` is `None`, and
+    /// otherwise a new `FusedProvenance` of the survivors. Logs the
     /// reductions at debug level as the Python implementation does.
     ///
     /// Raises `TypeError` for an argument that is not a `Provenance`, or a
@@ -900,8 +1019,8 @@ impl PyProvenance {
         let (mut unknowns_dropped, mut fused_collapsed) = (0, 0);
         while let Some(provenance) = pending.pop() {
             match &provenance.cast::<Self>()?.get().provenance {
-                Provenance::Unknown => unknowns_dropped += 1,
-                Provenance::Fused(fused) if fused.label().is_none() => {
+                Some(Provenance::Unknown) => unknowns_dropped += 1,
+                Some(Provenance::Fused(fused)) if fused.label().is_none() => {
                     fused_collapsed += 1;
                     let fused = provenance.cast::<PyFusedProvenance>()?;
                     pending.extend(fused.get().sources.bind(py).iter().rev());
@@ -944,45 +1063,57 @@ impl PyProvenance {
     const fn assert_frozen(_slf: &Bound<'_, Self>) {}
 
     /// Compare as a dataclass does: equal when `other` has exactly the same
-    /// class and equal fields, compared recursively.
+    /// class and equal fields, compared recursively, a Python-defined
+    /// provenance inside by its own `==`. An instance of a Python-defined
+    /// subclass that does not define `==` answers `NotImplemented`, so it
+    /// compares by identity.
     ///
-    /// Raises `RecursionError` for trees deeper than the recursion limit.
+    /// Raises `RecursionError` for trees deeper than the recursion limit,
+    /// and what the `==` of a Python-defined provenance inside raises.
     fn __eq__<'py>(
         slf: &Bound<'py, Self>,
         other: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let py = slf.py();
+        if slf.get().provenance.is_none() {
+            return Ok(py.NotImplemented().into_bound(py));
+        }
         compare_as_dataclass(slf, other, |this, other| {
+            let (Some(this_value), Some(other_value)) = (&this.provenance, &other.provenance)
+            else {
+                return Ok(false);
+            };
             Self::ensure_depth_within_recursion_limit(py, this.depth.min(other.depth))?;
-            Ok(this.provenance == other.provenance)
+            with_pending_errors(|| Ok(this_value == other_value))
         })
     }
 
-    /// Hash the provenance tree.
+    /// Hash the provenance tree, a Python-defined provenance inside by its
+    /// own `hash`. An instance of a Python-defined subclass that does not
+    /// define `hash` hashes by identity.
     ///
-    /// Raises `RecursionError` for a tree deeper than the recursion limit.
-    fn __hash__(&self, py: Python<'_>) -> PyResult<u64> {
-        Self::ensure_depth_within_recursion_limit(py, self.depth)?;
-        Ok(hash_value(&self.provenance))
-    }
-
-    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
-        refuse_attribute_assignment(slf, name)
-    }
-
-    fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
-        refuse_attribute_deletion(slf, name)
+    /// Raises `RecursionError` for a tree deeper than the recursion limit,
+    /// and what the `hash` of a Python-defined provenance inside raises.
+    fn __hash__(slf: &Bound<'_, Self>) -> PyResult<u64> {
+        let this = slf.get();
+        let Some(provenance) = &this.provenance else {
+            return Ok(hash_value(&slf.as_ptr().addr()));
+        };
+        Self::ensure_depth_within_recursion_limit(slf.py(), this.depth)?;
+        with_pending_errors(|| Ok(hash_value(provenance)))
     }
 
     /// Return the V2 payload, the core's: `{"unknown": {}}`, `{"file":
     /// {"file_path", "span"}}`, `{"named": {"name", "child"}}`,
-    /// `{"call_site": {"callee", "caller"}}` or `{"fused": {"sources",
-    /// "label"}}`; or the V1 envelope inside `wire_version(WireVersion.V1)`.
+    /// `{"call_site": {"callee", "caller"}}`, `{"fused": {"sources",
+    /// "label"}}`, or for a Python-defined provenance `{"custom":
+    /// {"type_id", "data"}}`, its registered type id and data payload's
+    /// text; or the V1 envelope inside `wire_version(WireVersion.V1)`.
     fn serialize_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyAny>> {
         crate::wire::write_dict(
             slf.as_any(),
             || crate::wire::write_v1_envelope(slf.as_any()),
-            || Ok(slf.get().provenance.clone()),
+            || Ok(Self::core_value(slf)),
         )
     }
 
@@ -995,12 +1126,13 @@ impl PyProvenance {
         sort_keys: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<String> {
         crate::wire::write_json(slf.as_any(), indent, sort_keys, || {
-            Ok(slf.get().provenance.clone())
+            Ok(Self::core_value(slf))
         })
     }
 
     /// Return the provenance of the payload `data`, an instance of `cls`:
-    /// a V2 payload, or a V1 envelope, which warns.
+    /// a V2 payload, whose custom parts the registry decodes, or a V1
+    /// envelope, which warns.
     #[classmethod]
     fn deserialize_from_dict<'py>(
         cls: &Bound<'py, PyType>,
@@ -1009,8 +1141,7 @@ impl PyProvenance {
         if crate::wire::is_v1_payload(data) {
             return crate::wire::read_v1_envelope(cls, data);
         }
-        let provenance: Provenance = crate::wire::parse_dict(cls, data)?;
-        crate::wire::check_instance(cls, provenance_to_python(cls.py(), &provenance)?)
+        Self::build_from_data(cls, crate::wire::parse_dict(cls, data)?)
     }
 
     /// Return the provenance of the JSON text `payload`, an instance of
@@ -1021,8 +1152,7 @@ impl PyProvenance {
         payload: &Bound<'py, PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         crate::wire::read_json(cls, payload, |text| {
-            let provenance: Provenance = crate::wire::parse(cls, text)?;
-            crate::wire::check_instance(cls, provenance_to_python(cls.py(), &provenance)?)
+            Self::build_from_data(cls, crate::wire::parse(cls, text)?)
         })
     }
 
@@ -1032,6 +1162,101 @@ impl PyProvenance {
     #[classmethod]
     fn _register_public_class(cls: &Bound<'_, PyType>) -> PyResult<()> {
         Self::public_class().register(cls)
+    }
+}
+
+/// The core part of an instance of a Python subclass of `Provenance`
+/// defined outside `fhy_core`.
+///
+/// Each method asks the instance, once per call of the core: `==` for
+/// [`eq_part`](CustomProvenance::eq_part) (type-strictly, another adapter's
+/// instance only), `hash` for [`hash_part`](CustomProvenance::hash_part),
+/// `str` for `Display`, and the framework's foreign payload, its registered
+/// type id and `serialize_data_to_dict()`, for
+/// [`to_foreign`](ForeignPart::to_foreign). An exception the instance
+/// raises is kept as the pending exception ([`ask`]), which the entry point
+/// raises; once one is pending, the methods answer without calling Python:
+/// unequal, a zero hash, and the class name as the text.
+struct PythonProvenance {
+    object: Slot,
+    /// The name of the instance's class.
+    type_name: String,
+}
+
+impl PythonProvenance {
+    /// Return the adapter of `object` held by a variant being built, its
+    /// slot collected by the innermost [`collect_slots`].
+    fn held(object: &Bound<'_, PyAny>) -> Self {
+        Self {
+            object: Slot::new(object.clone().unbind()),
+            type_name: read_type_name(object),
+        }
+    }
+
+    /// Return the adapter of `object` for the duration of one call, its slot
+    /// owned by no object.
+    fn transient(object: &Bound<'_, PyAny>) -> Self {
+        Self {
+            object: Slot::unowned(object.clone().unbind()),
+            type_name: read_type_name(object),
+        }
+    }
+}
+
+impl fmt::Debug for PythonProvenance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PythonProvenance")
+            .field("type_name", &self.type_name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Write the instance's `str`.
+impl fmt::Display for PythonProvenance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = ask(None, |py| {
+            Ok(Some(self.object.get(py).str()?.to_str()?.to_owned()))
+        });
+        f.write_str(text.as_deref().unwrap_or(&self.type_name))
+    }
+}
+
+impl ForeignPart for PythonProvenance {
+    fn type_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.type_name)
+    }
+
+    fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+        Python::attach(|py| read_foreign(&self.object.object(py), true))
+    }
+}
+
+impl CustomProvenance for PythonProvenance {
+    fn eq_part(&self, other: &dyn CustomProvenance) -> bool {
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return false;
+        };
+        ask(false, |py| self.object.get(py).eq(other.object.get(py)))
+    }
+
+    fn hash_part(&self, state: &mut dyn Hasher) {
+        state.write_isize(ask(0, |py| self.object.get(py).hash()));
+    }
+}
+
+/// Resolves a custom provenance to the instance of the Python class
+/// registered under its type id, through its `deserialize_data_from_dict`.
+impl Resolve<Part<dyn CustomProvenance>> for PyResolver {
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomProvenance>, ForeignError> {
+        Python::attach(|py| {
+            let object = resolve_object(py, foreign, true)?;
+            match object.cast::<PyProvenance>() {
+                Ok(provenance) if provenance.get().provenance.is_none() => {
+                    Ok(Part::new(PythonProvenance::transient(&object)))
+                }
+                _ => Err(wrong_kind(py, foreign, "Python-defined Provenance")),
+            }
+        })
     }
 }
 
@@ -1058,16 +1283,37 @@ fn span_to_python<'py>(py: Python<'py>, span: Option<&Span>) -> PyResult<Bound<'
     ))
 }
 
-/// Return a new Python object of the core `provenance`, built through the
-/// public class of each variant, as a V2 payload decodes.
+/// Return the Python object of the custom provenance `custom`: the
+/// instance a [`PythonProvenance`] asks, and for any other part the object
+/// its foreign part decodes to through the class registered under its type
+/// id.
+///
+/// # Errors
+///
+/// Raises what writing or decoding the foreign part raises.
+fn custom_provenance_to_python<'py>(
+    py: Python<'py>,
+    custom: &Part<dyn CustomProvenance>,
+) -> PyResult<Bound<'py, PyAny>> {
+    if let Some(python) = custom.get().as_any().downcast_ref::<PythonProvenance>() {
+        return Ok(python.object.get(py));
+    }
+    with_pending_errors(|| {
+        custom
+            .get()
+            .to_foreign()
+            .and_then(|foreign| resolve_object(py, &foreign, true))
+            .map_err(|error| crate::wire::foreign_error(py, &error))
+    })
+}
+
+/// Return the Python object of the core `provenance`: each variant a new
+/// object built through its public class, as a V2 payload decodes, and
+/// each custom provenance as [`custom_provenance_to_python`] returns it.
 ///
 /// # Errors
 ///
 /// Raises what building an object raises.
-#[expect(
-    clippy::todo,
-    reason = "interface stub; bodies are todo!() until implementation"
-)]
 fn provenance_to_python<'py>(
     py: Python<'py>,
     provenance: &Provenance,
@@ -1095,7 +1341,7 @@ fn provenance_to_python<'py>(
                 .get(py)?
                 .call1((PyTuple::new(py, sources)?, fused.label()))
         }
-        Provenance::Custom(_) => todo!(),
+        Provenance::Custom(custom) => custom_provenance_to_python(py, custom),
     }
 }
 
@@ -1137,6 +1383,14 @@ impl PyUnknownProvenance {
 
     fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {
         format_dataclass_repr(&slf.get_type(), &[])
+    }
+
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
+    }
+
+    fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Pickle as a constructor call of the provenance's class.
@@ -1307,13 +1561,21 @@ impl PyFileProvenance {
         )
     }
 
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
+    }
+
+    fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
+        refuse_attribute_deletion(slf, name)
+    }
+
     /// Pickle as a constructor call of the provenance's class, with the
     /// path as its POSIX text so the pickle loads on any platform.
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
     ) -> PyResult<(Bound<'py, PyType>, Bound<'py, PyTuple>)> {
         let py = slf.py();
-        let Provenance::File(provenance) = &slf.as_super().get().provenance else {
+        let Some(Provenance::File(provenance)) = &slf.as_super().get().provenance else {
             unreachable!("a FileProvenance holds a file provenance");
         };
         let file_path = PyString::new(py, provenance.file_path()).into_any();
@@ -1325,7 +1587,7 @@ impl PyFileProvenance {
     /// payload or None>}`, the envelope's `__data__`.
     fn serialize_data_to_dict<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyDict>> {
         let py = slf.py();
-        let Provenance::File(provenance) = &slf.as_super().get().provenance else {
+        let Some(Provenance::File(provenance)) = &slf.as_super().get().provenance else {
             unreachable!("a FileProvenance holds a file provenance");
         };
         build_fields(
@@ -1396,6 +1658,8 @@ pub(crate) struct PyNamedProvenance {
     /// The child, the `Provenance` the provenance was built from.
     #[pyo3(get)]
     child: Py<PyAny>,
+    /// The slot of a Python-defined child, which the core value holds.
+    slots: Slots,
 }
 
 impl PyNamedProvenance {
@@ -1416,7 +1680,7 @@ impl PyNamedProvenance {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.name)?;
         visit.call(&self.child)?;
-        Ok(())
+        self.slots.traverse(&visit)
     }
 
     /// Create the provenance naming `child` as `name`.
@@ -1430,16 +1694,17 @@ impl PyNamedProvenance {
         child: &Bound<'_, PyAny>,
     ) -> PyResult<PyClassInitializer<Self>> {
         let name = read_str(name, "NamedProvenance", "name")?;
-        let child_base = read_provenance(child, "NamedProvenance", "child", "a Provenance")?.get();
-        let provenance =
-            NamedProvenance::new(name.to_str()?, child_base.provenance.clone()).into_py_result()?;
+        let child_base = read_provenance(child, "NamedProvenance", "child", "a Provenance")?;
+        let (child_value, slots) = collect_slots(|| PyProvenance::child_value(child_base));
+        let provenance = NamedProvenance::new(name.to_str()?, child_value).into_py_result()?;
         Ok(PyProvenance::initializer(
             Provenance::Named(provenance),
-            child_base.depth.saturating_add(1),
+            child_base.get().depth.saturating_add(1),
         )
         .add_subclass(Self {
             name: name.clone().unbind(),
             child: child.clone().unbind(),
+            slots,
         }))
     }
 
@@ -1459,6 +1724,14 @@ impl PyNamedProvenance {
                 ("child", this.child.bind(py)),
             ],
         )
+    }
+
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
+    }
+
+    fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Pickle as a constructor call of the provenance's class.
@@ -1537,6 +1810,9 @@ pub(crate) struct PyCallSiteProvenance {
     /// The caller, the `Provenance` the provenance was built from.
     #[pyo3(get)]
     caller: Py<PyAny>,
+    /// The slots of a Python-defined callee or caller, which the core value
+    /// holds.
+    slots: Slots,
 }
 
 impl PyCallSiteProvenance {
@@ -1557,7 +1833,7 @@ impl PyCallSiteProvenance {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.callee)?;
         visit.call(&self.caller)?;
-        Ok(())
+        self.slots.traverse(&visit)
     }
 
     /// Create the provenance of a value from `callee` created at `caller`.
@@ -1572,22 +1848,23 @@ impl PyCallSiteProvenance {
         callee: &Bound<'_, PyAny>,
         caller: &Bound<'_, PyAny>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let callee_base =
-            read_provenance(callee, "CallSiteProvenance", "callee", "a Provenance")?.get();
-        let caller_base =
-            read_provenance(caller, "CallSiteProvenance", "caller", "a Provenance")?.get();
-        let provenance = CallSiteProvenance::new(
-            callee_base.provenance.clone(),
-            caller_base.provenance.clone(),
-        );
-        Ok(PyProvenance::initializer(
-            Provenance::CallSite(provenance),
-            callee_base.depth.max(caller_base.depth).saturating_add(1),
+        let callee_base = read_provenance(callee, "CallSiteProvenance", "callee", "a Provenance")?;
+        let caller_base = read_provenance(caller, "CallSiteProvenance", "caller", "a Provenance")?;
+        let (provenance, slots) = collect_slots(|| {
+            CallSiteProvenance::new(
+                PyProvenance::child_value(callee_base),
+                PyProvenance::child_value(caller_base),
+            )
+        });
+        let depth = callee_base.get().depth.max(caller_base.get().depth);
+        Ok(
+            PyProvenance::initializer(Provenance::CallSite(provenance), depth.saturating_add(1))
+                .add_subclass(Self {
+                    callee: callee.clone().unbind(),
+                    caller: caller.clone().unbind(),
+                    slots,
+                }),
         )
-        .add_subclass(Self {
-            callee: callee.clone().unbind(),
-            caller: caller.clone().unbind(),
-        }))
     }
 
     /// Render `callee at caller`.
@@ -1605,6 +1882,14 @@ impl PyCallSiteProvenance {
                 ("caller", this.caller.bind(py)),
             ],
         )
+    }
+
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
+    }
+
+    fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Pickle as a constructor call of the provenance's class.
@@ -1691,6 +1976,8 @@ pub(crate) struct PyFusedProvenance {
     /// The label, the `str` the provenance was built from, or `None`.
     #[pyo3(get)]
     metadata: Py<PyAny>,
+    /// The slots of the Python-defined sources, which the core value holds.
+    slots: Slots,
 }
 
 impl PyFusedProvenance {
@@ -1711,7 +1998,7 @@ impl PyFusedProvenance {
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.sources)?;
         visit.call(&self.metadata)?;
-        Ok(())
+        self.slots.traverse(&visit)
     }
 
     /// Create the fusion of `sources`, any iterable of provenances kept in
@@ -1727,19 +2014,23 @@ impl PyFusedProvenance {
     ) -> PyResult<PyClassInitializer<Self>> {
         let py = sources.py();
         let sources = collect_tuple(sources)?;
-        let mut rust_sources = Vec::with_capacity(sources.len());
         let mut depth = 0;
-        for source in &sources {
-            let source = read_provenance(
-                &source,
-                "FusedProvenance",
-                "sources",
-                "Provenance instances",
-            )?
-            .get();
-            rust_sources.push(source.provenance.clone());
-            depth = depth.max(source.depth);
-        }
+        let (rust_sources, slots) = collect_slots(|| {
+            sources
+                .iter()
+                .map(|source| {
+                    let source = read_provenance(
+                        &source,
+                        "FusedProvenance",
+                        "sources",
+                        "Provenance instances",
+                    )?;
+                    depth = depth.max(source.get().depth);
+                    Ok(PyProvenance::child_value(source))
+                })
+                .collect::<PyResult<Vec<_>>>()
+        });
+        let rust_sources = rust_sources?;
         let label = read_optional_str(metadata, "FusedProvenance", "metadata")?;
         let provenance = match &label {
             None => FusedProvenance::new(rust_sources),
@@ -1750,6 +2041,7 @@ impl PyFusedProvenance {
                 .add_subclass(Self {
                     sources: sources.unbind(),
                     metadata: object_or_none(py, label.as_ref().map(Bound::as_any)).unbind(),
+                    slots,
                 }),
         )
     }
@@ -1770,6 +2062,14 @@ impl PyFusedProvenance {
                 ("metadata", this.metadata.bind(py)),
             ],
         )
+    }
+
+    fn __setattr__(slf: &Bound<'_, Self>, name: &str, _value: &Bound<'_, PyAny>) -> PyResult<()> {
+        refuse_attribute_assignment(slf, name)
+    }
+
+    fn __delattr__(slf: &Bound<'_, Self>, name: &str) -> PyResult<()> {
+        refuse_attribute_deletion(slf, name)
     }
 
     /// Pickle as a constructor call of the provenance's class.
