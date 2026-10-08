@@ -529,7 +529,8 @@ impl Options {
                 current: positions.clone(),
             },
             Coordinate::Index(index) => Self::OtherIndices {
-                count: u64::try_from(domain.cardinality()).unwrap_or(0),
+                count: u64::try_from(domain.cardinality())
+                    .expect("a domain of at most 2^16 values counts in a u64"),
                 current: *index,
             },
         }
