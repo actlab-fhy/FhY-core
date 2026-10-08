@@ -9,6 +9,7 @@
 //! truncated or replaced by a fallback.
 
 use std::cmp::Ordering;
+use std::fmt;
 use std::ops::Neg;
 
 use num_bigint::BigInt;
@@ -69,8 +70,22 @@ fn split_off(value: &BigInt, prime: u32) -> (u64, BigInt) {
 /// An exact rational `numerator / denominator`, in lowest terms with a
 /// positive denominator, so two rationals are equal exactly when their
 /// parts are.
+///
+/// It orders numerically and displays as its numerator alone when it is an
+/// integer and as `numerator/denominator` otherwise: `3`, `-1/2`.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::expression::{BigInt, Rational};
+///
+/// let half = Rational::new(BigInt::from(2), BigInt::from(-4)).expect("a non-zero denominator");
+/// assert_eq!(half.to_string(), "-1/2");
+/// assert!(!half.is_integer());
+/// assert_eq!(Rational::from(BigInt::from(3)).to_integer(), Some(&BigInt::from(3)));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct Rational {
+pub struct Rational {
     numerator: BigInt,
     denominator: BigInt,
 }
@@ -78,7 +93,8 @@ pub(crate) struct Rational {
 impl Rational {
     /// Return the rational `numerator / denominator`, reduced, or `None`
     /// for a zero denominator.
-    pub(crate) fn new(numerator: BigInt, denominator: BigInt) -> Option<Self> {
+    #[must_use]
+    pub fn new(numerator: BigInt, denominator: BigInt) -> Option<Self> {
         if denominator.is_zero() {
             return None;
         }
@@ -103,13 +119,45 @@ impl Rational {
     }
 
     /// Return the numerator, of the rational's sign.
-    pub(crate) fn numerator(&self) -> &BigInt {
+    #[must_use]
+    pub fn numerator(&self) -> &BigInt {
         &self.numerator
     }
 
     /// Return the denominator, positive.
-    pub(crate) fn denominator(&self) -> &BigInt {
+    #[must_use]
+    pub fn denominator(&self) -> &BigInt {
         &self.denominator
+    }
+
+    /// Return whether the rational is an integer: its denominator is 1.
+    #[must_use]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn is_integer(&self) -> bool {
+        todo!()
+    }
+
+    /// Return the rational as an integer, or `None` when it is not one.
+    #[must_use]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn to_integer(&self) -> Option<&BigInt> {
+        todo!()
+    }
+
+    /// Return whether the rational is zero.
+    #[must_use]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn is_zero(&self) -> bool {
+        todo!()
     }
 
     /// Return the numerator and the denominator.
@@ -223,6 +271,31 @@ impl Neg for Rational {
             numerator: -self.numerator,
             denominator: self.denominator,
         }
+    }
+}
+
+impl From<BigInt> for Rational {
+    /// Return the integer `value` as a rational.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn from(value: BigInt) -> Self {
+        todo!()
+    }
+}
+
+impl fmt::Display for Rational {
+    /// Write the numerator alone for an integer, and
+    /// `numerator/denominator` otherwise.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
     }
 }
 

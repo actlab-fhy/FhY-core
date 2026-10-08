@@ -12,6 +12,7 @@ job of the type-checking layer, which sits above this package.
 __all__ = [
     "BUILTIN_CONSTANTS",
     "BUILTIN_FUNCTIONS",
+    "AffineForm",
     "AlternativesPattern",
     "BinaryExpression",
     "BinaryExpressionPattern",
@@ -67,6 +68,7 @@ __all__ = [
     "UndecidableError",
     "UnsupportedNumpyLoweringError",
     "WildcardPattern",
+    "affine_form",
     "apply_rewrite_rule",
     "apply_rewrite_rules",
     "build_literal_equivalence_key",
@@ -149,6 +151,7 @@ from .errors import (
     UndecidableError,
     UnsupportedNumpyLoweringError,
 )
+from .passes.affine import AffineForm, affine_form
 from .passes.evaluate import evaluate_expression
 from .passes.inline import FunctionArityError, inline_functions
 from .passes.numpy import evaluate_expression_with_numpy

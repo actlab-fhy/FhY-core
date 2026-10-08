@@ -100,6 +100,7 @@ pub fn register(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_part_2(module)?;
     register_part_3(module)?;
     register_part_4(module)?;
+    register_part_5(module)?;
     module.add(VERSION_ATTRIBUTE, env!("CARGO_PKG_VERSION"))?;
     module.add(
         pass::REGISTRY_ATTRIBUTE,
@@ -111,7 +112,7 @@ pub fn register(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     )
 }
 
-/// Add the classes and functions of the `constraint`, `diagnostic`, `expression`, `identifier`, `lattice`, `op_attribute` modules.
+/// Add the classes and functions of the `constraint`, `diagnostic` and `expression` modules.
 fn register_part_1(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<constraint::PyConstraintSystem>()?;
     module.add_class::<constraint::PyEquationConstraint>()?;
@@ -163,6 +164,8 @@ fn register_part_1(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(expression::fold_expression, module)?)?;
+    module.add_class::<expression::PyAffineForm>()?;
+    module.add_function(wrap_pyfunction!(expression::affine_form, module)?)?;
     module.add_function(wrap_pyfunction!(
         expression::is_decimal_text_exactly_binary,
         module
@@ -199,6 +202,11 @@ fn register_part_1(module: &Bound<'_, PyModule>) -> PyResult<()> {
         expression::try_get_registered_result_sort,
         module
     )?)?;
+    Ok(())
+}
+
+/// Add the classes and functions of the `identifier`, `lattice` and `op_attribute` modules.
+fn register_part_5(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(
         identifier::advance_identifier_counter_past,
         module

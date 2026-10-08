@@ -12,6 +12,7 @@ pub mod passes;
 pub mod pattern;
 pub mod registry;
 
+mod affine;
 mod build;
 mod callee;
 mod canonical;
@@ -25,12 +26,14 @@ mod sort;
 mod symbol_type;
 mod wire;
 
+pub use affine::AffineForm;
 pub use callee::{Callee, FunctionName, FunctionNameError};
 pub(crate) use canonical::{CanonicalTable, Equivalence};
 pub(crate) use display::Bounded;
 pub use display::{ExpressionDisplay, FormatOptions, IdentifierStyle, Notation};
 pub use error::{BooleanPosition, NonBooleanLogicalOperandError, PiecewiseError, RebuildError};
-pub(crate) use literal::exact::{ExactNumber, Rational};
+pub(crate) use literal::exact::ExactNumber;
+pub use literal::exact::Rational;
 pub use literal::{Decimal, DecimalPartsError, LiteralTextError, LiteralValue};
 pub(crate) use literal::{float_text, integer_text, serialize_display_text, write_float};
 pub use node::{
