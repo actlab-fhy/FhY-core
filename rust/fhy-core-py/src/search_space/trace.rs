@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use pyo3::pyclass::{CompareOp, PyTraverseError, PyVisit};
 use pyo3::types::{PyBool, PyDict, PyTuple, PyType};
 
-use fhy_core::search_space::{DecisionKind, Trace, TraceStep};
+use fhy_core::search_space::{DecisionKind, Trace, TraceKey, TraceStep};
 
 use crate::constraint::value_to_python;
 use crate::identifier::identifier_to_python;
@@ -336,6 +336,17 @@ impl PyTrace {
         natural_to_python(py, self.trace.traversed_cardinality()).map(Bound::unbind)
     }
 
+    /// Return the trace's `TraceKey`: per step its kind, its decision's
+    /// position, its domain's signature and its coordinate, without its
+    /// subject or value.
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn key(&self) -> PyTraceKey {
+        todo!()
+    }
+
     /// Return the steps of the kind `kind`, a `str`, in the order asked.
     fn of_kind<'py>(&self, py: Python<'py>, kind: &str) -> PyResult<Bound<'py, PyTuple>> {
         let steps = self.steps.bind(py);
@@ -470,4 +481,95 @@ impl PyTrace {
 fn decoded<'py>(cls: &Bound<'py, PyType>, trace: &Trace) -> PyResult<Bound<'py, PyAny>> {
     let seeded = PyTrace::assemble(cls.py(), trace, |_| StepObjects::default())?;
     check_instance(cls, instantiate(cls, 0, Seeded::Trace(seeded))?)
+}
+
+/// The identity of a trace without its subjects, backed by the core
+/// [`TraceKey`]: equal for runs that took the same answers over the same
+/// domains, dynamic steps included.
+///
+/// It is hashable and compares structurally, so it keys a dict. It has no
+/// constructor; it pickles through its wire form.
+#[pyclass(frozen, module = "fhy_core._rs", name = "TraceKey")]
+#[expect(
+    dead_code,
+    reason = "interface stub; bodies are todo!() until implementation"
+)]
+pub(crate) struct PyTraceKey {
+    key: TraceKey,
+}
+
+#[pymethods]
+impl PyTraceKey {
+    /// Compare structurally with another key; another type is
+    /// `NotImplemented`.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
+        todo!()
+    }
+
+    /// Return the key's hash, consistent with `==`.
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn __hash__(&self) -> u64 {
+        todo!()
+    }
+
+    /// Return the number of steps.
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn __len__(&self) -> usize {
+        todo!()
+    }
+
+    /// Return `TraceKey(...)`.
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn __repr__(&self) -> String {
+        todo!()
+    }
+
+    /// The steps' coordinates, in the order asked.
+    #[getter]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn coordinates<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
+    /// Pickle as a call of `_from_wire` with the key's V2 text.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
+    /// Return the key of its V2 text `text`, the inverse of the text
+    /// `__reduce__` writes.
+    ///
+    /// Raises `DeserializationValueError` for a text of another shape.
+    #[staticmethod]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn _from_wire(py: Python<'_>, text: &str) -> PyResult<Self> {
+        todo!()
+    }
 }

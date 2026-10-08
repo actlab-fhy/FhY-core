@@ -1,5 +1,6 @@
 //! [`Trace`]: the steps of one run of a search, recorded in the order they
-//! were asked, and [`TraceStep`], one of them.
+//! were asked, [`TraceStep`], one of them, and [`TraceKey`], a trace's
+//! identity without its subjects.
 
 use std::fmt;
 use std::sync::Arc;
@@ -193,6 +194,106 @@ impl Trace {
     #[must_use]
     pub fn traversed_cardinality(&self) -> BigUint {
         self.0.iter().map(TraceStep::cardinality).product()
+    }
+
+    /// Return the trace's key: per step, in the order asked, its kind, its
+    /// decision's canonical position (none for a dynamic step), its
+    /// domain's signature and its coordinate, and neither its subject nor
+    /// its value.
+    #[must_use]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn key(&self) -> TraceKey {
+        todo!()
+    }
+}
+
+/// The identity of a [`Trace`] without its subjects: per step, in the
+/// order asked, the step's [kind](TraceStep::kind), its static
+/// [decision](TraceStep::decision) or none, its domain's
+/// [signature](TraceStep::signature) and its
+/// [coordinate](TraceStep::coordinate).
+///
+/// Two runs that took the same answers over the same domains have equal
+/// keys, also when their dynamic subjects were minted anew for each run or
+/// their spaces differ only in their names, since a signature writes an
+/// identifier a static step's space binds by its position and any other
+/// as `identifier`. Two runs that differ in a dynamic step, such as an
+/// address placed elsewhere, have different keys, where their
+/// configurations' [`ConfigurationKey`](super::ConfigurationKey)s are
+/// equal. A key means nothing outside the stream that recorded it.
+///
+/// `==` and `Hash` compare the steps. `serde` writes `{"steps": [{"kind",
+/// "decision", "domain", "coordinate"}, ..]}`, `decision` `null` for a
+/// dynamic step, and reading refuses a coordinate its signature does not
+/// contain.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TraceKey(Arc<[TraceKeyStep]>);
+
+/// One step of a [`TraceKey`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TraceKeyStep {
+    kind: DecisionKind,
+    decision: Option<u32>,
+    signature: DomainSignature,
+    coordinate: Coordinate,
+}
+
+impl TraceKey {
+    /// Return the number of steps.
+    #[must_use]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn len(&self) -> usize {
+        todo!()
+    }
+
+    /// Return whether the key has no step.
+    #[must_use]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn is_empty(&self) -> bool {
+        todo!()
+    }
+
+    /// Return the steps' coordinates, in the order asked.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn coordinates(&self) -> impl ExactSizeIterator<Item = &Coordinate> + '_ {
+        self.0.iter().map(|step| -> &Coordinate { todo!() })
+    }
+}
+
+/// Serializes the shape of the type's documentation.
+impl Serialize for TraceKey {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        todo!()
+    }
+}
+
+/// Deserializes the shape of the type's documentation.
+impl<'de> Deserialize<'de> for TraceKey {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        todo!()
     }
 }
 

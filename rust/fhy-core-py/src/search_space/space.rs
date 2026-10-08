@@ -747,6 +747,83 @@ impl PySpace {
         exploration::mutate(slf, configuration, rng, attempts)
     }
 
+    /// Return a configuration crossing the configurations `first` and
+    /// `second`, repaired to a complete one, with the `Rng` `rng`, as
+    /// `(configuration, trace)`.
+    ///
+    /// Raises `TraceError` for a parent of another space and after
+    /// `attempts` dead ends.
+    #[pyo3(signature = (first, second, rng, *, attempts = 16))]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn crossover<'py>(
+        slf: &Bound<'py, Self>,
+        first: &Bound<'py, PyAny>,
+        second: &Bound<'py, PyAny>,
+        rng: &Bound<'py, PyAny>,
+        attempts: u32,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
+    /// Return the configuration `configuration` completed by asking
+    /// `oracle` every active decision it leaves unassigned, as
+    /// `(configuration, trace)`.
+    ///
+    /// Raises `TraceError` for a configuration of another space, and what
+    /// `Recorder.decide` raises.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn complete<'py>(
+        slf: &Bound<'py, Self>,
+        configuration: &Bound<'py, PyAny>,
+        oracle: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        todo!()
+    }
+
+    /// Return this space with each of `variables` and `choices` put at the
+    /// top level, in place of the decision of the same name or after the
+    /// last of its kind.
+    ///
+    /// Raises what the constructor raises for the edited space.
+    #[pyo3(signature = (variables = None, choices = None))]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn with_decisions<'py>(
+        slf: &Bound<'py, Self>,
+        variables: Option<&Bound<'py, PyAny>>,
+        choices: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        todo!()
+    }
+
+    /// Return this space without the top-level decisions `names` and the
+    /// conditions on them.
+    ///
+    /// Raises `SearchSpaceError` for a name that is no top-level decision,
+    /// and what the constructor raises for the edited space.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn without_decisions<'py>(
+        slf: &Bound<'py, Self>,
+        names: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        todo!()
+    }
+
     /// Return whether `other` is the same space up to the renaming of the
     /// names it binds, under no renaming.
     fn is_alpha_equivalent(slf: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<bool> {

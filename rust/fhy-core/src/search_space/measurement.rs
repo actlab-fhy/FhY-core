@@ -1,6 +1,7 @@
 //! What a search measures and which way is better: [`Direction`] and
-//! [`Objective`]; the record of one measured configuration,
-//! [`Measurement`]; and what measures, [`Measurer`].
+//! [`Objective`]; what a measurement is of, [`MeasurementKey`]; the record
+//! of one measured point, [`Measurement`]; what measures, [`Measurer`]; and
+//! the measurements no other one dominates, [`non_dominated`].
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -16,6 +17,7 @@ use crate::foreign::BoxError;
 
 use super::configuration::ConfigurationKey;
 use super::error::MeasurementError;
+use super::trace::TraceKey;
 
 /// Which way an objective's values are better.
 ///
@@ -181,32 +183,105 @@ pub enum MeasurementStatus {
     Timeout,
 }
 
-/// The record of one measured configuration: its key, its status, a
+/// What a [`Measurement`] is of: a configuration of a space, by its
+/// [`ConfigurationKey`], or one run of a stream, static and dynamic steps
+/// alike, by its [`TraceKey`].
+///
+/// Key a measurement by its configuration when the realization depends on
+/// the configuration alone, and by its trace when it also depends on a
+/// run's dynamic steps, such as where an allocator placed a buffer.
+///
+/// `==` and `Hash` compare the variant and its key, and a key compares
+/// equal to the [`ConfigurationKey`] or [`TraceKey`] it holds. `serde`
+/// writes `{"configuration": <key>}` or `{"trace": <key>}`, a
+/// configuration key refusing an opaque value as
+/// [`ConfigurationKey`]'s own decoding does.
+#[expect(
+    clippy::exhaustive_enums,
+    reason = "a measurement is of a configuration or of a run, and callers match both"
+)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeasurementKey {
+    /// A configuration of a space.
+    Configuration(ConfigurationKey),
+    /// One run of a stream.
+    Trace(TraceKey),
+}
+
+impl From<ConfigurationKey> for MeasurementKey {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn from(key: ConfigurationKey) -> Self {
+        todo!()
+    }
+}
+
+impl From<TraceKey> for MeasurementKey {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn from(key: TraceKey) -> Self {
+        todo!()
+    }
+}
+
+impl PartialEq<ConfigurationKey> for MeasurementKey {
+    /// Return whether this is a configuration's key equal to `other`.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn eq(&self, other: &ConfigurationKey) -> bool {
+        todo!()
+    }
+}
+
+impl PartialEq<TraceKey> for MeasurementKey {
+    /// Return whether this is a trace's key equal to `other`.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn eq(&self, other: &TraceKey) -> bool {
+        todo!()
+    }
+}
+
+/// The record of one measured point: its [`MeasurementKey`], its status, a
 /// finite value per objective when the status is
 /// [`Ok`](MeasurementStatus::Ok) and none otherwise, and notes.
 ///
 /// A value of `-0.0` is kept as `0.0`. `==` and `Hash` compare the key,
 /// the status, the values in order and the notes. `serde` writes `{"key",
-/// "status", "values": [{"objective", "value"}, ..], "notes"}`, the key in
-/// [`ConfigurationKeyData`](super::wire::ConfigurationKeyData)'s shape,
-/// and reads it through the constructors' checks;
-/// [`MeasurementData`](super::wire::MeasurementData) reads a key holding
-/// another crate's opaque values.
+/// "status", "values": [{"objective", "value"}, ..], "notes"}`, the key as
+/// `{"configuration": ..}`, in
+/// [`ConfigurationKeyData`](super::wire::ConfigurationKeyData)'s shape, or
+/// as `{"trace": ..}`, in [`TraceKey`]'s, and reads it through the
+/// constructors' checks; [`MeasurementData`](super::wire::MeasurementData)
+/// reads a configuration key holding another crate's opaque values.
 #[derive(Debug, Clone)]
 pub struct Measurement(Arc<MeasurementInner>);
 
 /// The fields of a [`Measurement`].
 #[derive(Debug, Clone)]
 struct MeasurementInner {
-    key: ConfigurationKey,
+    key: MeasurementKey,
     status: MeasurementStatus,
     values: Vec<(Objective, f64)>,
     notes: Vec<Note>,
 }
 
 impl Measurement {
-    /// Return the successful measurement of the configuration `key`, a value
-    /// per objective in the order given.
+    /// Return the successful measurement of `key`, a configuration's or a
+    /// trace's, a value per objective in the order given.
     ///
     /// # Errors
     ///
@@ -215,7 +290,7 @@ impl Measurement {
     /// objectives share a name; [`MeasurementError::NonFiniteValue`] for a
     /// NaN or an infinity.
     pub fn ok(
-        key: ConfigurationKey,
+        key: impl Into<MeasurementKey>,
         values: Vec<(Objective, f64)>,
     ) -> Result<Self, MeasurementError> {
         if values.is_empty() {
@@ -239,12 +314,12 @@ impl Measurement {
             .into_iter()
             .map(|(objective, value)| (objective, without_negative_zero(value)))
             .collect();
-        Ok(Self::of(key, MeasurementStatus::Ok, values))
+        Ok(Self::of(key.into(), MeasurementStatus::Ok, values))
     }
 
     /// Return the measurement of `key` with `status` and `values`, and no
     /// notes.
-    fn of(key: ConfigurationKey, status: MeasurementStatus, values: Vec<(Objective, f64)>) -> Self {
+    fn of(key: MeasurementKey, status: MeasurementStatus, values: Vec<(Objective, f64)>) -> Self {
         Self(Arc::new(MeasurementInner {
             key,
             status,
@@ -253,12 +328,12 @@ impl Measurement {
         }))
     }
 
-    /// Return the measurement of a configuration `key` that cannot be
-    /// realized, for `reason`.
+    /// Return the measurement of `key` that cannot be realized, for
+    /// `reason`.
     #[must_use]
-    pub fn infeasible(key: ConfigurationKey, reason: impl Into<String>) -> Self {
+    pub fn infeasible(key: impl Into<MeasurementKey>, reason: impl Into<String>) -> Self {
         Self::of(
-            key,
+            key.into(),
             MeasurementStatus::Infeasible {
                 reason: reason.into(),
             },
@@ -266,12 +341,11 @@ impl Measurement {
         )
     }
 
-    /// Return the measurement of the configuration `key` that broke, for
-    /// `reason`.
+    /// Return the measurement of `key` that broke, for `reason`.
     #[must_use]
-    pub fn failed(key: ConfigurationKey, reason: impl Into<String>) -> Self {
+    pub fn failed(key: impl Into<MeasurementKey>, reason: impl Into<String>) -> Self {
         Self::of(
-            key,
+            key.into(),
             MeasurementStatus::Failed {
                 reason: reason.into(),
             },
@@ -279,11 +353,10 @@ impl Measurement {
         )
     }
 
-    /// Return the measurement of the configuration `key` that ran out of
-    /// time.
+    /// Return the measurement of `key` that ran out of time.
     #[must_use]
-    pub fn timeout(key: ConfigurationKey) -> Self {
-        Self::of(key, MeasurementStatus::Timeout, Vec::new())
+    pub fn timeout(key: impl Into<MeasurementKey>) -> Self {
+        Self::of(key.into(), MeasurementStatus::Timeout, Vec::new())
     }
 
     /// Return the measurement with `notes` in place of its own.
@@ -294,9 +367,9 @@ impl Measurement {
         Self(Arc::new(inner))
     }
 
-    /// Return the key of the configuration measured.
+    /// Return the key of what was measured.
     #[must_use]
-    pub fn key(&self) -> &ConfigurationKey {
+    pub fn key(&self) -> &MeasurementKey {
         &self.0.key
     }
 
@@ -411,7 +484,7 @@ impl Hash for Measurement {
 }
 
 /// Measures subjects of type `S`, such as a lowered program, as one
-/// configuration of a space.
+/// configuration of a space or one run of a stream.
 ///
 /// A subject that cannot be measured is an `Ok` measurement with a failing
 /// status ([`Infeasible`](MeasurementStatus::Infeasible),
@@ -424,10 +497,32 @@ pub trait Measurer<S: ?Sized> {
     /// for.
     fn objectives(&self) -> &[Objective];
 
-    /// Measure `subject`, a realization of the configuration `key`.
+    /// Measure `subject`, a realization of the configuration or the run
+    /// `key` names.
     ///
     /// # Errors
     ///
     /// Returns the measurer's own fault.
-    fn measure(&mut self, key: &ConfigurationKey, subject: &S) -> Result<Measurement, BoxError>;
+    fn measure(&mut self, key: &MeasurementKey, subject: &S) -> Result<Measurement, BoxError>;
+}
+
+/// Return the successful measurements of `measurements` that no other
+/// successful one [dominates](Measurement::dominates), in the order given:
+/// the Pareto front.
+///
+/// A measurement that did not succeed is left out. Neither of two
+/// measurements with equal values dominates the other, so both are kept
+/// unless a third dominates them.
+///
+/// # Errors
+///
+/// Returns [`MeasurementError::DifferentObjectives`] when two successful
+/// measurements are over different objectives.
+#[expect(
+    unused_variables,
+    clippy::todo,
+    reason = "interface stub; bodies are todo!() until implementation"
+)]
+pub fn non_dominated(measurements: &[Measurement]) -> Result<Vec<&Measurement>, MeasurementError> {
+    todo!()
 }

@@ -304,6 +304,69 @@ impl Space {
         &self.0.order
     }
 
+    /// Return this space with each of `variables` and `choices` put at the
+    /// top level: in place of the top-level variable, or choice, of the
+    /// same name, keeping its slot, or after the last top-level variable,
+    /// or choice, in the order given. The name, the conditions, the
+    /// forbidden clauses and the notes are kept, and the space is checked
+    /// as [`new`](Self::new) checks one.
+    ///
+    /// Every decision before the first one the edit changes, in canonical
+    /// order, keeps its canonical position, and so do the steps of a trace
+    /// over them: appending choices keeps every existing position, while
+    /// appending or replacing a variable, or replacing a choice by one
+    /// whose subtree holds another number of decisions, moves the
+    /// decisions after it.
+    ///
+    /// # Errors
+    ///
+    /// Returns what [`new`](Self::new) returns for the edited space, such
+    /// as [`SpaceError::DuplicateName`] for a variable named as a top-level
+    /// choice, or [`SpaceError::UnknownReference`] for a condition naming a
+    /// decision a replaced choice no longer holds.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        clippy::needless_pass_by_value,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn with_decisions(
+        &self,
+        variables: Vec<Part<dyn Variable>>,
+        choices: Vec<Choice>,
+    ) -> Result<Self, SpaceError> {
+        todo!()
+    }
+
+    /// Return this space without the top-level decisions `names`, and
+    /// without the conditions on them or on any decision under them. The
+    /// name, the other conditions, the forbidden clauses and the notes are
+    /// kept, and the space is checked as [`new`](Self::new) checks one. A
+    /// name given twice is removed once.
+    ///
+    /// The decisions before the first one removed, in canonical order,
+    /// keep their canonical positions; the decisions after it move.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpaceError::NotTopLevelDecision`] for the first of `names`
+    /// that is no top-level decision of the space, and what
+    /// [`new`](Self::new) returns for the edited space, such as
+    /// [`SpaceError::UnknownReference`] for a condition or a forbidden
+    /// clause that names a removed decision.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        clippy::needless_pass_by_value,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn without_decisions(
+        &self,
+        names: impl IntoIterator<Item = Identifier>,
+    ) -> Result<Self, SpaceError> {
+        todo!()
+    }
+
     /// Return whether `other` is the same space up to identity: equal
     /// names and notes, structurally equivalent variables and choices in
     /// order, and structurally equivalent conditions and forbidden

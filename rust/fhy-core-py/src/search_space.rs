@@ -60,10 +60,12 @@ pub(crate) use kinds::{
     KIND_REGISTRY_ATTRIBUTE, PyKindRegistry, get_search_space_kind_class,
     register_alternative_kind, register_oracle_kind, register_variable_kind,
 };
-pub(crate) use measurement::{PyMeasurement, PyObjective};
-pub(crate) use oracle::{PyExhaustiveOracle, PyPendingStep, PyRandomOracle, PyReplayOracle};
+pub(crate) use measurement::{PyMeasurement, PyObjective, non_dominated};
+pub(crate) use oracle::{
+    PyExhaustiveOracle, PyGuidedOracle, PyPendingStep, PyRandomOracle, PyReplayOracle,
+};
 pub(crate) use recorder::PyRecorder;
 pub(crate) use rng::PyRng;
 pub(crate) use space::{PyCondition, PyForbidden, PySpace};
-pub(crate) use trace::{PyTrace, PyTraceStep};
+pub(crate) use trace::{PyTrace, PyTraceKey, PyTraceStep};
 pub(crate) use variable::{PyVariableBase, variable_from_python, variable_to_python};

@@ -392,15 +392,18 @@ fn register_part_4(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<search_space::PyPendingStep>()?;
     module.add_class::<search_space::PyRandomOracle>()?;
     module.add_class::<search_space::PyReplayOracle>()?;
+    module.add_class::<search_space::PyGuidedOracle>()?;
     module.add_class::<search_space::PyExhaustiveOracle>()?;
     module.add_class::<search_space::PyRecorder>()?;
     module.add_class::<search_space::PyTraceStep>()?;
     module.add_class::<search_space::PyTrace>()?;
+    module.add_class::<search_space::PyTraceKey>()?;
     module.add_class::<search_space::PyObjective>()?;
     module.add_class::<search_space::PyMeasurement>()?;
     module.add_function(wrap_pyfunction!(
         search_space::get_search_space_kind_class,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(search_space::non_dominated, module)?)?;
     Ok(())
 }

@@ -1,7 +1,7 @@
 //! What a search does over a [`Space`] alone: sampling, per step and
-//! uniformly over the complete configurations; replaying a trace into a
-//! configuration; enumerating and counting the complete configurations;
-//! and mutating one.
+//! uniformly over the complete configurations; completing a configuration;
+//! replaying a trace into a configuration; enumerating and counting the
+//! complete configurations; and mutating one or crossing two.
 
 use std::collections::HashMap;
 use std::num::{NonZeroU32, NonZeroU64};
@@ -40,6 +40,34 @@ impl Space {
         context: &ParamContext<'_>,
     ) -> Result<Recorded, TraceError> {
         walk(self, |_| true, oracle, context)
+    }
+
+    /// Return `configuration` completed: every decision it assigns keeps
+    /// its value, and every other decision active when reached is asked of
+    /// `oracle`, in [decision order](Self::decision_order), and its trace.
+    ///
+    /// The trace holds a step for every assigned decision, the assigned
+    /// ones answered from `configuration` without asking `oracle`, so
+    /// [`replay`](Self::replay) turns it into the completed configuration.
+    /// A complete configuration is returned as it is, with its trace.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TraceError::OtherSpace`] for a configuration of another
+    /// space, and what [`Recorder::decide`](super::Recorder::decide)
+    /// returns.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn complete(
+        &self,
+        configuration: &Configuration,
+        oracle: &mut dyn SearchOracle,
+        context: &ParamContext<'_>,
+    ) -> Result<Recorded, TraceError> {
+        todo!()
     }
 
     /// Draw a complete configuration uniformly from all of them, and return
@@ -150,8 +178,15 @@ impl Space {
     /// other values, and re-walks decision order keeping every other
     /// decision's value while it stays admissible and drawing every other
     /// step uniformly. A repair that reaches a dead end starts again from
-    /// the pick. Finding the decisions that may change searches the space's
-    /// completions, at most 1024 runs per value.
+    /// the pick.
+    ///
+    /// Which decisions may change is found per component, as
+    /// [`cardinality`](Self::cardinality) splits the space. In a component
+    /// counted in closed form every other value of a variable may be taken,
+    /// and every other alternative of a choice whose decisions all admit a
+    /// value. In any other component it searches the component's
+    /// completions, at most 1024 runs per value, and takes a value whose
+    /// search is unfinished as one that may be taken.
     ///
     /// # Errors
     ///
@@ -166,6 +201,42 @@ impl Space {
         attempts: NonZeroU32,
     ) -> Result<Recorded, TraceError> {
         mutate_configuration(self, configuration, rng, context, attempts)
+    }
+}
+
+impl Space {
+    /// Return a configuration crossing `first` and `second`, repaired to a
+    /// complete one, and its trace.
+    ///
+    /// For each decision, in canonical order, a draw `rng.below(2)` picks
+    /// the parent it inherits from: the first on 0, the second on 1. The
+    /// run walks decision order as a [`GuidedOracle`](super::GuidedOracle)
+    /// guided by the inherited coordinates walks it: a decision takes its
+    /// picked parent's value when that parent assigns it and the value is
+    /// admissible, else the other parent's under the same condition, and
+    /// otherwise a value drawn uniformly from its admissible ones with
+    /// `rng`. A repair that reaches a dead end starts again with new picks.
+    /// The parents need not be complete.
+    ///
+    /// # Errors
+    ///
+    /// In order: [`TraceError::OtherSpace`] when either parent is of
+    /// another space, [`TraceError::AttemptsExhausted`] after `attempts`
+    /// dead ends, and what a step returns.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn crossover(
+        &self,
+        first: &Configuration,
+        second: &Configuration,
+        rng: &mut Rng,
+        context: &ParamContext<'_>,
+        attempts: NonZeroU32,
+    ) -> Result<Recorded, TraceError> {
+        todo!()
     }
 }
 

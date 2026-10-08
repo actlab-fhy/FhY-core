@@ -20,12 +20,15 @@ A search runs as steps: a :class:`Recorder` asks each one of a
 :class:`OrderDomain`, :class:`StridedDomain`), checks the answer, a
 coordinate in the domain, and records it in a :class:`Trace`.
 :class:`RandomOracle` draws from an :class:`Rng`, :class:`ReplayOracle`
-answers a recorded trace back, and :class:`ExhaustiveOracle` takes every
-path once over successive runs; a :class:`Space` also samples, replays,
-enumerates, counts (:class:`Cardinality`) and mutates on its own.
+answers a recorded trace back, :class:`GuidedOracle` answers it back where
+it fits and asks another oracle where it does not, and
+:class:`ExhaustiveOracle` takes every path once over successive runs; a
+:class:`Space` also samples, completes, replays, enumerates, counts
+(:class:`Cardinality`), mutates and crosses over on its own.
 
-A :class:`Measurer` measures a realization of a configuration and returns a
-:class:`Measurement`: the configuration's key, a :class:`MeasurementStatus`
+A :class:`Measurer` measures a realization of a configuration, or of one
+run, and returns a :class:`Measurement`: the configuration's key or the
+run's :class:`TraceKey`, a :class:`MeasurementStatus`
 and, when it succeeded, a value per :class:`Objective`, whose
 :class:`Direction` says which way is better.
 """
@@ -46,6 +49,7 @@ __all__ = [
     "DuplicateNameError",
     "ExhaustiveOracle",
     "Forbidden",
+    "GuidedOracle",
     "InadmissibleAnswerError",
     "Measurement",
     "MeasurementError",
@@ -68,8 +72,10 @@ __all__ = [
     "StridedRun",
     "Trace",
     "TraceError",
+    "TraceKey",
     "TraceStep",
     "Variable",
+    "non_dominated",
 ]
 
 from .core import (
@@ -85,6 +91,7 @@ from .core import (
     Direction,
     ExhaustiveOracle,
     Forbidden,
+    GuidedOracle,
     Measurement,
     MeasurementStatus,
     Measurer,
@@ -100,8 +107,10 @@ from .core import (
     StridedDomain,
     StridedRun,
     Trace,
+    TraceKey,
     TraceStep,
     Variable,
+    non_dominated,
 )
 from .errors import (
     ConfigurationError,

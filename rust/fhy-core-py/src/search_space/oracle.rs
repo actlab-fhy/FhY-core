@@ -410,6 +410,83 @@ impl PyRandomOracle {
     }
 }
 
+/// The core's guided oracle: a recorded `Trace` answers each step where
+/// it fits and is admissible, and the oracle `fallback` answers the rest.
+#[pyclass(frozen, module = "fhy_core._rs", name = "GuidedOracle")]
+#[expect(
+    dead_code,
+    reason = "interface stub; bodies are todo!() until implementation"
+)]
+pub(crate) struct PyGuidedOracle {
+    /// The guiding `Trace`.
+    guide: Py<PyAny>,
+    /// The fallback oracle.
+    fallback: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyGuidedOracle {
+    /// Return the oracle guided by the `Trace` `guide` that asks the oracle
+    /// `fallback` what the guide does not answer.
+    ///
+    /// Raises `TypeError` for a `guide` that is no `Trace`.
+    #[new]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn new(guide: &Bound<'_, PyAny>, fallback: &Bound<'_, PyAny>) -> PyResult<Self> {
+        todo!()
+    }
+
+    /// The guiding `Trace`.
+    #[getter]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn guide(&self, py: Python<'_>) -> Py<PyAny> {
+        todo!()
+    }
+
+    /// The fallback oracle.
+    #[getter]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn fallback(&self, py: Python<'_>) -> Py<PyAny> {
+        todo!()
+    }
+
+    /// Return the answer to the `PendingStep` `step`: the guide's where it
+    /// fits and is admissible, else the fallback's.
+    ///
+    /// Raises what the fallback raises.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn decide<'py>(&self, step: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        todo!()
+    }
+
+    /// Visit the Python objects the oracle keeps, for the cycle collector.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        clippy::needless_pass_by_value,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        todo!()
+    }
+}
+
 /// The core's replay oracle.
 #[pyclass(frozen, module = "fhy_core._rs", name = "ReplayOracle")]
 pub(crate) struct PyReplayOracle {

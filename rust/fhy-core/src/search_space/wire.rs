@@ -16,7 +16,8 @@
 //! | [`Space`] | `{"identifier", "variables", "choices", "conditions": [{"target", "when"}, ..], "forbidden": [{"when"}, ..], "notes"}` |
 //! | [`Configuration`] | `{"space", "entries": [{"name", "value"}, ..]}` |
 //! | [`ConfigurationKey`] | `{"entries": [..]}`, one per decision in canonical order: `{"inactive": {}}`, `{"unassigned": {}}`, `{"alternative": {"index"}}` or `{"value": ..}`, a value being `{"leaf": <value>}`, `{"bound": {"position"}}`, `{"tuple": [..]}` or `{"frozen_set": [..]}` |
-//! | [`Measurement`] | `{"key", "status", "values": [{"objective": {"name", "direction"}, "value"}, ..], "notes"}`, the status `"ok"`, `{"infeasible": {"reason"}}`, `{"failed": {"reason"}}` or `"timeout"` |
+//! | [`TraceKey`] | `{"steps": [{"kind", "decision", "domain", "coordinate"}, ..]}` |
+//! | [`Measurement`] | `{"key", "status", "values": [{"objective": {"name", "direction"}, "value"}, ..], "notes"}`, the key `{"configuration": <configuration key>}` or `{"trace": <trace key>}`, the status `"ok"`, `{"infeasible": {"reason"}}`, `{"failed": {"reason"}}` or `"timeout"` |
 //!
 //! Params, constraint systems and values are in their own modules' forms,
 //! conditions are written one per target in canonical order of the
@@ -44,27 +45,30 @@
 //! tuples or sets, with "value nesting exceeds 128 levels", before
 //! reading their insides.
 
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use serde::de::{self, DeserializeSeed, Deserializer, VariantAccess};
 use serde::ser::{self, Serializer};
 use serde::{Deserialize, Serialize};
 
-use crate::constraint::OpaqueValue;
 use crate::constraint::wire::{ConstraintSystemData, MAX_VALUE_DEPTH, ValueData};
+use crate::constraint::{CustomConstraint, OpaqueValue};
 use crate::diagnostic::Note;
 use crate::foreign::{BuildError, Foreign, ForeignError, NoForeign, Part, Resolve};
 use crate::identifier::Identifier;
-use crate::param::ParamContext;
 use crate::param::wire::{ParamData, ParamResolver};
+use crate::param::{CustomDomain, ParamContext};
 use crate::solver::{GroundSimplifier, Solver};
 
 use super::alternative::{Alternative, PlainAlternative};
 use super::choice::{Choice, MAX_CHOICE_DEPTH};
 use super::configuration::{Configuration, ConfigurationKey, KeyEntry, KeyValue};
-use super::error::MeasurementError;
-use super::measurement::{Measurement, MeasurementStatus, Objective};
+use super::error::{MeasurementError, RegistryError};
+use super::measurement::{Measurement, MeasurementKey, MeasurementStatus, Objective};
 use super::space::{Condition, Forbidden, Space};
+use super::trace::TraceKey;
 use super::variable::{PlainVariable, Variable};
 
 /// The resolvers a search space's foreign parts need: a param's, and the
@@ -77,6 +81,293 @@ pub trait SearchSpaceResolver:
 impl<R: ParamResolver + Resolve<Part<dyn Variable>> + Resolve<Part<dyn Alternative>> + ?Sized>
     SearchSpaceResolver for R
 {
+}
+
+/// Builds a variable of one kind from its foreign part, with the resolver
+/// of the parts inside it, such as its param's, and the context its param
+/// is built under.
+pub type VariableResolverFn = fn(
+    &Foreign,
+    &dyn SearchSpaceResolver,
+    &ParamContext<'_>,
+) -> Result<Part<dyn Variable>, ForeignError>;
+
+/// Builds an alternative of one kind from its foreign part, with the
+/// resolver of the parts inside it, such as its variables', and the
+/// context their params are built under.
+pub type AlternativeResolverFn = fn(
+    &Foreign,
+    &dyn SearchSpaceResolver,
+    &ParamContext<'_>,
+) -> Result<Part<dyn Alternative>, ForeignError>;
+
+/// Builds an opaque value of one type from its foreign part.
+pub type OpaqueValueResolverFn = fn(&Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError>;
+
+/// Builds a custom constraint of one type from its foreign part.
+pub type CustomConstraintResolverFn =
+    fn(&Foreign) -> Result<Part<dyn CustomConstraint>, ForeignError>;
+
+/// Builds a custom domain of one type from its foreign part.
+pub type CustomDomainResolverFn = fn(&Foreign) -> Result<Part<dyn CustomDomain>, ForeignError>;
+
+/// The functions that build the foreign parts of a search space, by type
+/// id, per family: variables, alternatives, opaque values, custom
+/// constraints and custom domains.
+///
+/// Each crate that defines parts exports a function that registers them,
+/// and a program composes the crates it links by registering each crate's
+/// parts into one registry, or by [merging](Self::merge) their registries.
+/// [`resolver`](Self::resolver) lends the registry, with the context
+/// params are built under, as a [`SearchSpaceResolver`] for the wire
+/// forms' `build`: a part whose type id the registry holds is built by its
+/// function, which is handed that resolver for the parts inside it, and any
+/// other part is refused as [`NoForeign`] refuses it.
+///
+/// Cloning copies the tables; the registry holds no other state.
+///
+/// # Examples
+///
+/// ```
+/// use fhy_core::identifier::Identifier;
+/// use fhy_core::param::ParamContext;
+/// use fhy_core::search_space::Space;
+/// use fhy_core::search_space::wire::{ResolverRegistry, SpaceData};
+/// use fhy_core::solver::Solver;
+///
+/// let space = Space::new(Identifier::new("s"), vec![], vec![], vec![], vec![])?;
+/// let text = serde_json::to_string(&SpaceData::of(&space)?)?;
+///
+/// let registry = ResolverRegistry::new();
+/// let solver = Solver::new();
+/// let context = ParamContext::new(&solver);
+/// let data: SpaceData = serde_json::from_str(&text)?;
+/// let read = data.build(&registry.resolver(&context), &context)?;
+/// assert_eq!(read, space);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[expect(
+    dead_code,
+    reason = "interface stub; bodies are todo!() until implementation"
+)]
+#[derive(Debug, Clone, Default)]
+pub struct ResolverRegistry {
+    variables: HashMap<Arc<str>, VariableResolverFn>,
+    alternatives: HashMap<Arc<str>, AlternativeResolverFn>,
+    opaque_values: HashMap<Arc<str>, OpaqueValueResolverFn>,
+    custom_constraints: HashMap<Arc<str>, CustomConstraintResolverFn>,
+    custom_domains: HashMap<Arc<str>, CustomDomainResolverFn>,
+}
+
+impl ResolverRegistry {
+    /// Return the registry holding no function.
+    #[must_use]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn new() -> Self {
+        todo!()
+    }
+
+    /// Return this registry with `resolve` building the variables of kind
+    /// `type_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::ReservedTypeId`] for
+    /// [`PlainVariable::KIND`] and [`RegistryError::RepeatedTypeId`] for a
+    /// kind already registered.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn with_variable_kind(
+        self,
+        type_id: &str,
+        resolve: VariableResolverFn,
+    ) -> Result<Self, RegistryError> {
+        todo!()
+    }
+
+    /// Return this registry with `resolve` building the alternatives of
+    /// kind `type_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::ReservedTypeId`] for
+    /// [`PlainAlternative::KIND`] and [`RegistryError::RepeatedTypeId`] for
+    /// a kind already registered.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn with_alternative_kind(
+        self,
+        type_id: &str,
+        resolve: AlternativeResolverFn,
+    ) -> Result<Self, RegistryError> {
+        todo!()
+    }
+
+    /// Return this registry with `resolve` building the opaque values of
+    /// type `type_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::RepeatedTypeId`] for a type already
+    /// registered.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn with_opaque_value(
+        self,
+        type_id: &str,
+        resolve: OpaqueValueResolverFn,
+    ) -> Result<Self, RegistryError> {
+        todo!()
+    }
+
+    /// Return this registry with `resolve` building the custom constraints
+    /// of type `type_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::RepeatedTypeId`] for a type already
+    /// registered.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn with_custom_constraint(
+        self,
+        type_id: &str,
+        resolve: CustomConstraintResolverFn,
+    ) -> Result<Self, RegistryError> {
+        todo!()
+    }
+
+    /// Return this registry with `resolve` building the custom domains of
+    /// type `type_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::RepeatedTypeId`] for a type already
+    /// registered.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn with_custom_domain(
+        self,
+        type_id: &str,
+        resolve: CustomDomainResolverFn,
+    ) -> Result<Self, RegistryError> {
+        todo!()
+    }
+
+    /// Return the registry holding the functions of this one and of
+    /// `other`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::RepeatedTypeId`] for the first type id,
+    /// in a family, that both hold, in the order of the families above
+    /// and then of the ids.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        clippy::needless_pass_by_value,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn merge(self, other: Self) -> Result<Self, RegistryError> {
+        todo!()
+    }
+
+    /// Return the resolver building the parts this registry holds, their
+    /// params under `context`.
+    #[must_use]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn resolver<'a, 'c>(&'a self, context: &'a ParamContext<'c>) -> RegistryResolver<'a, 'c> {
+        todo!()
+    }
+}
+
+/// A [`ResolverRegistry`] lent with the context params are built under: a
+/// [`SearchSpaceResolver`], from [`ResolverRegistry::resolver`].
+#[expect(
+    dead_code,
+    reason = "interface stub; bodies are todo!() until implementation"
+)]
+#[derive(Debug, Clone, Copy)]
+pub struct RegistryResolver<'a, 'c> {
+    registry: &'a ResolverRegistry,
+    context: &'a ParamContext<'c>,
+}
+
+impl Resolve<Part<dyn Variable>> for RegistryResolver<'_, '_> {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Variable>, ForeignError> {
+        todo!()
+    }
+}
+
+impl Resolve<Part<dyn Alternative>> for RegistryResolver<'_, '_> {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn Alternative>, ForeignError> {
+        todo!()
+    }
+}
+
+impl Resolve<Part<dyn OpaqueValue>> for RegistryResolver<'_, '_> {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
+        todo!()
+    }
+}
+
+impl Resolve<Part<dyn CustomConstraint>> for RegistryResolver<'_, '_> {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomConstraint>, ForeignError> {
+        todo!()
+    }
+}
+
+impl Resolve<Part<dyn CustomDomain>> for RegistryResolver<'_, '_> {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn CustomDomain>, ForeignError> {
+        todo!()
+    }
 }
 
 /// The wire form of a variable, a [`PlainVariable`] or another
@@ -1147,10 +1438,55 @@ impl<'de> Deserialize<'de> for ConfigurationKey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename = "Measurement", deny_unknown_fields)]
 pub struct MeasurementData {
-    key: ConfigurationKeyData,
+    key: MeasurementKeyRepr,
     status: MeasurementStatus,
     values: Vec<MeasuredValueRepr>,
     notes: Vec<Note>,
+}
+
+/// The wire form of a [`MeasurementKey`], a configuration key's opaque
+/// values unresolved: `{"configuration": ..}` or `{"trace": ..}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename = "MeasurementKey", rename_all = "snake_case")]
+enum MeasurementKeyRepr {
+    Configuration(ConfigurationKeyData),
+    Trace(TraceKey),
+}
+
+impl MeasurementKeyRepr {
+    /// Return the wire form of `key`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of an opaque value of a configuration key that
+    /// cannot give its foreign form.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn of(key: &MeasurementKey) -> Result<Self, ForeignError> {
+        todo!()
+    }
+
+    /// Return the key, a configuration key's opaque values resolved by
+    /// `resolver`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::Foreign`] for an opaque value `resolver`
+    /// refuses.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
+        self,
+        resolver: &R,
+    ) -> Result<MeasurementKey, BuildError> {
+        todo!()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1169,7 +1505,7 @@ impl MeasurementData {
     /// its foreign form.
     pub fn of(measurement: &Measurement) -> Result<Self, ForeignError> {
         Ok(Self {
-            key: ConfigurationKeyData::of(measurement.key())?,
+            key: MeasurementKeyRepr::of(measurement.key())?,
             status: measurement.status().clone(),
             values: measurement
                 .values()

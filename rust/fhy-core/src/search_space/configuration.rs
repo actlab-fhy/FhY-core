@@ -158,7 +158,7 @@ impl Configuration {
 
     /// Return this configuration with the decision `name` given `value`,
     /// in place of its value if it has one, checked as
-    /// [`new`](Self::new) checks a configuration.
+    /// [`with_entries`](Self::with_entries) checks one entry.
     ///
     /// No entry is dropped implicitly: switching a choice to another
     /// alternative while the variables of the one it chose hold values is
@@ -185,9 +185,20 @@ impl Configuration {
 
     /// Return this configuration with each decision named in `entries`
     /// given its value, in place of its value if it has one, checked as
-    /// [`new`](Self::new) checks a configuration. Two of `entries` naming
+    /// [`new`](Self::new) checks a configuration, except that the values
+    /// this configuration holds are not checked against their params
+    /// again, since its own check accepted them. Two of `entries` naming
     /// one decision are a
     /// [`DuplicateEntry`](super::ConfigurationError::DuplicateEntry).
+    ///
+    /// Activity, conditions and forbidden clauses are checked anew only
+    /// where the entries can change them: for the decisions that depend
+    /// on an entry's decision, through its choice or its condition, at any
+    /// depth, and for the forbidden clauses naming one of those
+    /// decisions. Its cost grows with the entries and what depends on
+    /// them, and with copying the configuration's values, not with
+    /// checking every value, so building a configuration one entry at a
+    /// time stays cheap.
     ///
     /// # Errors
     ///
@@ -332,6 +343,25 @@ impl Configuration {
             .iter()
             .zip(&self.0.values)
             .all(|(activity, value)| *activity == Activity::Inactive || value.is_some())
+    }
+
+    /// Return whether the decision `name` and every decision under it, at
+    /// every depth, are assigned or inactive, or `None` if the space has no
+    /// such decision.
+    ///
+    /// For a choice this says whether the configuration has decided all of
+    /// its subtree: a choice that is assigned and complete under itself is
+    /// fully selected, one that is assigned but not complete under itself
+    /// is partly selected. A decision under an alternative the choice did
+    /// not choose is inactive, so it counts as decided.
+    #[must_use]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn is_complete_under(&self, name: &Identifier) -> Option<bool> {
+        todo!()
     }
 
     /// Return the configuration's key within its space.

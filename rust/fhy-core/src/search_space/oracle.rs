@@ -1,8 +1,10 @@
 //! [`SearchOracle`]: what answers the steps of a run, the
 //! [`PendingStep`] it is asked, and the oracles this module ships:
-//! [`RandomOracle`], [`ReplayOracle`] and [`ExhaustiveOracle`].
+//! [`RandomOracle`], [`ReplayOracle`], [`GuidedOracle`] and
+//! [`ExhaustiveOracle`].
 
 use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU64;
@@ -443,6 +445,85 @@ impl SearchOracle for ReplayOracle {
         let coordinate = self.answer(step)?;
         self.position += 1;
         Ok(coordinate)
+    }
+}
+
+/// Answers each step with a guiding trace's answer where it fits the step
+/// and is admissible, and asks a fallback oracle otherwise: a replay that
+/// repairs a run leaving the guide's path instead of refusing it.
+///
+/// A static step takes the guide's static step at its decision's canonical
+/// position, if the guide has one over an equal domain signature whose
+/// coordinate is [admissible](PendingStep::admits). A dynamic step of a
+/// kind takes the guide's next dynamic step of that kind not yet taken, in
+/// the order the guide asked them, if its signature is equal and its
+/// coordinate in the domain; that guide step is taken either way, so the
+/// later steps of the kind stay aligned. Every other step, and every step
+/// whose guide answer does not fit, goes to the fallback, whose error stops
+/// the run as it would stop it unguided.
+///
+/// Guiding by canonical position makes a trace of one space guide a run
+/// over an alpha-equivalent one, whose names differ; to carry values over
+/// to an [edited](super::Space::with_decisions) space, whose positions may
+/// differ, build a configuration from the old one's entries and
+/// [complete](super::Space::complete) it.
+#[expect(
+    dead_code,
+    reason = "interface stub; bodies are todo!() until implementation"
+)]
+#[derive(Debug, Clone)]
+pub struct GuidedOracle<O> {
+    /// The guide's static steps, by canonical position.
+    statics: HashMap<usize, (DomainSignature, Coordinate)>,
+    /// The guide's dynamic steps not yet taken, per kind, in the order
+    /// asked.
+    dynamics: HashMap<DecisionKind, VecDeque<(DomainSignature, Coordinate)>>,
+    fallback: O,
+}
+
+impl<O: SearchOracle> GuidedOracle<O> {
+    /// Return the oracle guided by `guide` that asks `fallback` what the
+    /// guide does not answer.
+    #[must_use]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        clippy::needless_pass_by_value,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn new(guide: &Trace, fallback: O) -> Self {
+        todo!()
+    }
+
+    /// Return the fallback oracle.
+    #[must_use]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn fallback(&self) -> &O {
+        todo!()
+    }
+
+    /// Return the fallback oracle, consuming the guided one.
+    #[must_use]
+    #[expect(
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    pub fn into_fallback(self) -> O {
+        todo!()
+    }
+}
+
+impl<O: SearchOracle> SearchOracle for GuidedOracle<O> {
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
+        todo!()
     }
 }
 

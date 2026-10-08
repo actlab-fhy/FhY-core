@@ -534,16 +534,16 @@ impl PyMeasurement {
         measurement_of_class(cls, Measurement::timeout(key), holder)
     }
 
-    /// The key of the configuration measured, a `ConfigurationKey`.
+    /// The key of what was measured: a `ConfigurationKey`, sharing the
+    /// measurement's holder of its opaque values, or a `TraceKey`.
     #[getter]
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
     fn key(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
-        let py = slf.py();
-        let this = slf.get();
-        let key = PyConfigurationKey::of(
-            this.measurement.key().clone(),
-            this.holder.share(py, slf.as_any()),
-        );
-        Ok(Py::new(py, key)?.into_any())
+        todo!()
     }
 
     /// Visit the Python objects the measurement keeps, for the cycle
@@ -754,4 +754,23 @@ impl PyMeasurement {
         let restore = slf.get_type().getattr(intern!(py, "from_json"))?;
         PyTuple::new(py, [restore, PyTuple::new(py, [text])?.into_any()])
     }
+}
+
+/// Return the successful measurements of `measurements` that no other
+/// successful one dominates, in the order given, as a `list`.
+///
+/// Raises `MeasurementError` for two successful measurements over
+/// different objectives, and `TypeError` for an element that is no
+/// `Measurement`.
+#[pyfunction]
+#[expect(
+    unused_variables,
+    clippy::todo,
+    reason = "interface stub; bodies are todo!() until implementation"
+)]
+pub(crate) fn non_dominated<'py>(
+    py: Python<'py>,
+    measurements: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    todo!()
 }

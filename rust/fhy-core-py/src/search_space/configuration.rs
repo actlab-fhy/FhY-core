@@ -420,6 +420,17 @@ impl PyConfiguration {
         self.configuration.is_complete()
     }
 
+    /// Return whether the decision `name` and every decision under it are
+    /// assigned or inactive, or `None` if the space has no such decision.
+    #[expect(
+        unused_variables,
+        clippy::todo,
+        reason = "interface stub; bodies are todo!() until implementation"
+    )]
+    fn is_complete_under(&self, name: &Bound<'_, PyAny>) -> PyResult<Option<bool>> {
+        todo!()
+    }
+
     /// Return the `Trace` of the assigned decisions, in decision order.
     ///
     /// Raises `NotEnumerableError` for an assigned variable with no finite
@@ -715,6 +726,10 @@ pub(crate) struct PyConfigurationKey {
 impl PyConfigurationKey {
     /// Return the key object of `key`, its opaque values kept visible by
     /// `holder`.
+    #[expect(
+        dead_code,
+        reason = "interface stub; Measurement.key, its caller, is todo!() until implementation"
+    )]
     pub(super) const fn of(key: ConfigurationKey, holder: KeyHolder) -> Self {
         Self { key, holder }
     }
