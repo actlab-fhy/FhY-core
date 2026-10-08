@@ -5,9 +5,10 @@
 //! Coefficients and the constant reach Python as `fractions.Fraction`s.
 
 use pyo3::exceptions::PyTypeError;
+use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
-use pyo3::types::{PyDict, PyType};
+use pyo3::types::{PyDict, PyTuple, PyType};
 
 use fhy_core::expression::{AffineForm, Rational};
 
@@ -82,6 +83,18 @@ impl PyAffineForm {
     /// Return the form's canonical `Expression`.
     fn to_expression<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         materialize_expression(py, &self.form.to_expression())
+    }
+
+    /// Pickle as a call of `affine_form` on the form's canonical
+    /// expression, which reads back as an equal form.
+    fn __reduce__<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>)> {
+        let constructor = py
+            .import(intern!(py, "fhy_core._rs"))?
+            .getattr(intern!(py, "affine_form"))?;
+        Ok((constructor, PyTuple::new(py, [self.to_expression(py)?])?))
     }
 
     /// Compare structurally with another form; another type is
