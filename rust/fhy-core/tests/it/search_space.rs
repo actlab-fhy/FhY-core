@@ -26,6 +26,7 @@ mod objective_stories;
 mod oracle_stories;
 mod properties;
 mod recorder_stories;
+mod registry_stories;
 mod rng_stories;
 mod search_domain_stories;
 mod serde_stories;
