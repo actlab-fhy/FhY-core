@@ -4,18 +4,33 @@
 //!
 //! Coefficients and the constant reach Python as `fractions.Fraction`s.
 
-#![expect(
-    dead_code,
-    unused_variables,
-    clippy::todo,
-    reason = "interface stub; bodies are todo!() until implementation"
-)]
-
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::pyclass::CompareOp;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBool, PyDict, PyType};
 
-use fhy_core::expression::AffineForm;
+use fhy_core::expression::{AffineForm, Rational};
+
+use crate::identifier::{identifier_to_python, restore_identifier};
+use crate::util::dataclass::hash_value;
+use crate::util::python::read_type_name;
+
+use super::literal::big_int_to_python;
+use super::materialize::materialize_expression;
+use super::node::PyExpression;
+
+/// Return `fractions.Fraction`.
+fn fraction_class(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
+    crate::util::python::cached_attr!(py, "fractions", "Fraction" => PyType)
+}
+
+/// Return the `fractions.Fraction` of `rational`.
+fn rational_to_fraction<'py>(py: Python<'py>, rational: &Rational) -> PyResult<Bound<'py, PyAny>> {
+    fraction_class(py)?.call1((
+        big_int_to_python(py, rational.numerator())?,
+        big_int_to_python(py, rational.denominator())?,
+    ))
+}
 
 /// An expression as an exact linear combination of its free identifiers
 /// plus a constant, backed by the core [`AffineForm`].
@@ -34,13 +49,14 @@ impl PyAffineForm {
     ///
     /// Raises `TypeError` for an argument that is no `Identifier`.
     fn coefficient<'py>(&self, identifier: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-        todo!()
+        let held = restore_identifier(identifier, "AffineForm", "identifier")?;
+        rational_to_fraction(identifier.py(), &self.form.coefficient(&held))
     }
 
     /// The constant term, a `fractions.Fraction`.
     #[getter]
     fn constant<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        todo!()
+        rational_to_fraction(py, self.form.constant())
     }
 
     /// The terms, a `dict` from each `Identifier` with a non-zero
@@ -48,38 +64,54 @@ impl PyAffineForm {
     /// identifiers' ids.
     #[getter]
     fn terms<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        todo!()
+        let terms = PyDict::new(py);
+        for (identifier, coefficient) in self.form.terms() {
+            terms.set_item(
+                identifier_to_python(py, identifier)?,
+                rational_to_fraction(py, coefficient)?,
+            )?;
+        }
+        Ok(terms)
     }
 
     /// Return whether the form has no term.
     fn is_constant(&self) -> bool {
-        todo!()
+        self.form.is_constant()
     }
 
     /// Return the form's canonical `Expression`.
     fn to_expression<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        todo!()
+        materialize_expression(py, &self.form.to_expression())
     }
 
     /// Compare structurally with another form; another type is
     /// `NotImplemented`.
-    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> PyResult<Py<PyAny>> {
-        todo!()
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        let py = other.py();
+        let Ok(other) = other.cast::<Self>() else {
+            return py.NotImplemented();
+        };
+        let equal = self.form == other.get().form;
+        match op {
+            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
+            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
+            _ => py.NotImplemented(),
+        }
     }
 
     /// Return the form's hash, consistent with `==`.
     fn __hash__(&self) -> u64 {
-        todo!()
+        hash_value(&self.form)
     }
 
     /// Return the canonical expression's text.
     fn __str__(&self) -> String {
-        todo!()
+        self.form.to_string()
     }
 
     /// Return `AffineForm(<text>)`.
     fn __repr__(&self) -> String {
-        todo!()
+        format!("AffineForm({})", self.form)
     }
 }
 
@@ -91,5 +123,18 @@ impl PyAffineForm {
 pub(crate) fn affine_form<'py>(
     expression: &Bound<'py, PyAny>,
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
-    todo!()
+    let py = expression.py();
+    let root = expression
+        .cast::<PyExpression>()
+        .map_err(|_not_an_expression| {
+            PyTypeError::new_err(format!(
+                "expression must be an Expression, got {}.",
+                read_type_name(expression)
+            ))
+        })?;
+    root.get()
+        .expression()
+        .affine_form()
+        .map(|form| Ok(Bound::new(py, PyAffineForm { form })?.into_any()))
+        .transpose()
 }

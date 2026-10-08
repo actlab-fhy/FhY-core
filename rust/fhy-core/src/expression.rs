@@ -32,8 +32,11 @@ pub(crate) use canonical::{CanonicalTable, Equivalence};
 pub(crate) use display::Bounded;
 pub use display::{ExpressionDisplay, FormatOptions, IdentifierStyle, Notation};
 pub use error::{BooleanPosition, NonBooleanLogicalOperandError, PiecewiseError, RebuildError};
-pub(crate) use literal::exact::ExactNumber;
 pub use literal::exact::Rational;
+pub(crate) use literal::exact::{
+    ExactNumber, borrow_parts, build_integer, build_zero, compute_arithmetic, floor,
+    keep_within_limits, raise_to_power, reduce, take_root,
+};
 pub use literal::{Decimal, DecimalPartsError, LiteralTextError, LiteralValue};
 pub(crate) use literal::{float_text, integer_text, serialize_display_text, write_float};
 pub use node::{
