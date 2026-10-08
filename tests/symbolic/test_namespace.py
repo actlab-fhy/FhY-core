@@ -56,6 +56,7 @@ def test_fhy_core_top_level_still_has_only_identifier_as_a_re_exported_symbol() 
         "op_attribute",
         "pass_infrastructure",
         "provenance",
+        "search_space",
         "serialization",
         "symbol_table",
         "symbolic",

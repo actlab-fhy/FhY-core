@@ -69,6 +69,9 @@ pub(crate) fn run_with_context<T: Send, E: Send>(
     question: impl FnOnce(&ParamContext<'_>) -> Result<T, E> + Send,
     map_error: impl FnOnce(E) -> PyErr,
 ) -> PyResult<T> {
+    if !is_detached {
+        return run_attached_with_context(py, question, map_error);
+    }
     let solver = get_default_solver(py)?;
     let solver = solver.bind(py).get();
     let registry = registry_snapshot();
@@ -76,14 +79,35 @@ pub(crate) fn run_with_context<T: Send, E: Send>(
     let core = solver.core();
     let registry = registry.registry();
     with_pending_errors(|| {
-        let ask = || {
+        let result = py.detach(|| {
             let context = ParamContext::new(core)
                 .with_registry(registry)
                 .with_observer(&observer);
             question(&context)
-        };
-        let result = if is_detached { py.detach(ask) } else { ask() };
+        });
         result.map_err(map_error)
+    })
+}
+
+/// Run `question` as [`run_with_context`] does, holding the interpreter
+/// throughout: for a question that is not `Send`, such as one that asks a
+/// Python oracle.
+pub(crate) fn run_attached_with_context<T, E>(
+    py: Python<'_>,
+    question: impl FnOnce(&ParamContext<'_>) -> Result<T, E>,
+    map_error: impl FnOnce(E) -> PyErr,
+) -> PyResult<T> {
+    let solver = get_default_solver(py)?;
+    let solver = solver.bind(py).get();
+    let registry = registry_snapshot();
+    let observer = PyParamObserver::new(solver.backend_name());
+    let core = solver.core();
+    let registry = registry.registry();
+    with_pending_errors(|| {
+        let context = ParamContext::new(core)
+            .with_registry(registry)
+            .with_observer(&observer);
+        question(&context).map_err(map_error)
     })
 }
 

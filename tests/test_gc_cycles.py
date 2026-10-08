@@ -19,6 +19,14 @@ from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.lattice import Lattice
 from fhy_core.pass_infrastructure import CompilerPass, PassManager
+from fhy_core.search_space import (
+    Configuration,
+    Direction,
+    Measurement,
+    Objective,
+    Space,
+    Variable,
+)
 from fhy_core.symbol_table import (
     SymbolTable,
     SymbolTableFrame,
@@ -26,7 +34,12 @@ from fhy_core.symbol_table import (
 )
 from fhy_core.symbolic.expression import Expression, FunctionSort, NativeFunction
 from fhy_core.symbolic.expression.pattern import RewriteRule, WildcardPattern
-from fhy_core.symbolic.param import CategoricalDomain, OrdinalDomain, Param
+from fhy_core.symbolic.param import (
+    CategoricalDomain,
+    OrdinalDomain,
+    Param,
+    create_categorical_param,
+)
 from fhy_core.symbolic.solver import GroundSimplifier, Simplifier, Solver
 from fhy_core.types import (
     CoreDataType,
@@ -295,6 +308,108 @@ def test_a_data_type_pointing_at_its_numerical_type_is_collected() -> None:
     assert _collects(build)
 
 
+def _ranked_space() -> tuple[Space, Variable[Any], Variable[Any]]:
+    """Return a space of a variable over `_Rank`s and one over `int`s."""
+    ranks: frozenset[Any] = frozenset({_Rank(1), _Rank(2)})
+    ranked = Variable(param=create_categorical_param(ranks), name=Identifier("ranked"))
+    counted = Variable(
+        param=create_categorical_param(frozenset({1, 2})), name=Identifier("counted")
+    )
+    return Space(variables=(ranked, counted)), ranked, counted
+
+
+def test_a_value_pointing_at_its_configuration_is_collected() -> None:
+    """Test a configuration and an opaque value of it that points back at it.
+
+    The configuration holds the value twice, as the object given and in
+    the core configuration's opaque value; both references are visited.
+    """
+    space, ranked, _ = _ranked_space()
+
+    def build() -> object:
+        value = _Rank(1)
+        value.owner = Configuration(space, {ranked.name: value})  # type: ignore[attr-defined]
+        return value
+
+    assert _collects(build)
+
+
+def test_a_value_kept_by_a_changed_configuration_is_collected() -> None:
+    """Test a value a configuration keeps from the one it was changed from.
+
+    The configuration it was given to is dropped; the changed one, which
+    points back through the value, must own the value's core reference.
+    """
+    space, ranked, counted = _ranked_space()
+
+    def build() -> object:
+        value = _Rank(1)
+        given = Configuration(space, {ranked.name: value})
+        value.owner = given.with_entry(counted.name, 1)  # type: ignore[attr-defined]
+        return value
+
+    assert _collects(build)
+
+
+def test_a_value_kept_by_a_reduced_configuration_is_collected() -> None:
+    """Test a value a configuration keeps when another value is removed.
+
+    The configuration it was given to is dropped; the one `without_entry`
+    returns, which points back through the value, must own the value's core
+    reference.
+    """
+    space, ranked, counted = _ranked_space()
+
+    def build() -> object:
+        value = _Rank(1)
+        given = Configuration(space, {ranked.name: value, counted.name: 1})
+        value.owner = given.without_entry(counted.name)  # type: ignore[attr-defined]
+        return value
+
+    assert _collects(build)
+
+
+def test_a_value_pointing_at_its_configuration_s_key_is_collected() -> None:
+    """Test a configuration key and an opaque value of it that points back."""
+    space, ranked, _ = _ranked_space()
+
+    def build() -> object:
+        value = _Rank(1)
+        key = Configuration(space, {ranked.name: value}).key()
+        value.owner = key  # type: ignore[attr-defined]
+        return value
+
+    assert _collects(build)
+
+
+def test_a_value_pointing_at_its_measurement_is_collected() -> None:
+    """Test a measurement and an opaque value of its key that points back."""
+    space, ranked, _ = _ranked_space()
+    latency = Objective("latency", Direction.MINIMIZE)
+
+    def build() -> object:
+        value = _Rank(1)
+        key = Configuration(space, {ranked.name: value}).key()
+        measurement = Measurement.ok(key, {latency: 1.0})
+        value.owner = measurement.with_notes(())  # type: ignore[attr-defined]
+        return value
+
+    assert _collects(build)
+
+
+def test_a_value_pointing_at_a_measurement_s_key_is_collected() -> None:
+    """Test the key a measurement returns, and a value of it that points back."""
+    space, ranked, _ = _ranked_space()
+
+    def build() -> object:
+        value = _Rank(1)
+        key = Configuration(space, {ranked.name: value}).key()
+        value.owner = Measurement.timeout(key).key  # type: ignore[attr-defined]
+        return value
+
+    assert _collects(build)
+
+
 _NOT_TRACKED = {
     **dict.fromkeys(
         (
@@ -320,6 +435,11 @@ _NOT_TRACKED = {
     "SmtScript": "caches only its declarations' identifiers and names, read "
     "through a `PyOnceLock`, which cannot be read without the interpreter",
     "PreservedAnalyses": "caches only the preserved analyses' names",
+    "Rng": "holds only its seed and the generator's state, no Python object",
+    "StridedRun": "holds only the run's integers, no Python object",
+    "ExhaustiveOracle": "holds only its path's coordinates and domain "
+    "signatures, which keep no value of a domain, so no Python object",
+    "Objective": "holds only its name and direction, no Python object",
     "SympySimplifier": "holds only the SymPy module and its classes, which "
     "`sys.modules` keeps reachable, so no garbage cycle runs through them",
 }

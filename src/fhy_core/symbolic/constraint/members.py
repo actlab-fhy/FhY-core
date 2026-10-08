@@ -4,18 +4,21 @@ A set constraint's members are stored, compared, ordered and serialized by
 the Rust core (``fhy_core::constraint``), not with Python collection
 semantics. ``ConstraintMember`` names the member kinds: the four primitive
 Python types, ``Serializable`` leaves that are also ``Hashable``, and
-``tuple``/``frozenset`` containers of the same. Validation rejects
-everything else, and a float NaN, bare or nested, since NaN is unequal to
-itself and could never be matched to a bound value. Members compare
-type-strictly, so ``int``, ``float`` and ``bool`` never compare equal even
-when they carry the same value, including at the leaves of a nested
-``tuple``/``frozenset``. A number whose type subclasses ``int`` or
-``float`` is stored as the exact number it denotes, and ``-0.0`` as
+``tuple``/``frozenset`` containers of the same. An ``Identifier`` member is
+the core's identifier: it equals an identifier with its id, whatever its
+name hint, and nothing else, and reads back as an equal ``Identifier``.
+Validation rejects everything else, and a float NaN, bare or nested, since
+NaN is unequal to itself and could never be matched to a bound value.
+Members compare type-strictly, so ``int``, ``float`` and ``bool`` never
+compare equal even when they carry the same value, including at the leaves
+of a nested ``tuple``/``frozenset``. A number whose type subclasses ``int``
+or ``float`` is stored as the exact number it denotes, and ``-0.0`` as
 ``0.0``. Members are kept in one canonical order, the same in every
-process: by kind (``bool``, ``float``, ``frozenset``, ``int``, ``str``,
-``tuple``, then ``Serializable`` members), then by value, numbers
-numerically, strings by code point, containers element by element, and
-``Serializable`` members by their type and payload.
+process: by kind (``bool``, ``float``, ``frozenset``, ``Identifier``,
+``int``, ``str``, ``tuple``, then other ``Serializable`` members), then by
+value, numbers numerically, identifiers by id, strings by code point,
+containers element by element, and ``Serializable`` members by their type
+and payload.
 """
 
 __all__ = [

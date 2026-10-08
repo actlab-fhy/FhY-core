@@ -98,6 +98,7 @@ pub(crate) fn describe(member: &Member) -> String {
         MemberKind::Int(value) => format!("int:{value}"),
         MemberKind::Float(value) => format!("float:{value}"),
         MemberKind::Str(value) => format!("str:{value}"),
+        MemberKind::Identifier(identifier) => format!("identifier:{}", identifier.id()),
         MemberKind::Tuple(members) => format!(
             "tuple:({})",
             members.iter().map(describe).collect::<Vec<_>>().join(",")

@@ -2,8 +2,8 @@
  "provenance": {
   "package": "fhy_core",
   "package_version": "0.2.0",
-  "git_commit": "40dfb54505929997d809d9ce0026225f9d6a41f8",
-  "python_version": "3.11.16 (main, Sep 24 2026, 17:56:40) [Clang 22.1.3 ]",
+  "git_commit": "d4309e995fb9aa087dc8c4bb0a5e5ed896f62ac7",
+  "python_version": "3.11.13 (main, Jun  4 2025, 08:57:30) [GCC 9.4.0]",
   "generator_command": "uv run --no-sync python rust/fhy-core/tests/golden/generate_serialization_cases.py"
  },
  "cases": [
@@ -519,6 +519,20 @@
    "foreign": []
   },
   {
+   "name": "identifier_members",
+   "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":61910,\"name_hint\":\"x\"},\"values\":[{\"identifier\":{\"id\":99,\"name_hint\":\"b\"}},{\"identifier\":{\"id\":100,\"name_hint\":\"a\"}},{\"int\":\"3\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "identifier_categorical_param",
+   "class": "fhy_core.symbolic.param.core.Param",
+   "rust_type": "Param",
+   "v2": "{\"domain\":{\"categorical\":{\"categories\":[{\"identifier\":{\"id\":99,\"name_hint\":\"b\"}},{\"identifier\":{\"id\":100,\"name_hint\":\"a\"}}]}},\"variable\":{\"id\":61911,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}}",
+   "foreign": []
+  },
+  {
    "name": "random_0000",
    "class": "fhy_core.symbolic.expression.core.BinaryExpression",
    "rust_type": "Expression",
@@ -663,6 +677,13 @@
    "class": "builtins.frozenset",
    "rust_type": "Value",
    "v2": "{\"frozen_set\":[{\"tuple\":[{\"float\":\"2.5\"},{\"bool\":true}]},{\"tuple\":[{\"float\":\"1e300\"},{\"float\":\"0\"}]},{\"tuple\":[{\"int\":\"1\"},{\"str\":\"a\"}]},{\"tuple\":[{\"tuple\":[]},{\"tuple\":[{\"int\":\"3\"}]}]}]}",
+   "foreign": []
+  },
+  {
+   "name": "value_tuple_of_an_identifier",
+   "class": "builtins.tuple",
+   "rust_type": "Value",
+   "v2": "{\"tuple\":[{\"identifier\":{\"id\":61912,\"name_hint\":\"a\"}},{\"int\":\"1\"}]}",
    "foreign": []
   }
  ]

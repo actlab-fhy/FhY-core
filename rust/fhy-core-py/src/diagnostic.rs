@@ -522,6 +522,28 @@ pub(crate) fn borrow_python_diagnostic<'a>(object: &'a Bound<'_, PyAny>) -> Opti
         .map(|diagnostic| &diagnostic.get().diagnostic)
 }
 
+/// Return the core note of the Python `Note` `object`, or `None` for an
+/// object that is not a `Note`.
+pub(crate) fn note_from_python(object: &Bound<'_, PyAny>) -> Option<Note> {
+    object
+        .cast::<PyNote>()
+        .ok()
+        .map(|note| note.get().note.clone())
+}
+
+/// Return a new object of the public `Note` class holding `note`; its kind
+/// is the single Python object of its canonical kind.
+///
+/// # Errors
+///
+/// Raises whatever building the objects raises.
+pub(crate) fn note_to_python<'py>(py: Python<'py>, note: &Note) -> PyResult<Bound<'py, PyAny>> {
+    let kind = PyNoteKind::to_python(py, None, note.kind().clone(), None)?;
+    PyNote::public_class()
+        .get(py)?
+        .call1((note.message(), kind))
+}
+
 /// Return a new object of the public `Diagnostic` class holding
 /// `diagnostic`, with a new public `Note` as its message.
 ///
@@ -531,11 +553,7 @@ pub(crate) fn diagnostic_to_python<'py>(
     py: Python<'py>,
     diagnostic: &Diagnostic,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let note = diagnostic.message();
-    let kind = PyNoteKind::to_python(py, None, note.kind().clone(), None)?;
-    let note = PyNote::public_class()
-        .get(py)?
-        .call1((note.message(), kind))?;
+    let note = note_to_python(py, diagnostic.message())?;
     PyDiagnostic::public_class().get(py)?.call1((
         level_to_python(py, diagnostic.level())?,
         note,

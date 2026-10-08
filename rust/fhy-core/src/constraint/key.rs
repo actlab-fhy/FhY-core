@@ -159,6 +159,7 @@ fn write_member_key(member: &Member, f: &mut fmt::Formatter<'_>) -> fmt::Result 
             write_float(value, f)
         }
         MemberKind::Str(value) => write!(f, "str:{value:?}"),
+        MemberKind::Identifier(value) => write!(f, "identifier:{}", value.id()),
         MemberKind::Tuple(members) => {
             f.write_str("tuple(")?;
             write_members(members.iter(), f)?;

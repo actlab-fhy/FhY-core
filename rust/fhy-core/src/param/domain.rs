@@ -400,7 +400,7 @@ fn read_leaf_values(
     }
     for (index, value) in values.iter().enumerate() {
         let is_leaf = match value {
-            Value::Bool(_) | Value::Int(_) | Value::Str(_) => true,
+            Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Identifier(_) => true,
             Value::Float(_) => allows_float,
             Value::Opaque(opaque) => opaque.get().is_member_shaped(),
             Value::Decimal(_) | Value::Tuple(_) | Value::FrozenSet(_) => false,
@@ -448,9 +448,9 @@ impl OrdinalDomain {
     ///
     /// In order: [`DomainError::EmptyValues`] for no value;
     /// [`DomainError::NotALeafValue`] for a value that is no Boolean,
-    /// integer, float, string or member-shaped opaque value;
+    /// integer, float, string, identifier or member-shaped opaque value;
     /// [`DomainError::NanValue`] for a NaN; [`DomainError::IncomparableValues`]
-    /// for two values that do not order; and
+    /// for two values that do not order, such as two identifiers; and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
         let members = read_leaf_values(DomainKind::Ordinal, values, true)?;
@@ -482,7 +482,8 @@ impl CategoricalDomain {
     ///
     /// In order: [`DomainError::EmptyValues`] for no value;
     /// [`DomainError::NotALeafValue`] for a value that is no Boolean,
-    /// integer, string or member-shaped opaque value, a float included; and
+    /// integer, string, identifier or member-shaped opaque value, a float
+    /// included; and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
         let members = read_leaf_values(DomainKind::Categorical, values, false)?;
@@ -517,7 +518,7 @@ impl PermutationDomain {
     ///
     /// In order: [`DomainError::EmptyValues`] for no value;
     /// [`DomainError::NotALeafValue`] for a value that is no Boolean,
-    /// integer, float, string or member-shaped opaque value;
+    /// integer, float, string, identifier or member-shaped opaque value;
     /// [`DomainError::NanValue`] for a NaN; and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {

@@ -823,8 +823,9 @@ def serialize_value(value: RegistryWrappedValue) -> SerializedDict:
     """Return the V2 form of a member value, as the Rust core writes a value.
 
     ``{"bool": b}``, ``{"int": "12"}``, ``{"float": "1.5"}``, ``{"str": ..}``,
+    ``{"identifier": {"id": .., "name_hint": ..}}`` for an ``Identifier``,
     ``{"tuple": [..]}``, ``{"frozen_set": [..]}`` (in the canonical member
-    order), or ``{"opaque": <foreign part>}`` for a ``Serializable``.
+    order), or ``{"opaque": <foreign part>}`` for another ``Serializable``.
 
     Raises:
         SerializationTypeError: If ``value`` is not a supported leaf,
@@ -837,6 +838,9 @@ def serialize_value(value: RegistryWrappedValue) -> SerializedDict:
 
 def deserialize_value(data: SerializedDict) -> RegistryWrappedValue:
     """Return the member value of its V2 form, the inverse of `serialize_value`.
+
+    An identifier written as an opaque part, ``{"opaque": {"type_id": "id",
+    ..}}``, as 0.2.0 wrote it, reads as an ``Identifier`` too.
 
     Raises:
         DeserializationValueError: If ``data`` is not the V2 form of a value.
@@ -951,6 +955,14 @@ def register_serializable(
             without changing the class' canonical `_SERIALIZATION_CLASS_TYPE_ID`.
             If False (default), `type_id` is treated as the canonical id: it will be
             set on the class (if not already set) and must match if already set.
+
+    Raises:
+        SerializationError: If another class is registered under the type id,
+            if a ``Variable`` or ``Alternative`` kind a downstream Rust crate
+            defines is registered under it (decoding asks the kinds first, so
+            the class could not read its own payloads back), or if the class
+            already has a different canonical type id. The class and the
+            registry are left unchanged.
     """
 
     def _wrapper(c: type[_T]) -> type[_T]:
@@ -965,6 +977,16 @@ def register_serializable(
             raise SerializationError(
                 f'Duplicate registration for type_id "{ty_id}": '
                 f"{_TYPE_REGISTRY[ty_id]} already registered; refusing to override."
+            )
+
+        from . import _rs  # noqa: PLC0415  # the extension imports this module
+
+        kind_class = _rs.get_search_space_kind_class(ty_id)
+        if kind_class is not None:
+            raise SerializationError(
+                f'Duplicate registration for type_id "{ty_id}": '
+                f"{kind_class} already registered as a Rust search-space kind; "
+                "refusing to override."
             )
 
         if type_id is not None and not alias:

@@ -3,7 +3,7 @@
 //! provenance, tree traversals, terms and lattices, symbolic expressions
 //! with patterns and rewrite rules, a compiler-pass framework, a solver
 //! with pluggable backends, constraints and params, the IR type system, a
-//! symbol table, and a stack and a scope.
+//! symbol table, a stack and a scope, and search spaces.
 //!
 //! # Features
 //!
@@ -11,7 +11,9 @@
 //! off-by-default feature: `z3`, the `solver::Z3Solver` backend, which
 //! links libz3, and `ndarray`, the array evaluation of
 //! [`expression::evaluate`]. The documentation on docs.rs shows both and
-//! marks the items each feature adds.
+//! marks the items each feature adds. The off-by-default `testing` feature
+//! adds `search_space::testing`, test-only checks for other crates'
+//! implementations of the search-space traits, which are not stable API.
 //!
 //! # Modules
 //!
@@ -26,6 +28,8 @@
 //! [`stack`] and [`scope`] depend on no other module, each other included.
 //! [`foreign`] depends on no other module; the open types of [`types`],
 //! [`constraint`] and [`param`] use it.
+//! [`search_space`] depends on [`param`], [`constraint`] and
+//! [`expression`], and not on [`pass`], [`types`] or [`symbol_table`].
 //!
 //! | Module | Contents |
 //! |---|---|
@@ -49,6 +53,7 @@
 //! | [`symbol_table`] | [`SymbolTable`](symbol_table::SymbolTable): namespaces with parents, holding frames for their symbols, and the built-in [`SymbolFrame`](symbol_table::SymbolFrame)s |
 //! | [`stack`] | [`Stack`](stack::Stack): a last-in, first-out stack |
 //! | [`scope`] | [`Scope`](scope::Scope): lexical frames with shadowing lookup, and a root frame that cannot be popped |
+//! | [`search_space`] | the decisions of a compiler search: [`Variable`](search_space::Variable)s and [`Alternative`](search_space::Alternative)s that other crates implement, [`Choice`](search_space::Choice)s, and [`Space`](search_space::Space)s with conditions and forbidden clauses; the [`Configuration`](search_space::Configuration)s that are their points, their keys, and equivalence up to renaming |
 //!
 //! Each public item has exactly one public path.
 //!
@@ -105,12 +110,13 @@
 //! invalidate an existing one.
 //!
 //! A type that can hold a part defined outside this crate, an extension
-//! type, a custom constraint or domain, or an opaque value, serializes the
+//! type, a custom constraint or domain, an opaque value, or a search
+//! space's variable or alternative, serializes the
 //! part as a [`Foreign`](foreign::Foreign), which the part's own
 //! `to_foreign` gives; its `Deserialize` refuses the part by its type id.
 //! Its wire form in the module's `wire` submodule
 //! ([`types::wire`], [`symbol_table::wire`], [`constraint::wire`],
-//! [`param::wire`]) reads the same shape and builds the value with a
+//! [`param::wire`], [`search_space::wire`]) reads the same shape and builds the value with a
 //! [`Resolve`](foreign::Resolve)r of the parts. The Python binding writes
 //! these shapes as the Python package's wire format, and keeps the older
 //! `__type__`/`__data__` envelope format until it is removed. This crate
@@ -133,6 +139,7 @@ pub mod param;
 pub mod pass;
 pub mod provenance;
 pub mod scope;
+pub mod search_space;
 pub mod solver;
 pub mod stack;
 pub mod symbol_table;

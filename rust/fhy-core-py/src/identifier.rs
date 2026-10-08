@@ -91,6 +91,16 @@ pub(crate) fn new_python_identifier<'py>(
     python_identifier_class(py)?.call1((name_hint,))
 }
 
+/// Return whether `object` is a Python `Identifier`, of its class or a
+/// subclass.
+///
+/// # Errors
+///
+/// Raises whatever importing the class or the `isinstance` check raises.
+pub(crate) fn is_python_identifier(object: &Bound<'_, PyAny>) -> PyResult<bool> {
+    object.is_instance(python_identifier_class(object.py())?)
+}
+
 /// Return the id of `object` if it is a Python `Identifier`, or `None` for
 /// any other object.
 ///
@@ -98,7 +108,7 @@ pub(crate) fn new_python_identifier<'py>(
 ///
 /// Raises whatever reading the identifier's `id` raises.
 pub(crate) fn read_identifier_id(object: &Bound<'_, PyAny>) -> PyResult<Option<u64>> {
-    if !object.is_instance(python_identifier_class(object.py())?)? {
+    if !is_python_identifier(object)? {
         return Ok(None);
     }
     object

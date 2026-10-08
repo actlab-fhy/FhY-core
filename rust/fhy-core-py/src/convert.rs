@@ -22,6 +22,10 @@
 //! The context in which `fhy_core` asks a param question, for a downstream
 //! binding crate that asks its own, is [`param::with_param_context`].
 //!
+//! The objects of `fhy_core.search_space`, and the registration of the
+//! `Variable` and `Alternative` kinds a downstream crate defines, are in
+//! the [`search_space`] submodule.
+//!
 //! # Identity
 //!
 //! - An identifier is converted by id and name hint, in both directions,
@@ -36,6 +40,7 @@
 
 pub mod numpy;
 pub mod param;
+pub mod search_space;
 
 use pyo3::prelude::*;
 

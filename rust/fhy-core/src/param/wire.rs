@@ -127,6 +127,7 @@ fn member_value(member: &Member) -> Value {
         MemberKind::Int(value) => Value::Int(value.clone()),
         MemberKind::Float(value) => Value::Float(value),
         MemberKind::Str(value) => Value::Str(value.to_owned()),
+        MemberKind::Identifier(value) => Value::Identifier(value.clone()),
         MemberKind::Tuple(members) => Value::Tuple(members.iter().map(member_value).collect()),
         MemberKind::FrozenSet(members) => {
             Value::FrozenSet(members.iter().map(member_value).collect())

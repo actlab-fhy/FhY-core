@@ -24,12 +24,12 @@ use pyo3::types::{PyByteArray, PyBytes, PyDict, PyString, PyType};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use fhy_core::constraint::{Constraint, CustomConstraint, OpaqueValue, Value};
+use fhy_core::constraint::{Constraint, CustomConstraint, OpaqueValue};
 use fhy_core::foreign::{BuildError, Foreign, ForeignError, Part, Resolve};
 use fhy_core::param::{CustomDomain, ParamDomain};
 use fhy_core::types::{DataType, DataTypeExtension, Type, TypeExtension};
 
-use crate::constraint::{read_constraint, read_opaque_member};
+use crate::constraint::{read_constraint, read_resolved_part};
 use crate::util::exceptions::{
     DESERIALIZATION_VALUE_ERROR, MALFORMED_PAYLOAD_ERROR, SERIALIZATION_ERROR,
 };
@@ -106,7 +106,7 @@ pub(crate) fn foreign_error(py: Python<'_>, error: &ForeignError) -> PyErr {
 }
 
 /// Return the name of the class `cls`, or `?`.
-fn class_name(cls: &Bound<'_, PyType>) -> String {
+pub(crate) fn class_name(cls: &Bound<'_, PyType>) -> String {
     cls.name()
         .map_or_else(|_| "?".to_owned(), |name| name.to_string())
 }
@@ -166,16 +166,31 @@ pub(crate) fn read_text(payload: &Bound<'_, PyAny>) -> PyResult<String> {
     })
 }
 
+/// Return whether `error`, from parsing a JSON text, says the text is not
+/// JSON: a syntax error or a truncated text, but not `serde_json`'s
+/// recursion limit, which refuses valid JSON nested deeper than it reads.
+fn is_malformed_json(error: &serde_json::Error) -> bool {
+    (error.is_syntax() || error.is_eof()) && !is_recursion_limit(error)
+}
+
+/// Return whether `error` is `serde_json`'s recursion limit, which it
+/// classifies as a syntax error with no code to match, so it is told apart
+/// by its text.
+fn is_recursion_limit(error: &serde_json::Error) -> bool {
+    error.is_syntax() && error.to_string().starts_with("recursion limit exceeded")
+}
+
 /// Return the wire form `D` of the V2 text `text`, a payload of `cls`.
 ///
 /// # Errors
 ///
 /// Raises `MalformedPayloadError` for text that is not JSON, and
-/// `DeserializationValueError` with serde's text for JSON of another shape.
+/// `DeserializationValueError` with serde's text for JSON of another shape
+/// or nested deeper than `serde_json` reads.
 pub(crate) fn parse<D: DeserializeOwned>(cls: &Bound<'_, PyType>, text: &str) -> PyResult<D> {
     let py = cls.py();
     serde_json::from_str(text).map_err(|error| {
-        if error.is_syntax() || error.is_eof() {
+        if is_malformed_json(&error) {
             MALFORMED_PAYLOAD_ERROR.err(py, ("JSON payload is not valid JSON.".to_owned(),))
         } else {
             DESERIALIZATION_VALUE_ERROR.err(
@@ -202,23 +217,71 @@ pub(crate) fn parse_dict<D: DeserializeOwned>(
     cls: &Bound<'_, PyType>,
     data: &Bound<'_, PyAny>,
 ) -> PyResult<D> {
-    let py = cls.py();
-    let invalid = |reason: String| {
-        DESERIALIZATION_VALUE_ERROR.err(
-            py,
-            (format!(
-                "Invalid V2 payload for \"{}\": {reason}",
-                class_name(cls)
-            ),),
-        )
-    };
-    let value = read_json_value(data, 0)?.map_err(invalid)?;
-    serde_json::from_value(value).map_err(|error| invalid(error.to_string()))
+    parse_tree(cls, read_tree(cls, data)?)
+}
+
+/// Return the `DeserializationValueError` of a payload of `cls` that is
+/// invalid for `reason`.
+fn invalid_payload(cls: &Bound<'_, PyType>, reason: &str) -> PyErr {
+    DESERIALIZATION_VALUE_ERROR.err(
+        cls.py(),
+        (format!(
+            "Invalid V2 payload for \"{}\": {reason}",
+            class_name(cls)
+        ),),
+    )
+}
+
+/// Return the JSON value tree of the V2 dict `data`, a payload of `cls`,
+/// the shape `json.loads` makes.
+///
+/// # Errors
+///
+/// Raises `DeserializationValueError` for a payload that is not
+/// JSON-shaped.
+pub(crate) fn read_tree(
+    cls: &Bound<'_, PyType>,
+    data: &Bound<'_, PyAny>,
+) -> PyResult<serde_json::Value> {
+    read_json_value(data, 0)?.map_err(|reason| invalid_payload(cls, &reason))
+}
+
+/// Return the JSON value tree of the V2 text `text`, a payload of `cls`.
+///
+/// # Errors
+///
+/// Raises `MalformedPayloadError` for text that is not JSON, and
+/// `DeserializationValueError` for JSON nested deeper than `serde_json`
+/// reads.
+pub(crate) fn read_text_tree(cls: &Bound<'_, PyType>, text: &str) -> PyResult<serde_json::Value> {
+    serde_json::from_str(text).map_err(|error| {
+        if is_malformed_json(&error) {
+            MALFORMED_PAYLOAD_ERROR.err(cls.py(), ("JSON payload is not valid JSON.".to_owned(),))
+        } else {
+            invalid_payload(cls, &error.to_string())
+        }
+    })
+}
+
+/// Return the wire form `D` of the JSON value tree `tree`, a payload of
+/// `cls`.
+///
+/// # Errors
+///
+/// Raises `DeserializationValueError` for a tree not of the shape `D`
+/// reads.
+pub(crate) fn parse_tree<D: DeserializeOwned>(
+    cls: &Bound<'_, PyType>,
+    tree: serde_json::Value,
+) -> PyResult<D> {
+    serde_json::from_value(tree).map_err(|error| invalid_payload(cls, &error.to_string()))
 }
 
 /// The deepest nesting of `dict`s and `list`s the reader of a Python payload
-/// accepts, `serde_json`'s own limit for JSON text. V2 payloads are shallow:
-/// an expression is a flat node table.
+/// accepts, about `serde_json`'s own limit for JSON text, which reads 127.
+/// V2 payloads are shallow: an expression is a flat node table, and a
+/// search space's choices, which nest at most the core's
+/// `MAX_CHOICE_DEPTH` levels, take 83 of these at most.
 const MAX_PAYLOAD_DEPTH: usize = 128;
 
 /// Return the JSON value of the Python payload `object`, `depth` levels
@@ -330,7 +393,7 @@ pub(crate) struct PyResolver;
 
 /// Return the Python object the foreign part `foreign` encodes, a family
 /// member when `family`.
-fn resolve_object<'py>(
+pub(crate) fn resolve_object<'py>(
     py: Python<'py>,
     foreign: &Foreign,
     family: bool,
@@ -345,7 +408,7 @@ fn resolve_object<'py>(
 }
 
 /// Return the error of a resolved object of the wrong kind for its place.
-fn wrong_kind(py: Python<'_>, foreign: &Foreign, expected: &str) -> ForeignError {
+pub(crate) fn wrong_kind(py: Python<'_>, foreign: &Foreign, expected: &str) -> ForeignError {
     record_foreign_failure(
         py,
         foreign.type_id(),
@@ -360,11 +423,8 @@ impl Resolve<Part<dyn OpaqueValue>> for PyResolver {
     fn resolve(&self, foreign: &Foreign) -> Result<Part<dyn OpaqueValue>, ForeignError> {
         Python::attach(|py| {
             let object = resolve_object(py, foreign, false)?;
-            match read_opaque_member(&object) {
-                Ok(Value::Opaque(opaque)) => Ok(opaque),
-                Ok(_) => Err(wrong_kind(py, foreign, "Serializable value")),
-                Err(error) => Err(record_foreign_failure(py, foreign.type_id(), error)),
-            }
+            read_resolved_part(&object)
+                .map_err(|error| record_foreign_failure(py, foreign.type_id(), error))
         })
     }
 }

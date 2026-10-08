@@ -1,16 +1,21 @@
 //! Properties of constraints: membership agrees with a reference
 //! type-strict matcher, a member set does not depend on the order of its
 //! members, the ordering key is equal exactly on structural equivalence,
-//! and a system's satisfiability agrees with brute force.
+//! and a system's satisfiability agrees with brute force; and of values
+//! and members, identifiers among them: equality agrees with hashing and
+//! the canonical order, an identifier equals no string or integer, and the
+//! wire form round-trips, from the opaque form 0.2.0 wrote included.
 //!
 //! The satisfiability property runs on the z3 backend under the `z3`
 //! feature, and otherwise when `FHY_SMT_SOLVER` names an SMT-LIB2
 //! executable, such as `z3 -in`; without either, it passes trivially.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use fhy_core::constraint::wire::ValueData;
 use fhy_core::constraint::{
     Binding, Bindings, Constraint, ConstraintContext, ConstraintSystem, EquationConstraint, Member,
     MemberKind, MemberSet, Outcome, Polarity, SetConstraint, Value,
@@ -19,20 +24,35 @@ use fhy_core::expression::{Expression, SymbolType};
 use fhy_core::identifier::Identifier;
 use fhy_core::solver::{CheckLimits, SmtSolver, Solver};
 use proptest::prelude::*;
+use serde_json::Value as Json;
 
 use crate::support::constraint::ConstraintKey;
 use crate::support::constraint::{describe, int, member, text};
 use crate::support::expression::build_expression_strategy;
+use crate::support::foreign::{LEGACY_IDENTIFIER, LegacyResolver};
 use crate::support::hashing::hash_of;
+use crate::support::serde::check_serde_round_trip;
+
+/// The identifiers values are drawn from: one name hint per id, the names
+/// shared with the strings drawn and the ids with the integers, and two ids
+/// whose decimal texts order opposite to the ids.
+static IDENTIFIERS: std::sync::LazyLock<Vec<Identifier>> = std::sync::LazyLock::new(|| {
+    [(1, "a"), (9, "b"), (10, "c"), (99, "ab"), (100, "x")]
+        .into_iter()
+        .map(|(id, name)| Identifier::try_restore(id, name).expect("below the cap"))
+        .collect()
+});
 
 /// Return a strategy for member-shaped values: small integers, Booleans,
-/// short strings, floats with repeats of one value, and tuples of those.
+/// short strings, floats with repeats of one value, identifiers whose
+/// names and ids the strings and integers reuse, and tuples of those.
 fn build_value_strategy() -> BoxedStrategy<Value> {
     let leaf = prop_oneof![
         (-5_i64..10).prop_map(int),
         any::<bool>().prop_map(Value::Bool),
         "[abc]{0,2}".prop_map(|string: String| text(&string)),
         prop::sample::select(vec![0.0, -0.0, 0.5, 1.0, -2.0]).prop_map(Value::Float),
+        prop::sample::select(IDENTIFIERS.clone()).prop_map(Value::Identifier),
     ];
     leaf.prop_recursive(2, 8, 3, |inner| {
         prop_oneof![
@@ -114,6 +134,7 @@ fn is_type_strictly_equal(left: &Value, right: &Value) -> bool {
             left.partial_cmp(right) == Some(std::cmp::Ordering::Equal)
         }
         (Value::Str(left), Value::Str(right)) => left == right,
+        (Value::Identifier(left), Value::Identifier(right)) => left.id() == right.id(),
         (Value::Tuple(left), Value::Tuple(right)) => {
             left.len() == right.len()
                 && left
@@ -365,7 +386,6 @@ proptest! {
         b in build_built_in_constraint_strategy(),
         c in build_built_in_constraint_strategy(),
     ) {
-        use std::cmp::Ordering;
         prop_assert_eq!(a.cmp(&b) == Ordering::Equal, a == b);
         prop_assert_eq!(a.cmp(&b), b.cmp(&a).reverse());
         prop_assert_eq!(a.partial_cmp(&b), Some(a.cmp(&b)));
@@ -399,6 +419,119 @@ proptest! {
                 outcome,
                 if expected { Outcome::Satisfied } else { Outcome::Violated }
             );
+        }
+    }
+}
+
+/// Return `wire` with every identifier written as 0.2.0 wrote it, an opaque
+/// part of type id `id` whose payload is the identifier's JSON text.
+fn to_legacy_form(wire: Json) -> Json {
+    match wire {
+        Json::Object(fields) => Json::Object(
+            fields
+                .into_iter()
+                .map(|(tag, inner)| {
+                    if tag == "identifier" {
+                        let payload = inner.to_string();
+                        (
+                            "opaque".to_owned(),
+                            serde_json::json!({"type_id": LEGACY_IDENTIFIER, "data": payload}),
+                        )
+                    } else {
+                        (tag, to_legacy_form(inner))
+                    }
+                })
+                .collect(),
+        ),
+        Json::Array(elements) => Json::Array(elements.into_iter().map(to_legacy_form).collect()),
+        other => other,
+    }
+}
+
+proptest! {
+    /// A value and its member, identifiers at any depth included,
+    /// round-trip through JSON and postcard, and their JSON re-encodes
+    /// byte-identically.
+    #[test]
+    fn values_and_members_round_trip_through_serde(value in build_value_strategy()) {
+        check_serde_round_trip(&value)?;
+        check_serde_round_trip(&member(value))?;
+    }
+
+    /// Writing each identifier of a value's wire form as 0.2.0's opaque part
+    /// reads back, through a resolver whose part reports the identifier, as
+    /// the same value, which writes the current form again.
+    #[test]
+    fn legacy_opaque_identifiers_read_as_identifiers(value in build_value_strategy()) {
+        let wire: Json = serde_json::to_value(&value).expect("encodes");
+        let legacy = to_legacy_form(wire.clone());
+
+        let data: ValueData = serde_json::from_value(legacy).expect("reads");
+        let decoded = data.clone().build(&LegacyResolver).expect("resolves");
+        let decoded_member = data.build_member(&LegacyResolver).expect("resolves");
+
+        prop_assert_eq!(&decoded, &value);
+        prop_assert_eq!(serde_json::to_value(&decoded).expect("encodes"), wire);
+        prop_assert_eq!(decoded_member, member(value));
+    }
+
+    /// Value equality is reflexive and symmetric and agrees with hashing.
+    #[test]
+    fn value_equality_is_an_equivalence_that_agrees_with_hashing(
+        left in build_value_strategy(),
+        right in build_value_strategy(),
+    ) {
+        prop_assert_eq!(&left, &left.clone());
+        prop_assert_eq!(left == right, right == left);
+        prop_assert_eq!(left == right, is_type_strictly_equal(&left, &right));
+        if left == right {
+            prop_assert_eq!(hash_of(&left), hash_of(&right));
+        }
+    }
+
+    /// The canonical member order is total, antisymmetric and transitive,
+    /// equal exactly on equal members, and agrees with hashing.
+    #[test]
+    fn member_order_is_total_and_agrees_with_equality_and_hashing(
+        a in build_value_strategy(),
+        b in build_value_strategy(),
+        c in build_value_strategy(),
+    ) {
+        let [a, b, c] = [a, b, c].map(member);
+        let ab = a.partial_cmp(&b);
+
+        prop_assert!(ab.is_some(), "{:?} and {:?} have no order", a.kind(), b.kind());
+        prop_assert_eq!(ab, b.partial_cmp(&a).map(Ordering::reverse));
+        prop_assert_eq!(ab == Some(Ordering::Equal), a == b);
+        if a == b {
+            prop_assert_eq!(hash_of(&a), hash_of(&b));
+        }
+        if a <= b && b <= c {
+            prop_assert!(a <= c);
+        }
+    }
+
+    /// An identifier equals no string and no integer, its name and id
+    /// included, as a value, as a member and in a set.
+    #[test]
+    fn identifier_never_equals_a_string_or_an_integer(
+        identifier in prop::sample::select(IDENTIFIERS.clone()),
+        other_text in "[abcx]{0,2}",
+        other_int in 0_i64..120,
+    ) {
+        let value = Value::Identifier(identifier.clone());
+        let set = MemberSet::new([member(value.clone())]);
+        let id = i64::try_from(identifier.id()).expect("a small id");
+
+        for other in [
+            text(&other_text),
+            text(identifier.name_hint()),
+            int(other_int),
+            int(id),
+        ] {
+            prop_assert_ne!(&value, &other);
+            prop_assert_ne!(member(value.clone()), member(other.clone()));
+            prop_assert!(!set.contains_value(&other));
         }
     }
 }

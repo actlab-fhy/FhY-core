@@ -79,5 +79,6 @@ pub use domain::{
 pub use error::{
     AssignmentError, DomainError, IntervalError, ParamBuildError, ParamError, SetOperation,
 };
+pub(crate) use interval::effective_interval;
 pub use interval::{BoundSide, Inclusivity, Operand, check_bounds_are_ordered};
 pub use parameter::{Param, ValueCheck};

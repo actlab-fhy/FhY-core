@@ -275,6 +275,19 @@ impl RenamingValue {
     }
 }
 
+/// Return a new Python `AlphaRenaming` of the core `renaming`, whose
+/// identifiers' objects are built on demand.
+///
+/// # Errors
+///
+/// Raises whatever allocating the object raises.
+pub(crate) fn renaming_to_python<'py>(
+    py: Python<'py>,
+    renaming: &AlphaRenaming,
+) -> PyResult<Bound<'py, PyAlphaRenaming>> {
+    RenamingValue::new(renaming.clone(), ObjectTable::default()).into_python(py)
+}
+
 /// Return the pairs of `map` in the order of their keys' ids.
 fn sorted_pairs(map: RenamingMap<'_>) -> Vec<(&Identifier, &Identifier)> {
     let mut pairs: Vec<_> = map.iter().collect();

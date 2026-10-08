@@ -403,6 +403,20 @@ param observer that logs to `fhy_core`'s loggers), detached from the
 interpreter when `detach`, and re-raises after the question the Python
 exception a hook raised during it. `fhy_core`'s methods run over the same
 code, so a downstream crate decides a question as `fhy_core` does.
+Its `convert::search_space` module converts the objects of
+`fhy_core.search_space` (`variable_*`, `alternative_*` and `choice_*`
+`_from_python`/`_to_python`) and registers the `Variable` and `Alternative`
+kinds a downstream crate defines (`register_variable_kind`,
+`register_alternative_kind`: the kind, its `#[pyclass]`, and the functions
+that read an object, build an object and resolve a foreign part), which the
+binding then reads, writes and decodes as it does its own. The resolve
+function is handed the binding's resolver of the payload, as a
+`&dyn SearchSpaceResolver`, and the `ParamContext` it is decoded under, and
+builds the parts its own part holds (a param, variables, choices) with
+both, so a Python subclass's variable or an opaque value inside it decodes
+too. A class that keeps a Python-defined part reads it inside
+`util::gc::collect_slots`, keeps the `Slots` and the objects it was given,
+and visits them from its `__traverse__`, as `rust/example-aggregate` does.
 Its `util` module is the public surface for writing a Rust-backed class the
 way `fhy_core`'s are written, which `fhy_core`'s own classes use and a
 downstream `-py` crate builds on:
@@ -594,7 +608,7 @@ that `AlphaRenaming.empty()` returns is a write-once slot
 first use, as a public class slot is; the derived-equivalence plans stay in
 the Python module's `_PLAN_CACHE` dict.
 
-The binding holds three shared registries for the Python API. The function
+The binding holds four shared registries for the Python API. The function
 registry behind `register_function` and the lookups of
 `fhy_core.symbolic.expression.registry` is a `Mutex<Arc<_>>` of the core's
 owned `FunctionRegistry` and each entry's Python object
@@ -615,8 +629,23 @@ core's owned `VerificationRegistry` and the Python objects its keys stand
 for (`rust/fhy-core-py/src/pass/verification.rs`), which the binding
 reaches through a write-once import cache. A registration swaps in a new
 state whole, and the lock is never held across a call into Python. It is
-append-only and adds no Rust `static` with interior mutability. The core
-crate stays free of all three, as of all global state beyond identity.
+append-only and adds no Rust `static` with interior mutability. The kind
+registry of `fhy_core.search_space`, the `Variable` and `Alternative` kinds
+downstream Rust crates define, lives in the module state the same way:
+`register` sets the private attribute `fhy_core._rs._search_space_kinds` to
+a `Mutex<Arc<_>>` of one map per family from a kind to its class and
+functions (`rust/fhy-core-py/src/search_space/kinds.rs`). A downstream crate
+registers through `convert::search_space`, each kind and each class once; a
+registration swaps in a new state whole, and the lock is never held across
+a call into Python. A `Variable` or `Alternative` kind and a Python class
+registered with `register_serializable` never share a type id, since
+decoding asks the kinds first: whichever registration comes second is
+refused. Registering a kind reads `fhy_core.serialization`'s registry
+from `sys.modules` before it takes the lock, and refuses a type id a class
+is registered under with `ValueError`; `register_serializable` asks
+`fhy_core._rs.get_search_space_kind_class` and refuses a kind's type id
+with `SerializationError`. The core crate stays free of all four, as of all
+global state beyond identity.
 
 The rest of the binding's state is thread-local and lives only for one
 call:
@@ -796,6 +825,9 @@ module depends only on the layers before it:
    on `constraint` and never on `pass`
 10. `stack` and `scope`, the last-in, first-out stack and the lexical
     scope, which depend on no other module, each other included
+11. `search_space`, the decisions of a compiler search and the points it
+    visits, which depends on `param`, `constraint` and `expression`, and
+    never on `pass`, `types` or `symbol_table`
 
 A module with submodules is a `foo.rs` file next to a `foo/` directory;
 there are no `mod.rs` files. A private module is never named `core`, which
@@ -830,6 +862,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbol_table` | `fhy_core::symbol_table`; the abstract `SymbolTableFrame` that Python-defined frames subclass stays in Python |
 | `fhy_core.utils.stack` | `fhy_core::stack`, for Rust users; the Python `Stack` stays a separate Python implementation with the same behavior |
 | `fhy_core.utils.scope` | `fhy_core::scope`, for Rust users; the Python `Scope` stays a separate Python implementation with the same behavior |
+| `fhy_core.search_space` | `fhy_core::search_space`; MOGA-VM's `moga_vm.cir.space.core`, ported, whose CIR-specific kinds implement its traits in MOGA-VM |
 
 ### Errors belong to their module
 

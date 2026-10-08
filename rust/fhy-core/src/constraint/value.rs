@@ -7,7 +7,8 @@
 //! [`MemberSet`] holds distinct members in one canonical order.
 //!
 //! Equality is type-strict: a Boolean, an integer and a float never compare
-//! equal, whatever they hold. A value only its producer can compare, such as
+//! equal, whatever they hold, and an [`Identifier`] used as a constant, such
+//! as a category of a param, equals only the identifier with its id. A value only its producer can compare, such as
 //! a user object of the Python binding, is an opaque value: a
 //! [`Part<dyn OpaqueValue>`](Part).
 
@@ -20,6 +21,7 @@ use std::mem;
 
 use crate::expression::{BigInt, Decimal, LiteralValue, write_float};
 use crate::foreign::{BoxError, ForeignPart, Part, impl_part, is_same_part};
+use crate::identifier::Identifier;
 
 /// A value only its producer can compare.
 ///
@@ -82,6 +84,16 @@ pub trait OpaqueValue: ForeignPart {
         let _ = other;
         Ok(None)
     }
+
+    /// Return the identifier the value stands for, or `None` for a value
+    /// that is no identifier.
+    ///
+    /// The wire forms build an opaque part whose value reports an
+    /// identifier as that [`Value::Identifier`], so a resolver reads an
+    /// identifier written as an opaque part. The default reports none.
+    fn identifier(&self) -> Option<Identifier> {
+        None
+    }
 }
 
 impl_part!(OpaqueValue);
@@ -110,6 +122,9 @@ pub enum Value {
     Decimal(Decimal),
     /// A string.
     Str(String),
+    /// An identifier used as a constant, equal to the identifier with the
+    /// same id and to nothing else.
+    Identifier(Identifier),
     /// A sequence of values.
     Tuple(Vec<Self>),
     /// An unordered collection of values.
@@ -144,6 +159,7 @@ impl PartialEq for Value {
             (Self::Float(left), Self::Float(right)) => are_floats_equivalent(*left, *right),
             (Self::Decimal(left), Self::Decimal(right)) => left == right,
             (Self::Str(left), Self::Str(right)) => left == right,
+            (Self::Identifier(left), Self::Identifier(right)) => left == right,
             (Self::Tuple(left), Self::Tuple(right)) => left == right,
             (Self::FrozenSet(left), Self::FrozenSet(right)) => {
                 left.iter().all(|value| right.contains(value))
@@ -174,6 +190,7 @@ impl Hash for Value {
             }
             Self::Decimal(value) => value.hash(state),
             Self::Str(value) => value.hash(state),
+            Self::Identifier(value) => value.hash(state),
             Self::Tuple(values) => values.hash(state),
             Self::FrozenSet(values) => {
                 let mut hashes: Vec<u64> = values
@@ -195,11 +212,12 @@ impl Hash for Value {
 
 impl fmt::Display for Value {
     /// Write the value for people, as a literal expression writes the
-    /// kinds it shares (`true`, `3`, `0.5`): a string quoted and escaped,
-    /// a tuple as `(1, 2)`, `(1,)` or `()`, a frozen set as `{1, 2}` or
-    /// `{}`, and an opaque value as its type name in angle brackets. The
-    /// text is not parsed back, and distinct values may write alike (the
-    /// integer `1` and the float `1.0`).
+    /// kinds it shares (`true`, `3`, `0.5`): a string quoted and escaped, an
+    /// identifier as its name hint, a tuple as `(1, 2)`, `(1,)` or `()`, a
+    /// frozen set as `{1, 2}` or `{}`, and an opaque value as its type name
+    /// in angle brackets. The text is not parsed back, and distinct values
+    /// may write alike (the integer `1` and the float `1.0`, or two
+    /// identifiers with one name hint).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Bool(value) => write!(f, "{value}"),
@@ -207,6 +225,7 @@ impl fmt::Display for Value {
             Self::Float(value) => write_float(*value, f),
             Self::Decimal(value) => write!(f, "{value}"),
             Self::Str(value) => write!(f, "{value:?}"),
+            Self::Identifier(value) => write!(f, "{value}"),
             Self::Tuple(values) => write_tuple(f, values),
             Self::FrozenSet(values) => write_braced(f, values),
             Self::Opaque(value) => write!(f, "<{}>", value.get().type_name()),
@@ -249,15 +268,19 @@ fn write_separated<T: fmt::Display>(f: &mut fmt::Formatter<'_>, items: &[T]) -> 
 
 impl Value {
     /// Return whether the value could be a member: whether it and every
-    /// value it holds is a Boolean, an integer, a float, a string, a tuple, a
-    /// frozen set, or a member-shaped opaque value. A NaN float is
-    /// member-shaped, although no member is one.
+    /// value it holds is a Boolean, an integer, a float, a string, an
+    /// identifier, a tuple, a frozen set, or a member-shaped opaque value. A
+    /// NaN float is member-shaped, although no member is one.
     #[must_use]
     pub fn is_member_shaped(&self) -> bool {
         let mut pending = vec![self];
         while let Some(value) = pending.pop() {
             match value {
-                Self::Bool(_) | Self::Int(_) | Self::Float(_) | Self::Str(_) => {}
+                Self::Bool(_)
+                | Self::Int(_)
+                | Self::Float(_)
+                | Self::Str(_)
+                | Self::Identifier(_) => {}
                 Self::Decimal(_) => return false,
                 Self::Opaque(value) => {
                     if !value.get().is_member_shaped() {
@@ -284,8 +307,12 @@ impl Value {
                 Self::Tuple(values) | Self::FrozenSet(values) => {
                     pending.extend(values.iter().rev());
                 }
-                Self::Bool(_) | Self::Int(_) | Self::Float(_) | Self::Decimal(_) | Self::Str(_) => {
-                }
+                Self::Bool(_)
+                | Self::Int(_)
+                | Self::Float(_)
+                | Self::Decimal(_)
+                | Self::Str(_)
+                | Self::Identifier(_) => {}
             }
         }
         Ok(())
@@ -346,8 +373,8 @@ impl Error for MemberError {
 }
 
 /// A value a set constraint can hold: a Boolean, an integer, a float, a
-/// string, a tuple of members, a set of members, or a member-shaped opaque
-/// value.
+/// string, an identifier, a tuple of members, a set of members, or a
+/// member-shaped opaque value.
 ///
 /// A member holds no NaN, and its float zeros are positive, so `-0.0` and
 /// `0.0` make one member. Members compare type-strictly, and a
@@ -361,6 +388,7 @@ enum MemberValue {
     Int(BigInt),
     Float(f64),
     Str(String),
+    Identifier(Identifier),
     Tuple(Vec<Member>),
     FrozenSet(MemberSet),
     Opaque(Part<dyn OpaqueValue>, String),
@@ -381,6 +409,8 @@ pub enum MemberKind<'a> {
     Float(f64),
     /// A string.
     Str(&'a str),
+    /// An identifier used as a constant.
+    Identifier(&'a Identifier),
     /// A tuple of members.
     Tuple(&'a [Member]),
     /// A set of members.
@@ -414,6 +444,7 @@ impl Member {
             MemberValue::Int(value) => MemberKind::Int(value),
             MemberValue::Float(value) => MemberKind::Float(*value),
             MemberValue::Str(value) => MemberKind::Str(value),
+            MemberValue::Identifier(value) => MemberKind::Identifier(value),
             MemberValue::Tuple(members) => MemberKind::Tuple(members),
             MemberValue::FrozenSet(members) => MemberKind::FrozenSet(members),
             MemberValue::Opaque(value, _) => MemberKind::Opaque(value),
@@ -441,6 +472,7 @@ impl Member {
             MemberValue::Int(value) => Some(LiteralValue::Int(value.clone())),
             MemberValue::Float(value) => Some(LiteralValue::Float(*value)),
             MemberValue::Str(_)
+            | MemberValue::Identifier(_)
             | MemberValue::Tuple(_)
             | MemberValue::FrozenSet(_)
             | MemberValue::Opaque(..) => None,
@@ -448,7 +480,7 @@ impl Member {
     }
 
     /// Return the name of the member's kind: `bool`, `int`, `float`, `str`,
-    /// `tuple`, `frozenset`, or an opaque value's type name.
+    /// `identifier`, `tuple`, `frozenset`, or an opaque value's type name.
     #[must_use]
     pub fn kind_name(&self) -> Cow<'_, str> {
         match &self.0 {
@@ -456,6 +488,7 @@ impl Member {
             MemberValue::Int(_) => Cow::Borrowed("int"),
             MemberValue::Float(_) => Cow::Borrowed("float"),
             MemberValue::Str(_) => Cow::Borrowed("str"),
+            MemberValue::Identifier(_) => Cow::Borrowed("identifier"),
             MemberValue::Tuple(_) => Cow::Borrowed("tuple"),
             MemberValue::FrozenSet(_) => Cow::Borrowed("frozenset"),
             MemberValue::Opaque(value, _) => value.get().type_name(),
@@ -476,10 +509,11 @@ impl Member {
             MemberValue::Bool(_) => 0,
             MemberValue::Float(_) => 1,
             MemberValue::FrozenSet(_) => 2,
-            MemberValue::Int(_) => 3,
-            MemberValue::Str(_) => 4,
-            MemberValue::Tuple(_) => 5,
-            MemberValue::Opaque(..) => 6,
+            MemberValue::Identifier(_) => 3,
+            MemberValue::Int(_) => 4,
+            MemberValue::Str(_) => 5,
+            MemberValue::Tuple(_) => 6,
+            MemberValue::Opaque(..) => 7,
         }
     }
 }
@@ -514,6 +548,7 @@ impl Hash for Member {
             MemberValue::Int(value) => value.hash(state),
             MemberValue::Float(value) => value.to_bits().hash(state),
             MemberValue::Str(value) | MemberValue::Opaque(_, value) => value.hash(state),
+            MemberValue::Identifier(value) => value.hash(state),
             MemberValue::Tuple(members) => members.hash(state),
             MemberValue::FrozenSet(members) => members.hash(state),
         }
@@ -529,6 +564,7 @@ impl fmt::Display for Member {
             MemberValue::Int(value) => write!(f, "{value}"),
             MemberValue::Float(value) => write_float(*value, f),
             MemberValue::Str(value) => write!(f, "{value:?}"),
+            MemberValue::Identifier(value) => write!(f, "{value}"),
             MemberValue::Tuple(members) => write_tuple(f, members),
             MemberValue::FrozenSet(members) => write!(f, "{members}"),
             MemberValue::Opaque(value, _) => write!(f, "<{}>", value.get().type_name()),
@@ -545,6 +581,9 @@ fn compare_canonically(left: &Member, right: &Member) -> Ordering {
         (MemberValue::Float(left), MemberValue::Float(right)) => left.total_cmp(right),
         (MemberValue::Str(left), MemberValue::Str(right))
         | (MemberValue::Opaque(_, left), MemberValue::Opaque(_, right)) => left.cmp(right),
+        (MemberValue::Identifier(left), MemberValue::Identifier(right)) => {
+            left.id().cmp(&right.id())
+        }
         (MemberValue::Tuple(left), MemberValue::Tuple(right)) => compare_sequences(left, right),
         (MemberValue::FrozenSet(left), MemberValue::FrozenSet(right)) => {
             compare_sequences(&left.members, &right.members)
@@ -591,8 +630,12 @@ fn check_member(value: &Value) -> Result<(), MemberError> {
                 });
             }
             Value::Tuple(values) | Value::FrozenSet(values) => pending.extend(values.iter().rev()),
-            Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::Str(_) | Value::Opaque(_) => {
-            }
+            Value::Bool(_)
+            | Value::Int(_)
+            | Value::Float(_)
+            | Value::Str(_)
+            | Value::Identifier(_)
+            | Value::Opaque(_) => {}
         }
     }
     Ok(())
@@ -608,6 +651,7 @@ fn build_member(value: Value) -> Result<Member, MemberError> {
         Value::Int(value) => MemberValue::Int(value),
         Value::Float(value) => MemberValue::Float(value + 0.0),
         Value::Str(value) => MemberValue::Str(value),
+        Value::Identifier(value) => MemberValue::Identifier(value),
         Value::Tuple(values) => MemberValue::Tuple(
             values
                 .into_iter()
@@ -649,7 +693,8 @@ fn holds_opaque(value: &Value) -> bool {
             | Value::Int(_)
             | Value::Float(_)
             | Value::Decimal(_)
-            | Value::Str(_) => {}
+            | Value::Str(_)
+            | Value::Identifier(_) => {}
         }
     }
     false
@@ -666,6 +711,7 @@ fn is_value_equal_to_member(value: &Value, member: &Member) -> bool {
             (value + 0.0).to_bits() == member.to_bits()
         }
         (Value::Str(value), MemberValue::Str(member)) => value == member,
+        (Value::Identifier(value), MemberValue::Identifier(member)) => value == member,
         (Value::Tuple(values), MemberValue::Tuple(members)) => {
             values.len() == members.len()
                 && values
@@ -690,12 +736,13 @@ fn is_value_equal_to_member(value: &Value, member: &Member) -> bool {
 
 /// Distinct members in canonical order.
 ///
-/// The order is by kind, `bool`, `float`, `frozenset`, `int`, `str`,
-/// `tuple`, then opaque values, and within a kind by value: `false` before
-/// `true`, numbers numerically, strings by code point, tuples element by
-/// element, sets by their members in canonical order, and opaque values by
-/// their ordering keys, keeping the order they were given in among equal
-/// keys. Two sets are equal when they hold equal members.
+/// The order is by kind, `bool`, `float`, `frozenset`, `identifier`,
+/// `int`, `str`, `tuple`, then opaque values, and within a kind by value:
+/// `false` before `true`, numbers numerically, identifiers by id, strings
+/// by code point, tuples element by element, sets by their members in
+/// canonical order, and opaque values by their ordering keys, keeping the
+/// order they were given in among equal keys. Two sets are equal when they
+/// hold equal members.
 #[derive(Debug, Clone, Default)]
 pub struct MemberSet {
     members: Vec<Member>,

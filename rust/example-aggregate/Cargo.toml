@@ -17,6 +17,9 @@ crate-type = ["cdylib"]
 fhy-core = { workspace = true }
 fhy-core-py = { path = "../fhy-core-py" }
 pyo3 = { workspace = true, features = ["macros"] }
+# The foreign payloads of the two search-space kinds.
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true
