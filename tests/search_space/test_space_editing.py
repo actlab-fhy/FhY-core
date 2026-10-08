@@ -611,9 +611,12 @@ def test_a_complete_configuration_is_complete_under_every_decision() -> None:
     tiling = build_tiling_space()
     configuration = build_complete_configuration(tiling)
 
+    answers = [
+        configuration.is_complete_under(name) for name in tiling.space.decision_order
+    ]
+
     assert configuration.is_complete()
-    for name in tiling.space.decision_order:
-        assert configuration.is_complete_under(name) is True
+    assert answers == [True] * len(tiling.space.decision_order)
 
 
 def test_completeness_of_a_partial_configuration_is_per_decision() -> None:

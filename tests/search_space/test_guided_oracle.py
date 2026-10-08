@@ -301,16 +301,16 @@ def test_crossover_returns_a_configuration_and_its_trace() -> None:
     assert tiling.space.replay(trace).key() == child.key()
 
 
-def test_crossover_of_identical_parents_is_the_parent() -> None:
+@pytest.mark.parametrize("seed", range(8))
+def test_crossover_of_identical_parents_is_the_parent(seed: int) -> None:
     """Test `crossover(a, a)` is `a`, whatever the seed."""
     tiling = build_tiling_space()
     parent = _tiled(tiling, unroll=2, tile=8)
 
-    for seed in range(8):
-        child, _ = tiling.space.crossover(parent, parent, Rng(seed))
+    child, _ = tiling.space.crossover(parent, parent, Rng(seed))
 
-        assert child.key() == parent.key()
-        assert child.entries == parent.entries
+    assert child.key() == parent.key()
+    assert child.entries == parent.entries
 
 
 def test_every_value_of_the_child_comes_from_a_parent() -> None:
@@ -319,12 +319,15 @@ def test_every_value_of_the_child_comes_from_a_parent() -> None:
     first = _tiled(tiling, unroll=1, tile=4)
     second = _tiled(tiling, unroll=4, tile=8)
 
-    for seed in range(20):
-        child, _ = tiling.space.crossover(first, second, Rng(seed))
+    children = [
+        tiling.space.crossover(first, second, Rng(seed))[0] for seed in range(20)
+    ]
 
-        assert child.value(tiling.unroll.name) in {1, 4}
-        assert child.value(tiling.layout.name) == tiling.tiled.name
-        assert child.value(tiling.tile.name) in {4, 8}
+    assert {child.value(tiling.unroll.name) for child in children} <= {1, 4}
+    assert {child.value(tiling.layout.name) for child in children} == {
+        tiling.tiled.name
+    }
+    assert {child.value(tiling.tile.name) for child in children} <= {4, 8}
 
 
 def test_crossover_takes_values_from_both_parents() -> None:
@@ -360,12 +363,10 @@ def test_crossover_repairs_a_forbidden_combination() -> None:
     first = Configuration(space, {x.name: 1, y.name: 2})
     second = Configuration(space, {x.name: 2, y.name: 1})
 
-    pairs = set()
-    for seed in range(40):
-        child, _ = space.crossover(first, second, Rng(seed))
-        assert child.is_complete()
-        pairs.add((child.value(x.name), child.value(y.name)))
+    children = [space.crossover(first, second, Rng(seed))[0] for seed in range(128)]
 
+    pairs = {(child.value(x.name), child.value(y.name)) for child in children}
+    assert all(child.is_complete() for child in children)
     assert (1, 1) not in pairs
     assert pairs <= {(1, 2), (2, 1), (2, 2)}
     assert {(1, 2), (2, 1)} <= pairs
@@ -390,7 +391,7 @@ def test_crossover_draws_where_no_parent_has_a_value() -> None:
 
     values = {
         tiling.space.crossover(empty, empty, Rng(seed))[0].value(tiling.unroll.name)
-        for seed in range(30)
+        for seed in range(64)
     }
 
     assert values == {1, 2}
@@ -419,26 +420,26 @@ def test_crossover_refuses_a_parent_of_another_space() -> None:
 
 
 def test_crossover_of_alternatives_keeps_the_chosen_subtree_complete() -> None:
-    """Test a child that chose an alternative assigns the variables under it."""
+    """Test a child that chose an alternative holds its parent's value under it.
+
+    Each parent chooses another alternative, so every child chooses one of
+    the two and takes the value under it from the parent that chose it.
+    """
     left = make_alternative("left", (make_variable("a", 1, 2),))
     right = make_alternative("right", (make_variable("b", 3, 4),))
     choice = make_choice("c", left, right)
     space = Space(choices=(choice,))
-    first = Configuration(space, {choice.name: left.name, left.variables[0].name: 1})
-    second = Configuration(space, {choice.name: right.name, right.variables[0].name: 4})
+    a, b = left.variables[0].name, right.variables[0].name
+    first = Configuration(space, {choice.name: left.name, a: 1})
+    second = Configuration(space, {choice.name: right.name, b: 4})
 
-    for seed in range(20):
-        child, _ = space.crossover(first, second, Rng(seed))
+    children = [space.crossover(first, second, Rng(seed))[0] for seed in range(32)]
 
-        assert child.is_complete()
-        chosen = child.value(choice.name)
-        assert chosen in {left.name, right.name}
-        if chosen == left.name:
-            assert child.value(left.variables[0].name) in {1, 2}
-            assert child.value(right.variables[0].name) is None
-        else:
-            assert child.value(right.variables[0].name) in {3, 4}
-            assert child.value(left.variables[0].name) is None
+    outcomes = {
+        (child.value(choice.name), child.value(a), child.value(b)) for child in children
+    }
+    assert all(child.is_complete() for child in children)
+    assert outcomes == {(left.name, 1, None), (right.name, None, 4)}
 
 
 def test_crossover_respects_a_condition() -> None:
@@ -454,10 +455,15 @@ def test_crossover_respects_a_condition() -> None:
         },
     )
 
-    for seed in range(20):
-        child, _ = tiling.space.crossover(flat, tiled, Rng(seed))
+    children = [tiling.space.crossover(flat, tiled, Rng(seed))[0] for seed in range(32)]
 
-        assert child.is_complete()
-        if child.value(tiling.layout.name) == tiling.flat.name:
-            assert child.value(tiling.unroll.name) is None
-            assert child.value(tiling.tile.name) is None
+    outcomes = {
+        (
+            child.value(tiling.layout.name),
+            child.value(tiling.unroll.name),
+            child.value(tiling.tile.name),
+        )
+        for child in children
+    }
+    assert all(child.is_complete() for child in children)
+    assert outcomes == {(tiling.flat.name, None, None), (tiling.tiled.name, 2, 4)}
