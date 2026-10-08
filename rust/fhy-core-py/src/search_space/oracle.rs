@@ -449,15 +449,24 @@ impl PyRandomOracle {
 }
 
 /// The fallback of a `GuidedOracle` object's core oracle: the fallback
-/// object and the objects its snapshots show, put in by the entry point
-/// for the call in progress and taken out after it, read anew at each step
-/// it answers.
+/// object and the objects its snapshots show, lent for the call in
+/// progress by [`LentGuidedOracle`] and read anew at each step it answers.
+///
+/// It holds the objects only during a call, so the oracle keeps no strong
+/// reference the cycle collector does not see: between calls the
+/// `GuidedOracle` object's `__traverse__` visits the fallback it holds
+/// itself.
 #[derive(Default)]
 struct CallFallback {
     /// The fallback object and the snapshot objects of the call in
-    /// progress, or `None` between calls. A cell, since the core oracle
-    /// lends its fallback only by shared reference and the entry point
-    /// changes it under the oracle's lock.
+    /// progress, or `None` between calls.
+    ///
+    /// A cell, since the core oracle owns its fallback and lends it only by
+    /// shared reference, while the call must be put in and taken out under
+    /// the oracle's lock. No borrow can overlap another: [`read`](Self::read)
+    /// borrows only to copy the objects out, never across a call into
+    /// Python, and the call is replaced only by [`LentGuidedOracle`], which
+    /// holds the oracle's lock, which a re-entrant call cannot take.
     call: RefCell<Option<(Py<PyAny>, StepFrame)>>,
 }
 
@@ -514,14 +523,36 @@ impl PyGuidedOracle {
         frame: StepFrame,
         run: impl FnOnce(&mut dyn SearchOracle) -> PyResult<T>,
     ) -> PyResult<T> {
-        let mut state = lock_state(&self.state, "GuidedOracle")?;
-        state
-            .fallback()
-            .call
-            .replace(Some((self.fallback.clone_ref(py), frame)));
-        let result = run(&mut *state);
-        state.fallback().call.replace(None);
-        result
+        let state = lock_state(&self.state, "GuidedOracle")?;
+        let mut lent = LentGuidedOracle::lend(state, self.fallback.clone_ref(py), frame);
+        run(&mut *lent.state)
+    }
+}
+
+/// The core oracle of a `GuidedOracle` object, locked, with the fallback
+/// object and the snapshot objects of one call lent to its fallback until
+/// it is dropped, on unwind included.
+struct LentGuidedOracle<'a> {
+    state: MutexGuard<'a, GuidedOracle<CallFallback>>,
+}
+
+impl<'a> LentGuidedOracle<'a> {
+    /// Return the locked oracle `state` with `fallback` and `frame` lent to
+    /// its fallback.
+    fn lend(
+        state: MutexGuard<'a, GuidedOracle<CallFallback>>,
+        fallback: Py<PyAny>,
+        frame: StepFrame,
+    ) -> Self {
+        state.fallback().call.replace(Some((fallback, frame)));
+        Self { state }
+    }
+}
+
+impl Drop for LentGuidedOracle<'_> {
+    /// Take the call's objects back, before the lock is released.
+    fn drop(&mut self) {
+        self.state.fallback().call.replace(None);
     }
 }
 
