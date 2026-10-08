@@ -78,7 +78,7 @@ pub(super) const fn value_kind_message(kind: DomainKind) -> &'static str {
         }
         DomainKind::Categorical => {
             "Categorical values must satisfy equal semantics and be serializable, or be primitive \
-             bool/int/str values."
+             bool/int/str values, or tuples or frozensets of such values."
         }
         _ => {
             "Permutation members must satisfy equal semantics and be serializable, or be \
