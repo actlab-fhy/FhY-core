@@ -774,23 +774,37 @@ def test_another_thread_runs_during_a_large_evaluation() -> None:
     values = np.random.default_rng(0).standard_normal(4_000_000)
     tree = call("sqrt", reference * reference + 1.0) * 2.0 - reference
     ticks = 0
+    started = threading.Event()
     done = threading.Event()
 
     def tick() -> None:
         nonlocal ticks
+        started.set()
         while not done.is_set():
             ticks += 1
-            time.sleep(0)
+            time.sleep(0.0005)
 
+    # A switch interval longer than the test keeps the interpreter from
+    # handing the GIL to the ticker on its own, so a tick lands inside an
+    # evaluation only when the evaluation releases the GIL. A loaded runner
+    # can still leave the ticker unscheduled for one evaluation, so evaluate
+    # until a tick lands.
+    switch_interval = sys.getswitchinterval()
+    sys.setswitchinterval(60.0)
     ticker = threading.Thread(target=tick)
     ticker.start()
     try:
-        before = ticks
-        evaluate_expression_with_numpy(tree, {x: values})
-        during = ticks - before
+        started.wait()
+        deadline = time.monotonic() + 30.0
+        during = 0
+        while during == 0 and time.monotonic() < deadline:
+            before = ticks
+            evaluate_expression_with_numpy(tree, {x: values})
+            during = ticks - before
     finally:
         done.set()
         ticker.join()
+        sys.setswitchinterval(switch_interval)
 
     assert during > 0
 
