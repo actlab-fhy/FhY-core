@@ -19,7 +19,9 @@ use pyo3::pyclass::{CompareOp, PyTraverseError, PyVisit};
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyMapping, PyString, PyTuple, PyType};
 
 use fhy_core::search_space::wire::MeasurementData;
-use fhy_core::search_space::{Direction, Measurement, MeasurementStatus, Objective};
+use fhy_core::search_space::{
+    Direction, Measurement, MeasurementKey, MeasurementStatus, Objective,
+};
 
 use crate::diagnostic::note_to_python;
 use crate::util::dataclass::hash_value;
@@ -35,6 +37,7 @@ use crate::wire::{
 use super::arguments::{Seeded, instantiate, read_notes, take_seed, wrong_seed};
 use super::configuration::{KeyHolder, PyConfigurationKey};
 use super::errors::measurement_error_to_py;
+use super::trace::PyTraceKey;
 use super::wire::{refuse_v1, write_part, write_part_json};
 
 /// The module of the public classes.
@@ -375,26 +378,30 @@ fn decode_measurement<'py>(
     measurement_of_class(cls, measurement?, KeyHolder::Slots(slots))
 }
 
-/// Return the core key of `key`, a `ConfigurationKey`, and the holder of a
-/// measurement sharing it.
+/// Return the core key of `key`, a `ConfigurationKey` or a `TraceKey`, and
+/// the holder of a measurement sharing it.
 ///
 /// # Errors
 ///
 /// Raises `TypeError` for another object.
-fn read_key(
-    key: &Bound<'_, PyAny>,
-) -> PyResult<(fhy_core::search_space::ConfigurationKey, KeyHolder)> {
-    key.cast::<PyConfigurationKey>()
-        .map(|read| {
-            let read = read.get();
-            (read.core().clone(), read.holder().share(key.py(), key))
-        })
-        .map_err(|_not_a_key| {
-            PyTypeError::new_err(format!(
-                "a measurement's key must be a ConfigurationKey, got {}.",
-                read_type_name(key)
-            ))
-        })
+fn read_key(key: &Bound<'_, PyAny>) -> PyResult<(MeasurementKey, KeyHolder)> {
+    if let Ok(read) = key.cast::<PyConfigurationKey>() {
+        let read = read.get();
+        return Ok((
+            MeasurementKey::Configuration(read.core().clone()),
+            read.holder().share(key.py(), key),
+        ));
+    }
+    if let Ok(read) = key.cast::<PyTraceKey>() {
+        return Ok((
+            MeasurementKey::Trace(read.get().core().clone()),
+            KeyHolder::Nothing,
+        ));
+    }
+    Err(PyTypeError::new_err(format!(
+        "a measurement's key must be a ConfigurationKey or a TraceKey, got {}.",
+        read_type_name(key)
+    )))
 }
 
 /// Return the reason `reason`, a `str`.
@@ -481,7 +488,7 @@ impl PyMeasurement {
     /// `key`, a value per objective: `values` a mapping of `Objective` to
     /// value, or `(Objective, value)` pairs, in order.
     ///
-    /// Raises `TypeError` for a key that is no `ConfigurationKey`, an
+    /// Raises `TypeError` for a key that is no `ConfigurationKey` or `TraceKey`, an
     /// objective that is no `Objective` or a value that is no `int` or
     /// `float` (a `bool` included), and `MeasurementError` for no value, a
     /// repeated objective name or a value that is not finite.
@@ -537,13 +544,17 @@ impl PyMeasurement {
     /// The key of what was measured: a `ConfigurationKey`, sharing the
     /// measurement's holder of its opaque values, or a `TraceKey`.
     #[getter]
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn key(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
-        todo!()
+        let py = slf.py();
+        let this = slf.get();
+        Ok(match this.measurement.key() {
+            MeasurementKey::Configuration(key) => Py::new(
+                py,
+                PyConfigurationKey::of(key.clone(), this.holder.share(py, slf.as_any())),
+            )?
+            .into_any(),
+            MeasurementKey::Trace(key) => Py::new(py, PyTraceKey::of(key.clone()))?.into_any(),
+        })
     }
 
     /// Visit the Python objects the measurement keeps, for the cycle

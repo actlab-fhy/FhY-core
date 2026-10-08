@@ -210,48 +210,28 @@ pub enum MeasurementKey {
 }
 
 impl From<ConfigurationKey> for MeasurementKey {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn from(key: ConfigurationKey) -> Self {
-        todo!()
+        Self::Configuration(key)
     }
 }
 
 impl From<TraceKey> for MeasurementKey {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn from(key: TraceKey) -> Self {
-        todo!()
+        Self::Trace(key)
     }
 }
 
 impl PartialEq<ConfigurationKey> for MeasurementKey {
     /// Return whether this is a configuration's key equal to `other`.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn eq(&self, other: &ConfigurationKey) -> bool {
-        todo!()
+        matches!(self, Self::Configuration(key) if key == other)
     }
 }
 
 impl PartialEq<TraceKey> for MeasurementKey {
     /// Return whether this is a trace's key equal to `other`.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn eq(&self, other: &TraceKey) -> bool {
-        todo!()
+        matches!(self, Self::Trace(key) if key == other)
     }
 }
 

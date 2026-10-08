@@ -201,12 +201,18 @@ impl Trace {
     /// domain's signature and its coordinate, and neither its subject nor
     /// its value.
     #[must_use]
-    #[expect(
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn key(&self) -> TraceKey {
-        todo!()
+        TraceKey(
+            self.0
+                .iter()
+                .map(|step| TraceKeyStep {
+                    kind: step.kind.clone(),
+                    decision: step.decision,
+                    signature: step.signature.clone(),
+                    coordinate: step.coordinate.clone(),
+                })
+                .collect(),
+        )
     }
 }
 
@@ -244,56 +250,97 @@ struct TraceKeyStep {
 impl TraceKey {
     /// Return the number of steps.
     #[must_use]
-    #[expect(
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn len(&self) -> usize {
-        todo!()
+        self.0.len()
     }
 
     /// Return whether the key has no step.
     #[must_use]
-    #[expect(
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn is_empty(&self) -> bool {
-        todo!()
+        self.0.is_empty()
     }
 
     /// Return the steps' coordinates, in the order asked.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     pub fn coordinates(&self) -> impl ExactSizeIterator<Item = &Coordinate> + '_ {
-        self.0.iter().map(|step| -> &Coordinate { todo!() })
+        self.0.iter().map(|step| &step.coordinate)
     }
+}
+
+/// The wire form of a [`TraceKeyStep`], written.
+#[derive(Serialize)]
+#[serde(rename = "TraceKeyStep")]
+struct KeyStepRef<'a> {
+    kind: &'a DecisionKind,
+    decision: Option<u32>,
+    domain: &'a DomainSignature,
+    coordinate: &'a Coordinate,
+}
+
+/// The wire form of a [`TraceKeyStep`], read.
+#[derive(Deserialize)]
+#[serde(rename = "TraceKeyStep", deny_unknown_fields)]
+struct KeyStepWire {
+    kind: DecisionKind,
+    decision: Option<u32>,
+    domain: DomainSignature,
+    coordinate: Coordinate,
+}
+
+/// The wire form of a [`TraceKey`], written.
+#[derive(Serialize)]
+#[serde(rename = "TraceKey")]
+struct KeyRef<'a> {
+    steps: Vec<KeyStepRef<'a>>,
+}
+
+/// The wire form of a [`TraceKey`], read.
+#[derive(Deserialize)]
+#[serde(rename = "TraceKey", deny_unknown_fields)]
+struct KeyWire {
+    steps: Vec<KeyStepWire>,
 }
 
 /// Serializes the shape of the type's documentation.
 impl Serialize for TraceKey {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        todo!()
+        KeyRef {
+            steps: self
+                .0
+                .iter()
+                .map(|step| KeyStepRef {
+                    kind: &step.kind,
+                    decision: step.decision,
+                    domain: &step.signature,
+                    coordinate: &step.coordinate,
+                })
+                .collect(),
+        }
+        .serialize(serializer)
     }
 }
 
 /// Deserializes the shape of the type's documentation.
 impl<'de> Deserialize<'de> for TraceKey {
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        todo!()
+        let wire = KeyWire::deserialize(deserializer)?;
+        wire.steps
+            .into_iter()
+            .map(|step| {
+                if step.domain.contains(&step.coordinate) {
+                    Ok(TraceKeyStep {
+                        kind: step.kind,
+                        decision: step.decision,
+                        signature: step.domain,
+                        coordinate: step.coordinate,
+                    })
+                } else {
+                    Err(de::Error::custom(
+                        "a step's coordinate names no value of its domain",
+                    ))
+                }
+            })
+            .collect::<Result<Arc<[_]>, _>>()
+            .map(Self)
     }
 }
 

@@ -1460,13 +1460,13 @@ impl MeasurementKeyRepr {
     ///
     /// Returns the error of an opaque value of a configuration key that
     /// cannot give its foreign form.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn of(key: &MeasurementKey) -> Result<Self, ForeignError> {
-        todo!()
+        Ok(match key {
+            MeasurementKey::Configuration(key) => {
+                Self::Configuration(ConfigurationKeyData::of(key)?)
+            }
+            MeasurementKey::Trace(key) => Self::Trace(key.clone()),
+        })
     }
 
     /// Return the key, a configuration key's opaque values resolved by
@@ -1476,16 +1476,14 @@ impl MeasurementKeyRepr {
     ///
     /// Returns [`BuildError::Foreign`] for an opaque value `resolver`
     /// refuses.
-    #[expect(
-        unused_variables,
-        clippy::todo,
-        reason = "interface stub; bodies are todo!() until implementation"
-    )]
     fn build<R: Resolve<Part<dyn OpaqueValue>> + ?Sized>(
         self,
         resolver: &R,
     ) -> Result<MeasurementKey, BuildError> {
-        todo!()
+        Ok(match self {
+            Self::Configuration(key) => MeasurementKey::Configuration(key.build(resolver)?),
+            Self::Trace(key) => MeasurementKey::Trace(key),
+        })
     }
 }
 

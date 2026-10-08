@@ -724,10 +724,6 @@ pub(crate) struct PyConfigurationKey {
 impl PyConfigurationKey {
     /// Return the key object of `key`, its opaque values kept visible by
     /// `holder`.
-    #[expect(
-        dead_code,
-        reason = "interface stub; Measurement.key, its caller, is todo!() until implementation"
-    )]
     pub(super) const fn of(key: ConfigurationKey, holder: KeyHolder) -> Self {
         Self { key, holder }
     }
