@@ -63,6 +63,17 @@ impl Recorder {
         }
     }
 
+    /// Return the recorder of a run over `configuration`'s space that
+    /// starts from `configuration`, asking only the decisions it leaves
+    /// unassigned.
+    pub(super) fn from_configuration(configuration: Configuration) -> Self {
+        Self {
+            configuration: Some(configuration),
+            preset: None,
+            steps: Vec::new(),
+        }
+    }
+
     /// Return the recorder of a run realizing `configuration`: a decision
     /// it assigns is answered with its value, everything else by the
     /// oracle.

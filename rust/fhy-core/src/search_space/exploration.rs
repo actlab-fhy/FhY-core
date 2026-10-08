@@ -13,13 +13,13 @@ use crate::identifier::Identifier;
 use crate::param::ParamContext;
 
 use super::configuration::{Activity, Configuration};
-use super::counting::{count_space, sample_uniformly};
+use super::counting::{Components, Tree, admits_completion, count_space, sample_uniformly};
 use super::domain::{Coordinate, StepDomain};
 use super::error::{ReplayError, TraceError};
 use super::oracle::{ExhaustiveOracle, PendingStep, SearchOracle};
 use super::recorder::{Recorded, Recorder};
 use super::rng::Rng;
-use super::space::Space;
+use super::space::{Decision, Space};
 use super::step::{decision_domain, decision_kind, try_extend};
 use super::trace::{Trace, TraceStep};
 
@@ -346,7 +346,22 @@ pub(super) fn walk(
     oracle: &mut dyn SearchOracle,
     context: &ParamContext<'_>,
 ) -> Result<Recorded, TraceError> {
-    let mut recorder = Recorder::over(space);
+    walk_from(Recorder::over(space), space, includes, oracle, context)
+}
+
+/// Ask `oracle`, through `recorder`, every active decision of `space`
+/// whose canonical position `includes` holds, in decision order.
+///
+/// # Errors
+///
+/// As [`walk`].
+fn walk_from(
+    mut recorder: Recorder,
+    space: &Space,
+    includes: impl Fn(usize) -> bool,
+    oracle: &mut dyn SearchOracle,
+    context: &ParamContext<'_>,
+) -> Result<Recorded, TraceError> {
     for &position in space.order_positions() {
         if !includes(position) {
             continue;
@@ -429,18 +444,97 @@ fn replay_trace(
     Ok(configuration)
 }
 
-/// The largest domain a mutation lists the other values of.
+/// The largest domain a mutation changes a value of.
 const LISTED_MUTATION_DOMAIN: u32 = 1 << 16;
 
 /// The most runs a mutation searches for a completion of one changed
 /// value before it takes that value as completable.
 const COMPLETION_BUDGET: u64 = 1_024;
 
+/// The other coordinates a mutation may move a decision to, in the order a
+/// mutation draws them by index.
+enum Options {
+    /// Every index below `count` except `current`, in order.
+    OtherIndices { count: u64, current: u64 },
+    /// Every ordering `current` gives with two of its positions swapped:
+    /// the first position, then the second, ascending.
+    Swaps { current: Box<[u32]> },
+    /// The coordinates listed.
+    Listed(Vec<Coordinate>),
+}
+
+impl Options {
+    /// Return every other coordinate of `domain` than `current`, or none
+    /// for a domain of more than [`LISTED_MUTATION_DOMAIN`] values.
+    fn all_others(domain: &StepDomain, current: &Coordinate) -> Self {
+        if domain.cardinality() > BigUint::from(LISTED_MUTATION_DOMAIN) {
+            return Self::Listed(Vec::new());
+        }
+        match current {
+            Coordinate::Order(positions) => Self::Swaps {
+                current: positions.clone(),
+            },
+            Coordinate::Index(index) => Self::OtherIndices {
+                count: u64::try_from(domain.cardinality()).unwrap_or(0),
+                current: *index,
+            },
+        }
+    }
+
+    /// Return the number of coordinates.
+    fn len(&self) -> u64 {
+        match self {
+            Self::OtherIndices { count, current } => {
+                if current < count {
+                    count - 1
+                } else {
+                    *count
+                }
+            }
+            Self::Swaps { current } => {
+                let length = u64::try_from(current.len()).unwrap_or(u64::MAX);
+                length * length.saturating_sub(1) / 2
+            }
+            Self::Listed(listed) => u64::try_from(listed.len()).unwrap_or(u64::MAX),
+        }
+    }
+
+    /// Return the coordinate at `index`, below [`len`](Self::len).
+    fn nth(&self, index: u64) -> Option<Coordinate> {
+        match self {
+            Self::OtherIndices { current, .. } => Some(Coordinate::Index(if index < *current {
+                index
+            } else {
+                index + 1
+            })),
+            Self::Swaps { current } => {
+                let mut remaining = usize::try_from(index).ok()?;
+                for first in 0..current.len() {
+                    let pairs = current.len() - first - 1;
+                    if remaining < pairs {
+                        let mut swapped = current.clone();
+                        swapped.swap(first, first + 1 + remaining);
+                        return Some(Coordinate::Order(swapped));
+                    }
+                    remaining -= pairs;
+                }
+                None
+            }
+            Self::Listed(listed) => listed.get(usize::try_from(index).ok()?).cloned(),
+        }
+    }
+
+    /// Return the coordinates, in order.
+    fn iter(&self) -> impl Iterator<Item = Coordinate> + '_ {
+        (0..self.len()).map_while(|index| self.nth(index))
+    }
+}
+
 /// A decision a mutation may change: its canonical position and the other
 /// coordinates it may take.
 struct Candidate {
     position: usize,
-    options: Vec<Coordinate>,
+    options: Options,
 }
 
 /// Return `configuration` mutated, as [`Space::mutate`] documents.
@@ -457,23 +551,26 @@ fn mutate_configuration(
     if !configuration.is_complete() {
         return Err(TraceError::Incomplete);
     }
-    let (previous, candidates) = find_candidates(space, configuration, context)?;
+    let empty = Configuration::empty(space);
+    let (previous, candidates) = find_candidates(space, configuration, &empty, context)?;
     let Some(count) = NonZeroU64::new(u64::try_from(candidates.len()).unwrap_or(u64::MAX)) else {
         return Err(TraceError::NothingToMutate);
     };
     for _ in 0..attempts.get() {
         let candidate = &candidates[usize::try_from(rng.below(count)).unwrap_or(0)];
-        let Some(options) = NonZeroU64::new(u64::try_from(candidate.options.len()).unwrap_or(0))
-        else {
+        let Some(options) = NonZeroU64::new(candidate.options.len()) else {
             continue;
         };
-        let target = candidate.options[usize::try_from(rng.below(options)).unwrap_or(0)].clone();
-        let mut oracle = GuidedOracle {
+        let Some(target) = candidate.options.nth(rng.below(options)) else {
+            continue;
+        };
+        let mut oracle = RepairOracle {
             target: (candidate.position, target),
             previous: &previous,
             rng,
         };
-        match walk(space, |_| true, &mut oracle, context) {
+        let run = Recorder::from_configuration(empty.clone());
+        match walk_from(run, space, |_| true, &mut oracle, context) {
             Ok(recorded) => return Ok(recorded),
             Err(TraceError::DeadEnd { .. } | TraceError::Inadmissible { .. }) => {}
             Err(error) => return Err(error),
@@ -486,12 +583,22 @@ fn mutate_configuration(
 
 /// Return each assigned decision's coordinate in `configuration`, by
 /// canonical position, and the decisions with another coordinate that a
-/// complete configuration keeping the decisions before them takes.
+/// complete configuration keeping the decisions before them takes, in
+/// decision order.
+///
+/// A decision of a component counted in closed form takes every other
+/// coordinate of a variable, and every other alternative of a choice whose
+/// relaxed count is not zero. A decision of any other component is
+/// searched within its component, from `empty`, the space's empty
+/// configuration, with the component's earlier decisions pinned.
 fn find_candidates(
     space: &Space,
     configuration: &Configuration,
+    empty: &Configuration,
     context: &ParamContext<'_>,
 ) -> Result<(HashMap<usize, Coordinate>, Vec<Candidate>), TraceError> {
+    let tree = Tree::of(space);
+    let components = Components::of(space, &tree);
     let mut previous = HashMap::new();
     let mut candidates = Vec::new();
     for &position in space.order_positions() {
@@ -503,15 +610,41 @@ fn find_candidates(
         let coordinate = domain
             .coordinate_of(value)
             .ok_or(TraceError::CoordinateOutOfDomain { position: 0 })?;
-        let mut options = Vec::new();
-        for option in list_neighbours(&domain, &coordinate) {
-            let mut pinned = previous.clone();
-            pinned.insert(position, option.clone());
-            if completes(space, &pinned, context)? {
-                options.push(option);
+        let all_others = Options::all_others(&domain, &coordinate);
+        let component = components.component_of(position);
+        let options = match node {
+            _ if !components.is_closed_form(component) => {
+                let includes = |member: usize| components.component_of(member) == component;
+                let pinned = Pinned {
+                    previous: &previous,
+                    target: position,
+                };
+                let mut listed = Vec::new();
+                for option in all_others.iter() {
+                    if completes(space, &includes, &pinned, &option, empty, context)? {
+                        listed.push(option);
+                    }
+                }
+                Options::Listed(listed)
             }
-        }
-        if !options.is_empty() {
+            Decision::Choice(_) => {
+                let mut listed = Vec::new();
+                for option in all_others.iter() {
+                    let Coordinate::Index(index) = option else {
+                        continue;
+                    };
+                    let Ok(alternative) = usize::try_from(index) else {
+                        continue;
+                    };
+                    if admits_completion(space, &tree, position, alternative)? {
+                        listed.push(option);
+                    }
+                }
+                Options::Listed(listed)
+            }
+            Decision::Variable(_) => all_others,
+        };
+        if options.len() > 0 {
             candidates.push(Candidate { position, options });
         }
         previous.insert(position, coordinate);
@@ -519,49 +652,33 @@ fn find_candidates(
     Ok((previous, candidates))
 }
 
-/// Return the coordinates a mutation may move `current` to: an ordering
-/// with two positions swapped, or another index; none for a domain of
-/// more than [`LISTED_MUTATION_DOMAIN`] values.
-fn list_neighbours(domain: &StepDomain, current: &Coordinate) -> Vec<Coordinate> {
-    if domain.cardinality() > BigUint::from(LISTED_MUTATION_DOMAIN) {
-        return Vec::new();
-    }
-    match current {
-        Coordinate::Order(positions) => {
-            let mut swapped = Vec::new();
-            for first in 0..positions.len() {
-                for second in first + 1..positions.len() {
-                    let mut neighbour = positions.clone();
-                    neighbour.swap(first, second);
-                    swapped.push(Coordinate::Order(neighbour));
-                }
-            }
-            swapped
-        }
-        Coordinate::Index(index) => {
-            let count = u64::try_from(domain.cardinality()).unwrap_or(0);
-            (0..count)
-                .filter(|other| other != index)
-                .map(Coordinate::Index)
-                .collect()
-        }
-    }
+/// The coordinates a completion search pins: the decisions before the
+/// changed one, and the changed one.
+struct Pinned<'a> {
+    previous: &'a HashMap<usize, Coordinate>,
+    target: usize,
 }
 
-/// Return whether a complete configuration of `space` takes the `pinned`
-/// coordinates, searching at most [`COMPLETION_BUDGET`] runs and taking an
-/// unfinished search as a yes.
+/// Return whether a complete configuration of the component whose
+/// decisions `includes` holds takes the `pinned` coordinates and `option`
+/// at the pinned target, searching at most [`COMPLETION_BUDGET`] runs from
+/// `empty` and taking an unfinished search as a yes.
 fn completes(
     space: &Space,
-    pinned: &HashMap<usize, Coordinate>,
+    includes: &impl Fn(usize) -> bool,
+    pinned: &Pinned<'_>,
+    option: &Coordinate,
+    empty: &Configuration,
     context: &ParamContext<'_>,
 ) -> Result<bool, TraceError> {
     let mut oracle = PinnedOracle {
         pinned,
+        option,
         rest: ExhaustiveOracle::new(),
     };
     for _ in 0..COMPLETION_BUDGET {
-        match walk(space, |_| true, &mut oracle, context) {
+        let run = Recorder::from_configuration(empty.clone());
+        match walk_from(run, space, includes, &mut oracle, context) {
             Ok(_) => return Ok(true),
             Err(TraceError::Inadmissible { .. }) => return Ok(false),
             Err(error) if ExhaustiveOracle::is_dead_branch(&error) => {}
@@ -577,16 +694,18 @@ fn completes(
 /// Answers the pinned decisions with their coordinates and every other
 /// step exhaustively.
 struct PinnedOracle<'a> {
-    pinned: &'a HashMap<usize, Coordinate>,
+    pinned: &'a Pinned<'a>,
+    option: &'a Coordinate,
     rest: ExhaustiveOracle,
 }
 
 impl SearchOracle for PinnedOracle<'_> {
     fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
-        match step
-            .decision_position()
-            .and_then(|position| self.pinned.get(&position))
-        {
+        let position = step.decision_position();
+        if position == Some(self.pinned.target) {
+            return Ok(self.option.clone());
+        }
+        match position.and_then(|position| self.pinned.previous.get(&position)) {
             Some(coordinate) => Ok(coordinate.clone()),
             None => self.rest.decide(step),
         }
@@ -596,13 +715,13 @@ impl SearchOracle for PinnedOracle<'_> {
 /// Answers a mutation's re-walk: the mutated decision with its new
 /// coordinate, every other decision with its old one while admissible,
 /// and the rest uniformly.
-struct GuidedOracle<'a> {
+struct RepairOracle<'a> {
     target: (usize, Coordinate),
     previous: &'a HashMap<usize, Coordinate>,
     rng: &'a mut Rng,
 }
 
-impl SearchOracle for GuidedOracle<'_> {
+impl SearchOracle for RepairOracle<'_> {
     fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
         let position = step.decision_position();
         if position == Some(self.target.0) {
