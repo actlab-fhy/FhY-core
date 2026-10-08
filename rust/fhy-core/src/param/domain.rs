@@ -399,6 +399,22 @@ struct Admits {
     composite: bool,
 }
 
+impl Admits {
+    /// What an ordinal or a permutation domain admits: floats, and no
+    /// tuple or frozen set, since those have no order.
+    const ORDERED: Self = Self {
+        float: true,
+        composite: false,
+    };
+
+    /// What a categorical domain admits: tuples and frozen sets of
+    /// categories, and no float.
+    const CATEGORICAL: Self = Self {
+        float: false,
+        composite: true,
+    };
+}
+
 /// Return whether `value` is admitted, with `remaining` more tuples or
 /// frozen sets allowed around its innermost value.
 fn is_admitted(value: &Value, admits: Admits, remaining: usize) -> bool {
@@ -477,14 +493,7 @@ impl OrdinalDomain {
     /// for two values that do not order, such as two identifiers; and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
-        let members = read_finite_members(
-            DomainKind::Ordinal,
-            values,
-            Admits {
-                float: true,
-                composite: false,
-            },
-        )?;
+        let members = read_finite_members(DomainKind::Ordinal, values, Admits::ORDERED)?;
         let sorted = sort_tolerantly(members, |left, right| {
             compare_ordinal(left, right)
                 .map_err(DomainError::Custom)?
@@ -518,14 +527,7 @@ impl CategoricalDomain {
     /// refused, inside a tuple too); and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
-        let members = read_finite_members(
-            DomainKind::Categorical,
-            values,
-            Admits {
-                float: false,
-                composite: true,
-            },
-        )?;
+        let members = read_finite_members(DomainKind::Categorical, values, Admits::CATEGORICAL)?;
         let count = members.len();
         let lookup = MemberSet::new(members);
         if lookup.len() != count {
@@ -561,14 +563,7 @@ impl PermutationDomain {
     /// [`DomainError::NanValue`] for a NaN; and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
-        let members = read_finite_members(
-            DomainKind::Permutation,
-            values,
-            Admits {
-                float: true,
-                composite: false,
-            },
-        )?;
+        let members = read_finite_members(DomainKind::Permutation, values, Admits::ORDERED)?;
         build_finite_values(DomainKind::Permutation, members).map(|values| Self(Arc::new(values)))
     }
 
