@@ -405,7 +405,9 @@ impl Measurement {
         if self.0.values.len() != other.0.values.len() {
             return Err(MeasurementError::DifferentObjectives);
         }
-        let mut is_better_somewhere = false;
+        // Every objective is matched before any value is compared, so a
+        // worse value never hides a difference in the objectives.
+        let mut pairs = Vec::with_capacity(self.0.values.len());
         for (objective, value) in &self.0.values {
             let theirs = other
                 .0
@@ -414,7 +416,11 @@ impl Measurement {
                 .find(|(held, _)| held == objective)
                 .map(|(_, theirs)| *theirs)
                 .ok_or(MeasurementError::DifferentObjectives)?;
-            match objective.compare(*value, theirs) {
+            pairs.push((objective, *value, theirs));
+        }
+        let mut is_better_somewhere = false;
+        for (objective, value, theirs) in pairs {
+            match objective.compare(value, theirs) {
                 Some(Ordering::Less) => return Ok(false),
                 Some(Ordering::Greater) => is_better_somewhere = true,
                 Some(Ordering::Equal) | None => {}
