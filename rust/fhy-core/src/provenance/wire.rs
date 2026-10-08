@@ -16,9 +16,9 @@ use super::{
 
 /// The wire form of a [`Provenance`], its custom provenances unresolved.
 ///
-/// Decoding normalizes a file path and refuses an empty name, as
-/// [`Provenance`]'s own decoding does, and keeps every custom part as a
-/// [`Foreign`].
+/// Decoding normalizes a file path, keeps every custom part as a
+/// [`Foreign`], and accepts an empty name: only [`ProvenanceData::build`]
+/// refuses an empty name.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ProvenanceData(ProvenanceRepr);
