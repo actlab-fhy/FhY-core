@@ -7,6 +7,8 @@ folding) and every shape it declines, the accessors of ``AffineForm`` and
 its canonical expression, and the argument check.
 """
 
+import copy
+import pickle
 from decimal import Decimal
 from fractions import Fraction
 from typing import Any
@@ -434,3 +436,33 @@ def test_a_doubling_dag_of_shared_nodes_has_the_coefficient_two_to_the_depth() -
 
     assert form.coefficient(_X) == Fraction(2**256)
     assert form.constant == 0
+
+
+# ===========================================================================
+# Copying and pickling
+# ===========================================================================
+
+
+def _rational_form() -> AffineForm:
+    """Return a form with rational coefficients and a rational constant."""
+    return _form(_id(_X) / 2 - 3 * _id(_Y) / 4 + _lit(5) / 3)
+
+
+def test_a_form_pickles_to_an_equal_form() -> None:
+    """Test a form with rational coefficients and a constant survives pickle."""
+    form = _rational_form()
+
+    restored = pickle.loads(pickle.dumps(form))
+
+    assert restored == form
+    assert hash(restored) == hash(form)
+    assert restored.terms == {_X: Fraction(1, 2), _Y: Fraction(-3, 4)}
+    assert restored.constant == Fraction(5, 3)
+
+
+def test_a_form_deep_copies_to_an_equal_form() -> None:
+    """Test `copy.deepcopy` of a form gives an equal form."""
+    form = _rational_form()
+
+    assert copy.deepcopy(form) == form
+    assert copy.copy(form) == form
