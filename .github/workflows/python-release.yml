@@ -29,7 +29,7 @@ jobs:
           manylinux: auto
           args: --release --locked --out dist --find-interpreter
       - name: Upload Wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-linux-${{ matrix.target }}
           path: dist
@@ -61,7 +61,7 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --locked --out dist --find-interpreter
       - name: Upload Wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-macos-${{ matrix.target }}
           path: dist
@@ -87,7 +87,7 @@ jobs:
           target: x64
           args: --release --locked --out dist --find-interpreter
       - name: Upload Wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-windows-x64
           path: dist
@@ -104,7 +104,7 @@ jobs:
           command: sdist
           args: --out dist
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sdist
           path: dist
