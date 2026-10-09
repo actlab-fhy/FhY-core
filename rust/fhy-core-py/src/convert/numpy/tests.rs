@@ -29,7 +29,7 @@ const RECIPE: &str = "the NumPy conversion stories need Python with NumPy. Build
      with PYO3_PYTHON naming a Python that has a shared libpython and the numpy package, \
      PYTHONPATH naming that Python's site-packages (an embedded interpreter does not read a \
      virtualenv's pyvenv.cfg), and LD_LIBRARY_PATH naming the directory of its libpython \
-     when the loader does not find it; CONTRIBUTING's \"Rust test layout\" records the recipe";
+     when the loader does not find it; CONTRIBUTING's \"Rust tests\" records the recipe";
 
 /// Serializes the stories, one of which hides `numpy` from `sys.modules`.
 static SERIAL: Mutex<()> = Mutex::new(());

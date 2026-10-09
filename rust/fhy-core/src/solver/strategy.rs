@@ -72,7 +72,7 @@
 //!    (`rust/fhy-core-py/src/solver/sympy/ground_differential.rs`), which
 //!    compare each rewrite with `SymPy`'s result for the same node:
 //!    `cargo test -p fhy-core-py ground_differential`, which needs Python
-//!    with `SymPy` (`CONTRIBUTING.md`, "Rust test layout").
+//!    with `SymPy` (`CONTRIBUTING.md`, "Rust tests").
 //! 4. Add it to [`default_strategies`] if it should run by default, and to
 //!    the table above. It belongs there only if `SymPy` answers the node
 //!    itself, without inlining. Any other strategy is opt-in: list it in the
