@@ -13,22 +13,19 @@ Covers the public surface of the open `ValueDomain` registry:
 
 import pytest
 
-from fhy_core.identifier import Identifier
+from fhy_core.identifier import HasIdentifier, Identifier
 from fhy_core.serialization import (
+    DeserializationValueError,
     SerializedDict,
 )
-from fhy_core.traits import (
-    Frozen,
-    FrozenMutationError,
-    HasIdentifier,
-    Interned,
-    StructuralEquivalence,
-)
+from fhy_core.traits import Frozen, FrozenMutationError, Interned, StructuralEquivalence
 from fhy_core.value_domain import (
     ADDRESS_DOMAIN,
     DATA_DOMAIN,
     ValueDomain,
 )
+
+from .v1 import reads_v1
 
 # =============================================================================
 # Construction & traits
@@ -84,16 +81,6 @@ def test_value_domain_blocks_attribute_mutation() -> None:
 # =============================================================================
 # Interning
 # =============================================================================
-
-
-def test_value_domain_first_constructed_with_key_is_canonical() -> None:
-    """Test `get_interned` returns the first instance registered under a name."""
-    name = Identifier("x")
-    first = ValueDomain(name, "first")
-    second = ValueDomain(name, "second")
-    canonical = ValueDomain.get_interned(name)
-    assert canonical is first
-    assert canonical is not second
 
 
 def test_value_domain_distinct_identifiers_intern_separately() -> None:
@@ -179,15 +166,6 @@ def test_value_domain_unequal_when_names_differ() -> None:
     assert ValueDomain(Identifier("a"), "desc") != ValueDomain(Identifier("b"), "desc")
 
 
-def test_value_domain_unequal_when_parents_differ() -> None:
-    """Test `__eq__` distinguishes domains with the same `name` but different
-    `parent`s, keeping equality aligned with structural equivalence."""
-    name = Identifier("child")
-    parented = ValueDomain(name, "desc", parent=DATA_DOMAIN)
-    orphan = ValueDomain(name, "desc")
-    assert parented != orphan
-
-
 # =============================================================================
 # Parent chain & is_subdomain_of
 # =============================================================================
@@ -237,6 +215,7 @@ def test_value_domain_deserialize_returns_canonical_for_registered_name() -> Non
     assert restored is DATA_DOMAIN
 
 
+@reads_v1
 def test_value_domain_deserialize_constructs_fresh_for_unregistered_name() -> None:
     """Test deserialization constructs a fresh instance for an unseen identifier."""
     unregistered_name = Identifier("never-registered-value-domain")
@@ -261,6 +240,7 @@ def test_value_domain_deserialize_constructs_fresh_for_unregistered_name() -> No
 # =============================================================================
 
 
+@reads_v1
 def test_value_domain_deserialize_warns_on_description_mismatch(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -303,36 +283,107 @@ def test_value_domain_deserialize_does_not_warn_when_descriptions_match(
 
 
 # =============================================================================
-# register_default_instances restores module-level canonicals
+# Conflicting-payload deserialization rejection
 # =============================================================================
 
 
-def test_clearing_registry_desyncs_module_level_constants_without_default_restore() -> (
+@pytest.mark.usefixtures("v1_wire")
+def test_value_domain_deserialize_rejects_a_conflicting_parent() -> None:
+    """Test deserializing a canonical name under a different parent raises."""
+    canonical = ValueDomain(
+        Identifier("conflicting-parent-domain"), "desc", parent=DATA_DOMAIN
+    )
+    payload: SerializedDict = {
+        "name": canonical.name.serialize_to_dict(),
+        "description": "desc",
+        "parent": ADDRESS_DOMAIN.serialize_to_dict(),
+    }
+
+    with pytest.raises(DeserializationValueError) as exc_info:
+        ValueDomain.deserialize_from_dict(payload)
+
+    message = str(exc_info.value)
+    assert "ValueDomain" in message
+    assert repr(canonical.name) in message
+    assert "parent" in message
+    assert ValueDomain.get_interned(canonical.name) is canonical
+
+
+@reads_v1
+def test_value_domain_deserialize_rejects_a_parent_dropped_from_the_payload() -> None:
+    """Test a payload with no parent conflicts with a parented canonical."""
+    canonical = ValueDomain(
+        Identifier("dropped-parent-domain"), "desc", parent=DATA_DOMAIN
+    )
+    payload: SerializedDict = {
+        "name": canonical.name.serialize_to_dict(),
+        "description": "desc",
+        "parent": None,
+    }
+
+    with pytest.raises(DeserializationValueError):
+        ValueDomain.deserialize_from_dict(payload)
+
+
+@pytest.mark.usefixtures("v1_wire")
+def test_value_domain_deserialize_accepts_a_description_only_mismatch_with_parent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test a payload differing only in description returns the canonical and
+    logs the ignored description."""
+    canonical = ValueDomain(
+        Identifier("description-only-parented-domain"), "original", parent=DATA_DOMAIN
+    )
+    payload: SerializedDict = {
+        "name": canonical.name.serialize_to_dict(),
+        "description": "divergent",
+        "parent": DATA_DOMAIN.serialize_to_dict(),
+    }
+
+    with caplog.at_level("WARNING", logger="fhy_core.traits.interned"):
+        restored = ValueDomain.deserialize_from_dict(payload)
+
+    assert restored is canonical
+    assert any(
+        "already canonical" in record.getMessage()
+        and "divergent" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_value_domain_deserialize_returns_canonical_for_an_exact_parented_match() -> (
     None
 ):
-    """Test clearing the registry desyncs the module-level constants."""
-    try:
-        ValueDomain.clear_interned_registry()
-        payload = DATA_DOMAIN.serialize_to_dict()
-        restored = ValueDomain.deserialize_from_dict(payload)
-        assert restored is not DATA_DOMAIN
-    finally:
-        ValueDomain.register_default_instances()
+    """Test a payload matching a parented canonical returns that canonical."""
+    canonical = ValueDomain(
+        Identifier("exact-match-parented-domain"), "desc", parent=DATA_DOMAIN
+    )
+
+    restored = ValueDomain.deserialize_from_dict(canonical.serialize_to_dict())
+
+    assert restored is canonical
 
 
-def test_register_default_instances_restores_module_level_canonicals() -> None:
-    """Test ``register_default_instances`` re-canonicalizes shipped defaults."""
-    try:
-        ValueDomain.clear_interned_registry()
-        ValueDomain.register_default_instances()
+@reads_v1
+def test_value_domain_deserialize_conflict_keeps_a_fresh_nested_parent() -> None:
+    """Test a rejected payload still registers the fresh parent decoded first."""
+    canonical = ValueDomain(
+        Identifier("conflict-with-fresh-parent-domain"), "desc", parent=DATA_DOMAIN
+    )
+    fresh_parent_name = Identifier("fresh-nested-parent-domain")
+    payload: SerializedDict = {
+        "name": canonical.name.serialize_to_dict(),
+        "description": "desc",
+        "parent": {
+            "name": fresh_parent_name.serialize_to_dict(),
+            "description": "fresh parent",
+            "parent": None,
+        },
+    }
 
-        restored_data = ValueDomain.deserialize_from_dict(
-            DATA_DOMAIN.serialize_to_dict()
-        )
-        restored_address = ValueDomain.deserialize_from_dict(
-            ADDRESS_DOMAIN.serialize_to_dict()
-        )
-        assert restored_data is DATA_DOMAIN
-        assert restored_address is ADDRESS_DOMAIN
-    finally:
-        ValueDomain.register_default_instances()
+    with pytest.raises(DeserializationValueError):
+        ValueDomain.deserialize_from_dict(payload)
+
+    fresh_parent = ValueDomain.get_interned(fresh_parent_name)
+    assert fresh_parent is not None
+    assert fresh_parent.description == "fresh parent"

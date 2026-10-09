@@ -8,10 +8,15 @@ invalid JSON, and a constructor that raises ``TypeError`` must all surface as a
 ``json.JSONDecodeError`` / ``TypeError``.
 """
 
+import subprocess
+import sys
+import textwrap
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
+from fhy_core.search_space import Space
 from fhy_core.serialization import (
     _HEADER_STRUCT,
     BinaryPayloadCodec,
@@ -21,6 +26,7 @@ from fhy_core.serialization import (
     SerializationError,
     register_serializable,
 )
+from fhy_core.symbolic.param import Param
 from fhy_core.traits.frozen import FrozenMixin
 
 
@@ -75,6 +81,35 @@ def test_from_json_wraps_malformed_input(payload: str | bytes, match: str) -> No
     """Test ``from_json`` reports malformed input as ``MalformedPayloadError``."""
     with pytest.raises(MalformedPayloadError, match=match):
         _Point.from_json(payload)
+
+
+def _deep_tuple_text(depth: int) -> str:
+    """Return the JSON text of `depth` nested one-element tuple values."""
+    return '{"tuple":[' * depth + '{"bool":true}' + "]}" * depth
+
+
+@pytest.mark.parametrize(
+    ("cls", "text"),
+    [
+        pytest.param(Space, '{"a":' * 200 + "1" + "}" * 200, id="read-as-a-tree"),
+        pytest.param(
+            Param,
+            '{"constraint_system":{"constraints":[{"in_set":{"variable":'
+            '{"id":1,"name_hint":"x"},"values":[' + _deep_tuple_text(100) + "]}}]}}",
+            id="read-as-its-wire-form",
+        ),
+    ],
+)
+def test_from_json_reports_valid_json_too_deep_to_read_as_a_value_error(
+    cls: type[Serializable], text: str
+) -> None:
+    """Test a Rust-backed class refuses JSON nested past its reader's limit.
+
+    The text is valid JSON, so it is not malformed: the payload is refused
+    as a value, as one of another shape is.
+    """
+    with pytest.raises(DeserializationValueError, match="recursion limit exceeded"):
+        cls.from_json(text)
 
 
 # ============================================================================
@@ -134,3 +169,134 @@ def test_constructor_serialization_error_propagates_unwrapped() -> None:
         _RaisesSerializationError.deserialize_from_dict({"x": 0})
 
     assert str(exc_info.value) == "constructor raised a serialization error"
+
+
+# =============================================================================
+# Deep payloads
+#
+# Each runs in a child process, so a regression that overflows the stack
+# kills the child, not the run.
+# =============================================================================
+
+
+def _run_child(program: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(program)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+
+
+_DEEP_DICT_PROGRAM = """
+    from fhy_core.serialization import SerializationError
+    from fhy_core.symbol_table import SymbolTable
+    from fhy_core.symbolic.expression import Expression
+    from fhy_core.symbolic.param import Param
+    from fhy_core.types import NumericalType
+
+    classes = {{
+        "Expression": Expression,
+        "SymbolTable": SymbolTable,
+        "NumericalType": NumericalType,
+        "Param": Param,
+    }}
+    nested = []
+    for _ in range({depth}):
+        nested = [nested]
+    try:
+        classes["{cls}"].deserialize_from_dict({{"{key}": nested}})
+    except SerializationError as error:
+        print("SerializationError", type(error).__name__, str(error)[-60:])
+    except Exception as error:
+        print(type(error).__name__, str(error)[:200])
+"""
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+@pytest.mark.parametrize(
+    ("cls", "key", "depth"),
+    [
+        pytest.param("Expression", "nodes", 30_000, id="expression_30000"),
+        pytest.param("SymbolTable", "x", 40_000, id="symbol_table_40000"),
+        pytest.param("NumericalType", "x", 40_000, id="numerical_type_40000"),
+        pytest.param("Param", "x", 40_000, id="param_40000"),
+    ],
+)
+def test_a_deep_payload_dict_raises_instead_of_crashing(
+    cls: str, key: str, depth: int
+) -> None:
+    """Test a V2 payload dict nested far too deep is refused, not a crash.
+
+    The binding's reader of a Python payload refuses more than 128 levels
+    with `DeserializationValueError`; a shape Python checks first is refused
+    by that check. Either is a `SerializationError`.
+    """
+    completed = _run_child(_DEEP_DICT_PROGRAM.format(cls=cls, key=key, depth=depth))
+
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    assert completed.stdout.startswith("SerializationError"), completed.stdout
+
+
+def test_a_payload_dict_128_levels_deep_is_read() -> None:
+    """Test the reader's limit refuses nesting beyond 128 levels only.
+
+    The payload's dict and 127 lists inside it are 128 levels: they are
+    read, and then refused by the payload's shape, with serde's text; one
+    more list is refused by the depth limit.
+    """
+    from fhy_core.symbolic.expression import Expression  # noqa: PLC0415
+
+    nested: Any = []
+    for _ in range(126):
+        nested = [nested]
+
+    with pytest.raises(DeserializationValueError) as shallow:
+        Expression.deserialize_from_dict({"nodes": nested})
+    with pytest.raises(DeserializationValueError) as deep:
+        Expression.deserialize_from_dict({"nodes": [nested]})
+
+    assert "128 levels" not in str(shallow.value)
+    assert "the payload nests more than 128 levels" in str(deep.value)
+
+
+_DEEP_MEMBER_PROGRAM = """
+    from fhy_core.identifier import Identifier
+    from fhy_core.symbolic.constraint import InSetConstraint
+
+    member = 1
+    for _ in range({depth}):
+        member = (member,)
+    x = Identifier("x")
+    try:
+        {action}
+    except RecursionError as error:
+        print("RecursionError", str(error)[:120])
+    except Exception as error:
+        print(type(error).__name__, str(error)[:200])
+"""
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+@pytest.mark.parametrize(
+    "action",
+    [
+        pytest.param("InSetConstraint(x, [member])", id="build"),
+        pytest.param(
+            "InSetConstraint(x, [1]).evaluate_with_bindings({x: member})", id="bind"
+        ),
+    ],
+)
+def test_a_deep_member_raises_recursion_error(action: str) -> None:
+    """Test a member nested past the recursion limit raises `RecursionError`.
+
+    The member reader counts its depth against `sys.getrecursionlimit()`, as
+    the provenance binding does.
+    """
+    completed = _run_child(_DEEP_MEMBER_PROGRAM.format(depth=20_000, action=action))
+
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    assert completed.stdout.startswith("RecursionError"), completed.stdout

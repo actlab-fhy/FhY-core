@@ -27,6 +27,7 @@ from typing import (
     ClassVar,
     ForwardRef,
     Protocol,
+    Self,
     TypeVar,
     get_origin,
     runtime_checkable,
@@ -36,7 +37,6 @@ from immutabledict import immutabledict
 
 from fhy_core.error import register_error
 from fhy_core.logger import get_logger
-from fhy_core.utils import Self
 from fhy_core.utils.type_hint_utils import (
     get_field_names,
     get_origin_and_arguments,
@@ -446,9 +446,9 @@ class FrozenMixin(ABC):
 
         Manual construction paths that bypass ``__init__``
         (e.g. ``cls.__new__(cls)`` followed by direct attribute
-        assignment, used by serialization and the deterministic-id
-        testing patch) do not trigger the auto-freeze wrap and must
-        call :meth:`freeze` explicitly when construction is complete.
+        assignment, used by deserialization) do not trigger the
+        auto-freeze wrap and must call :meth:`freeze` explicitly when
+        construction is complete.
 
     Composing with ``@dataclass(frozen=True)``:
         Dataclass-frozen subclasses inherit the dataclass's own
@@ -593,3 +593,93 @@ class FrozenMixin(ABC):
                 f'Cannot delete "{name}" on frozen {type(self).__name__}.'
             )
         object.__delattr__(self, name)
+
+    def __setstate__(self, state: Any) -> None:
+        # Pickle/deepcopy reconstruction is not mutation: the default
+        # slot-state restoration assigns through `setattr`, which the
+        # mutation guard rejects as soon as the frozen flag itself has been
+        # restored. Every entry -- instance `__dict__` content and slot
+        # values, bookkeeping flags included -- is therefore written via
+        # `object.__setattr__`, making restoration order irrelevant and
+        # returning the instance exactly as frozen as it was when captured.
+        # Restoration trusts the captured state; `__init__`/`__post_init__`
+        # validation is not re-run.
+        dict_state: Any
+        slots_state: Any
+        if isinstance(state, tuple) and len(state) == 2:  # noqa: PLR2004
+            dict_state, slots_state = state
+        else:
+            dict_state, slots_state = state, None
+        for source in (dict_state, slots_state):
+            if not source:
+                continue
+            for name, value in source.items():
+                object.__setattr__(self, name, value)
+
+
+class _FrozenAfterInit:
+    """The ``FrozenMixin`` contract for an open base backed by a Rust class.
+
+    ``FrozenMixin`` itself cannot be a base beside a Rust-backed class: its
+    ``__slots__`` would give the class two instance layouts. So such a base
+    (``Type``, ``DataType``, ``Variable``, ``Alternative``) implements the
+    mixin's contract with its flag, freezes a subclass that defines
+    ``__init__`` at the end of the outermost call through its ``__init__``
+    wrap, and is registered as a virtual subclass of ``FrozenMixin``.
+    """
+
+    __slots__ = ()
+
+    _FREEZE_ON_INIT: ClassVar[bool] = True
+
+    @override
+    def __init_subclass__(
+        cls, *, freeze_on_init: bool | None = None, **kwargs: Any
+    ) -> None:
+        super().__init_subclass__(**kwargs)
+        if freeze_on_init is not None:
+            cls._FREEZE_ON_INIT = freeze_on_init
+        if cls._FREEZE_ON_INIT and "__init__" in cls.__dict__:
+            _install_init_wrap(cls)
+
+    @property
+    def is_frozen(self) -> bool:
+        """Whether the object is frozen."""
+        try:
+            return bool(object.__getattribute__(self, _FROZEN_FLAG))
+        except AttributeError:
+            return False
+
+    def freeze(self) -> None:
+        """Idempotently transition this instance to the frozen state."""
+        object.__setattr__(self, _FROZEN_FLAG, True)
+
+    def assert_frozen(self) -> None:
+        """Raise ``FrozenValidationError`` unless this instance is frozen."""
+        if not self.is_frozen:
+            raise FrozenValidationError(f"{type(self).__name__} is not frozen.")
+
+    @override
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name != "__orig_class__" and self.is_frozen:
+            raise FrozenMutationError(
+                f'Cannot modify "{name}" on frozen {type(self).__name__}.'
+            )
+        object.__setattr__(self, name, value)
+
+    @override
+    def __delattr__(self, name: str) -> None:
+        if self.is_frozen:
+            raise FrozenMutationError(
+                f'Cannot delete "{name}" on frozen {type(self).__name__}.'
+            )
+        object.__delattr__(self, name)
+
+    def __setstate__(self, state: Any) -> None:
+        """Restore a pickled instance, frozen as it was, without the guard."""
+        dict_state, slots_state = (
+            state if isinstance(state, tuple) and len(state) == 2 else (state, None)  # noqa: PLR2004
+        )
+        for source in (dict_state, slots_state):
+            for name, attribute in (source or {}).items():
+                object.__setattr__(self, name, attribute)

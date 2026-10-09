@@ -1,0 +1,1170 @@
+"""Behavioral tests shared by `InSetConstraint` and `NotInSetConstraint`.
+
+Both kinds share an identical surface (constructor signature, ``variable``
+property, repr/str rendering, member shapes), so the tests are
+parametrized over the constraint factory.
+"""
+
+import copy
+import io
+import json
+import math
+import pickle
+from collections.abc import Callable
+from enum import IntEnum
+from typing import Any, cast
+
+import pytest
+
+from fhy_core.identifier import Identifier
+from fhy_core.serialization import (
+    DeserializationValueError,
+    serialize_registry_wrapped_value,
+)
+from fhy_core.symbolic.constraint import (
+    Constraint,
+    ConstraintError,
+    ConstraintOutcome,
+    InSetConstraint,
+    NotInSetConstraint,
+    create_constraint_system,
+)
+from fhy_core.symbolic.expression import LiteralExpression
+from fhy_core.traits import FrozenMutationError
+from fhy_core.utils.override import override
+
+from .conftest import (
+    SET_KINDS,
+    HashCollidingMember,
+    SerializableEqualHashable,
+    mock_identifier,
+)
+
+SetConstraintFactory = Callable[[Identifier, Any], Constraint]
+
+_KINDS_WITH_OUTCOMES = [
+    pytest.param(InSetConstraint, True, False, id="in_set"),
+    pytest.param(NotInSetConstraint, False, True, id="not_in_set"),
+]
+
+_KINDS_WITH_EVALUATE_OUTCOMES = [
+    pytest.param(
+        InSetConstraint,
+        ConstraintOutcome.SATISFIED,
+        ConstraintOutcome.VIOLATED,
+        id="in_set",
+    ),
+    pytest.param(
+        NotInSetConstraint,
+        ConstraintOutcome.VIOLATED,
+        ConstraintOutcome.SATISFIED,
+        id="not_in_set",
+    ),
+]
+
+_KINDS_WITH_STR_MARKER = [
+    pytest.param(InSetConstraint, " in {", id="in_set"),
+    pytest.param(NotInSetConstraint, "not in", id="not_in_set"),
+]
+
+
+@pytest.mark.parametrize(
+    "factory, member_outcome, non_member_outcome", _KINDS_WITH_OUTCOMES
+)
+@pytest.mark.parametrize(
+    "values, member, non_member",
+    [
+        pytest.param({1, 2, 3}, 1, 4, id="ints"),
+        pytest.param({"a", "b", "c"}, "a", "d", id="strings"),
+        pytest.param({True, False}, True, "missing", id="bools"),
+        pytest.param({1.5, 2.5}, 1.5, 3.5, id="floats"),
+    ],
+)
+def test_set_constraint_is_satisfied_with_bindings(
+    factory: SetConstraintFactory,
+    member_outcome: bool,
+    non_member_outcome: bool,
+    values: set[Any],
+    member: Any,
+    non_member: Any,
+) -> None:
+    """Test ``is_satisfied_with_bindings`` returns the kind-appropriate polarity."""
+    # pylint: disable=too-many-positional-arguments
+    x = mock_identifier("x", 0)
+    constraint = factory(x, values)
+
+    assert constraint.is_satisfied_with_bindings({x: member}) is member_outcome
+    assert constraint.is_satisfied_with_bindings({x: non_member}) is non_member_outcome
+
+
+@pytest.mark.parametrize(
+    "factory, member_outcome, non_member_outcome", _KINDS_WITH_OUTCOMES
+)
+@pytest.mark.parametrize(
+    "values, member, non_member",
+    [
+        pytest.param({1, "a", 2.5}, "a", "z", id="mixed_primitives"),
+        pytest.param(
+            {SerializableEqualHashable(7)},
+            SerializableEqualHashable(7),
+            SerializableEqualHashable(8),
+            id="serializable_hashable",
+        ),
+        pytest.param(
+            [(1, "a", True)], (1, "a", True), (2, "b", False), id="tuple_member"
+        ),
+        pytest.param(
+            [frozenset({1, 2, 3})],
+            frozenset({1, 2, 3}),
+            frozenset({4, 5, 6}),
+            id="frozenset_member",
+        ),
+    ],
+)
+def test_set_constraint_supports_member_shapes(
+    factory: SetConstraintFactory,
+    member_outcome: bool,
+    non_member_outcome: bool,
+    values: Any,
+    member: Any,
+    non_member: Any,
+) -> None:
+    """Test set constraints accept the full range of supported member shapes."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, values)
+
+    assert constraint.is_satisfied_with_bindings({x: member}) is member_outcome
+    assert constraint.is_satisfied_with_bindings({x: non_member}) is non_member_outcome
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_instance_is_not_callable(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a constraint instance is not callable; the `__call__` sugar is removed."""
+    constraint = factory(mock_identifier("x", 0), {1, 2, 3})
+
+    with pytest.raises(TypeError, match="not callable"):
+        constraint(2)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_variable_property_returns_constructor_argument(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test the ``variable`` property returns the identifier passed to ``__init__``."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2})
+
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+    assert constraint.variable is x
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_get_free_identifiers_is_just_the_variable(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a set constraint's scope is exactly its single variable."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2})
+
+    assert constraint.get_free_identifiers() == frozenset({x})
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_repr_matches_the_exact_expected_format(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``repr`` matches the exact class-name/variable/values format.
+
+    A substring check on the class name, the variable, and each member
+    would also pass a ``@dataclass``-generated ``repr`` that shows every
+    field by keyword and the raw, unsorted ``values`` tuple; only an
+    exact match on the whole string pins the hand-written format.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2})
+
+    rendered = repr(constraint)
+
+    assert rendered == f"{type(constraint).__name__}({x!r}, values={{1, 2}})"
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_repr_renders_empty_values_as_empty_braces(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``repr`` renders an empty member set as an empty pair of braces."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, set())
+
+    rendered = repr(constraint)
+
+    assert rendered == f"{type(constraint).__name__}({x!r}, values={{}})"
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_repr_places_the_variable_positionally(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``repr`` takes the variable positionally rather than by keyword.
+
+    A ``@dataclass``-generated ``__repr__`` would show every field by
+    keyword (``variable=...``); the hand-written form takes the variable
+    as the first positional argument instead.
+    """
+    x = mock_identifier("count", 7)
+    constraint = factory(x, {1, 2})
+
+    rendered = repr(constraint)
+
+    assert rendered.startswith(f"{type(constraint).__name__}({x!r}, ")
+    assert "variable=" not in rendered
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_repr_distinguishes_string_from_numeric_members(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``repr`` renders a ``str`` member distinguishably from an ``int`` member.
+
+    Membership is type-strict, so ``{"5"}`` and ``{5}`` are different
+    constraints; rendering both members bare would make the two textual
+    forms indistinguishable.
+    """
+    x = mock_identifier("x", 0)
+    string_constraint = factory(x, {"5"})
+    integer_constraint = factory(x, {5})
+
+    assert repr(string_constraint) == (
+        f"{type(string_constraint).__name__}({x!r}, values={{'5'}})"
+    )
+    assert repr(integer_constraint) == (
+        f"{type(integer_constraint).__name__}({x!r}, values={{5}})"
+    )
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_repr_is_stable_across_construction_order(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``repr`` renders alike for two constraints built in opposite orders.
+
+    The members collide on hash and are given in opposite orders; both
+    constraints keep them in the canonical order, so the same logical
+    constraint prints one way whatever its construction history.
+    """
+    x = mock_identifier("x", 0)
+    members = [HashCollidingMember(1), HashCollidingMember(2)]
+    left = factory(x, list(members))
+    right = factory(x, list(reversed(members)))
+    assert isinstance(left, (InSetConstraint, NotInSetConstraint))
+    assert isinstance(right, (InSetConstraint, NotInSetConstraint))
+
+    # Both store their members in canonical order.
+    assert left.values == right.values
+    assert repr(left) == repr(right)
+
+
+@pytest.mark.parametrize("factory, str_marker", _KINDS_WITH_STR_MARKER)
+def test_set_constraint_str_renders_membership_marker(
+    factory: SetConstraintFactory,
+    str_marker: str,
+) -> None:
+    """Test ``str`` renders the kind-appropriate ``in`` / ``not in`` marker."""
+    constraint = factory(mock_identifier("x", 0), {1, 2})
+
+    rendered = str(constraint)
+
+    assert str_marker in rendered
+    assert "1" in rendered
+    assert "2" in rendered
+
+
+# =============================================================================
+# Tri-state `evaluate_with_bindings` outcomes
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "factory, member_outcome, non_member_outcome", _KINDS_WITH_EVALUATE_OUTCOMES
+)
+def test_set_constraint_evaluate_only_decides_satisfied_or_violated(
+    factory: SetConstraintFactory,
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
+) -> None:
+    """Test a bound set constraint only ever reports SATISFIED or VIOLATED.
+
+    Membership against a concrete, bound value is always decidable, so a
+    set constraint never reports ``ConstraintOutcome.UNDECIDED`` once its
+    variable is bound to a literal.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2, 3})
+
+    member_result = constraint.evaluate_with_bindings({x: 1})
+    non_member_result = constraint.evaluate_with_bindings({x: 4})
+
+    assert member_result is member_outcome
+    assert non_member_result is non_member_outcome
+    assert ConstraintOutcome.UNDECIDED not in (member_result, non_member_result)
+
+
+# =============================================================================
+# Adversarial / edge cases
+# =============================================================================
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_distinguishes_true_from_one(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``True`` and ``1`` are stored and compared as distinct members."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    one_constraint = factory(x, {1})
+
+    assert one_constraint.is_satisfied_with_bindings({x: True}) is not in_set
+    assert one_constraint.is_satisfied_with_bindings({x: 1}) is in_set
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_distinguishes_one_from_one_float(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``1`` and ``1.0`` are stored and compared as distinct members."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    int_constraint = factory(x, {1})
+
+    assert int_constraint.is_satisfied_with_bindings({x: 1.0}) is not in_set
+    assert int_constraint.is_satisfied_with_bindings({x: 1}) is in_set
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_with_mixed_bool_and_int_stores_both(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test ``[1, True]`` retains both members under type-strict equality."""
+    # A list literal is used at the call site; ``{1, True}`` would
+    # collapse to ``{1}`` before the constructor sees it.
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, [1, True])
+
+    assert constraint.is_satisfied_with_bindings({x: True}) is in_set
+    assert constraint.is_satisfied_with_bindings({x: 1}) is in_set
+    assert constraint.is_satisfied_with_bindings({x: False}) is not in_set
+    assert constraint.is_satisfied_with_bindings({x: 0}) is not in_set
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_with_nested_tuple_uses_strict_inner_equality(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test type strictness applies to elements inside tuple members."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, [(True, 1)])
+
+    assert constraint.is_satisfied_with_bindings({x: (True, 1)}) is in_set  # type: ignore[dict-item]  # test: type-strict tuple member off-union
+    assert constraint.is_satisfied_with_bindings({x: (1, 1)}) is not in_set  # type: ignore[dict-item]  # test: type-strict tuple member off-union
+    assert constraint.is_satisfied_with_bindings({x: (1, True)}) is not in_set  # type: ignore[dict-item]  # test: type-strict tuple member off-union
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_with_nested_frozenset_uses_strict_inner_equality(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test type strictness applies to elements inside frozenset members."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, [frozenset({True})])
+
+    assert constraint.is_satisfied_with_bindings({x: frozenset({True})}) is in_set  # type: ignore[dict-item]  # test: type-strict frozenset member off-union
+    assert constraint.is_satisfied_with_bindings({x: frozenset({1})}) is not in_set  # type: ignore[dict-item]  # test: type-strict frozenset member off-union
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(
+    "empty_member",
+    [
+        pytest.param((), id="empty_tuple"),
+        pytest.param(frozenset(), id="empty_frozenset"),
+    ],
+)
+def test_set_constraint_accepts_empty_collection_as_member(
+    factory: SetConstraintFactory, empty_member: object
+) -> None:
+    """Test an empty tuple / frozenset is a valid (and hashable) member."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, [empty_member])
+
+    assert constraint.is_satisfied_with_bindings({x: empty_member}) is in_set  # type: ignore[dict-item]  # test: off-union collection member
+
+
+def test_in_set_constraint_isolates_from_post_construction_mutation() -> None:
+    """Test mutating the source collection after construction does not leak in."""
+    x = mock_identifier("x", 0)
+    src = {1, 2}
+    constraint = InSetConstraint(x, src)
+
+    src.add(99)
+
+    assert not constraint.is_satisfied_with_bindings({x: 99})
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_is_satisfied_with_bindings_rejects_an_off_union_value(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test an unhashable off-union bound value raises `ConstraintError`.
+
+    A ``dict`` could never be a ``ConstraintMember``, so it is rejected
+    before it ever reaches the type-strict membership check; an
+    unhashable off-union value never reaches ``hash`` at all.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1, 2})
+
+    with pytest.raises(ConstraintError, match="must be an `Expression`"):
+        constraint.is_satisfied_with_bindings({x: {"a": 1}})  # type: ignore[dict-item]  # test: unhashable off-union value
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_supports_negative_and_zero_numeric_members(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test set constraints accept negative and zero numeric members."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, {-1, 0, -2.5})
+
+    for value in (-1, 0, -2.5):
+        assert constraint.is_satisfied_with_bindings({x: value}) is in_set
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("members", ["abc", b"abc", bytearray(b"abc")])
+def test_set_constraint_rejects_bare_string_like_members(
+    factory: SetConstraintFactory, members: Any
+) -> None:
+    """Test a bare str/bytes/bytearray is rejected, not split into elements."""
+    with pytest.raises(ConstraintError, match=r"not a bare \w+, which would be split"):
+        factory(mock_identifier("x", 0), members)
+
+
+# =============================================================================
+# Public field encapsulation (`values`)
+# =============================================================================
+
+_SET_KINDS_WITH_FIELD = [
+    pytest.param(InSetConstraint, "values", id="in_set"),
+    pytest.param(NotInSetConstraint, "values", id="not_in_set"),
+]
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_public_field_holds_the_raw_members(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test the constructor-keyword field holds the raw member values."""
+    constraint = factory(mock_identifier("x", 0), {1, 2})
+
+    assert set(getattr(constraint, field_name)) == {1, 2}
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_accepts_the_unified_values_keyword(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test both kinds share one constructor field name: `values`.
+
+    ``InSetConstraint`` and ``NotInSetConstraint`` are implemented by one
+    shared base holding a single ``values`` field, so both accept the
+    same keyword regardless of kind.
+    """
+    x = mock_identifier("x", 0)
+
+    constraint = factory(variable=x, values={1, 2})  # type: ignore[call-arg]
+
+    assert set(constraint.values) == {1, 2}  # type: ignore[attr-defined]
+
+
+# The field holds the raw members, not the internal type-strict wrapper:
+# the wrapper's `__eq__`/`__hash__` never match a raw `1`, so storing it
+# would make `1 in constraint.values` silently `False` for an actual member
+# `1`. Direct membership on the field reflects the constructed member set
+# regardless of in-set/not-in-set polarity; `is_satisfied_with_bindings`
+# (exercised elsewhere) is what differs by kind.
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_public_field_direct_membership_reflects_true_membership(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test membership on the public field matches what was constructed."""
+    constraint = factory(mock_identifier("x", 0), {1, 2})
+
+    assert 1 in getattr(constraint, field_name)
+    assert 2 in getattr(constraint, field_name)
+    assert 99 not in getattr(constraint, field_name)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_public_field_never_yields_internal_wrapper_type(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test every element of the public field is a plain member type, not a wrapper."""
+    constraint = factory(mock_identifier("x", 0), {1, 2})
+
+    for member in getattr(constraint, field_name):
+        assert type(member) in (int, float, str, bool)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_public_field_matches_members_property(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test the public field and the `members` property agree on content."""
+    constraint = factory(mock_identifier("x", 0), {1, 2, 3})
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    assert set(getattr(constraint, field_name)) == set(constraint.members)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_members_order_is_independent_of_construction_order(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test `members` orders alike for two constraints built in opposite orders.
+
+    The members collide on hash and are given in opposite orders; both the
+    stored field and the accessor hold the canonical order.
+    """
+    x = mock_identifier("x", 0)
+    members = [HashCollidingMember(1), HashCollidingMember(2)]
+    left = factory(x, list(members))
+    right = factory(x, list(reversed(members)))
+    assert isinstance(left, (InSetConstraint, NotInSetConstraint))
+    assert isinstance(right, (InSetConstraint, NotInSetConstraint))
+
+    # Both store their members in canonical order.
+    assert getattr(left, field_name) == getattr(right, field_name)
+    assert left.members == right.members
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_members_pins_the_canonical_order_across_mixed_kinds(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test `members` returns an exact tuple in type-tagged canonical order.
+
+    Mixes every kind the ordering key distinguishes: a `bool`, a `float`,
+    a `frozenset`, an `int`, a `str`, and a `tuple`. A key that happened
+    to agree with insertion order, or that collapsed any two of these to
+    the same sort position, would still pass a weaker set-equality or
+    cross-instance check; only an exact tuple pins the documented order.
+    A list literal is used at the call site because `True`, `1`, and
+    `1.0` compare equal under plain Python equality and would collapse
+    in a set literal before the constructor ever saw them.
+    """
+    x = mock_identifier("x", 0)
+    constraint = factory(x, [True, 1.0, frozenset({4, 5}), 1, "1", (2, 3)])
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    assert constraint.members == (True, 1.0, frozenset({4, 5}), 1, "1", (2, 3))
+    assert isinstance(constraint.members, tuple)
+
+
+# =============================================================================
+# Type-strict member-set storage
+# =============================================================================
+
+_MEMBERS = (1, 2, 3)
+"""Members shared by the member-set storage tests."""
+
+_ABSENT_PROBE = 99
+"""Value deliberately outside `_MEMBERS`, used to probe the negative outcome."""
+
+
+def _evaluate_bound(constraint: Constraint, value: Any) -> ConstraintOutcome:
+    """Return the outcome of binding a set constraint's own variable to ``value``."""
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+    return constraint.evaluate_with_bindings({constraint.variable: value})
+
+
+_READERS: list[Any] = [
+    pytest.param(lambda constraint: _evaluate_bound(constraint, 1), id="evaluate"),
+    pytest.param(
+        lambda constraint: constraint.is_satisfied_with_bindings(
+            {constraint.variable: 1}
+        ),
+        id="is_satisfied_with_bindings",
+    ),
+    pytest.param(
+        lambda constraint: constraint.convert_to_expression(),
+        id="convert_to_expression",
+    ),
+    pytest.param(repr, id="repr"),
+    pytest.param(str, id="str"),
+]
+"""Every reader of the type-strict member set, as a single-argument callable."""
+
+
+class _IdentifierByReferencePickler(pickle.Pickler):
+    """Pickler that emits identifiers as external references.
+
+    A test constraint's variable is a ``Mock(spec=Identifier)``, which
+    pickle refuses to serialize. Handing every identifier to the pickler
+    as a persistent reference keeps the constraint itself -- including
+    whatever derived state it stores alongside its fields -- on the real
+    ``dumps``/``loads`` path.
+    """
+
+    referenced: dict[str, Identifier]
+
+    def __init__(self, file: Any, referenced: dict[str, Identifier]) -> None:
+        super().__init__(file)
+        self.referenced = referenced
+
+    @override
+    def persistent_id(self, obj: Any) -> str | None:
+        if isinstance(obj, Identifier):
+            key = str(id(obj))
+            self.referenced[key] = obj
+            return key
+        return None
+
+
+class _IdentifierByReferenceUnpickler(pickle.Unpickler):
+    """Unpickler resolving the external identifier references by key."""
+
+    referenced: dict[str, Identifier]
+
+    def __init__(self, file: Any, referenced: dict[str, Identifier]) -> None:
+        super().__init__(file)
+        self.referenced = referenced
+
+    @override
+    def persistent_load(self, pid: Any) -> Identifier:
+        return self.referenced[pid]
+
+
+def _round_trip_through_pickle(constraint: Constraint) -> Constraint:
+    """Return the constraint after a ``pickle.dumps``/``loads`` round trip."""
+    referenced: dict[str, Identifier] = {}
+    buffer = io.BytesIO()
+    _IdentifierByReferencePickler(buffer, referenced).dump(constraint)
+    buffer.seek(0)
+    restored = _IdentifierByReferenceUnpickler(buffer, referenced).load()
+    assert isinstance(restored, Constraint)
+    return restored
+
+
+def _assert_membership_agrees_with_public_field(
+    constraint: Constraint, field_name: str
+) -> None:
+    """Assert the constraint decides exactly as a fresh one over its public field.
+
+    The type-strict member set is derived state; the public ``values``
+    tuple is the source of truth. Any drift between the two shows up as
+    a disagreement with a constraint built from that tuple alone.
+    """
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+    public_members = tuple(getattr(constraint, field_name))
+    reference = type(constraint)(constraint.variable, public_members)
+
+    for probe in (*public_members, _ABSENT_PROBE):
+        assert _evaluate_bound(constraint, probe) is _evaluate_bound(
+            reference, probe
+        ), f"member set disagrees with {field_name} for probe {probe!r}"
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("read", _READERS)
+def test_set_constraint_reader_does_not_rebuild_the_members(
+    factory: SetConstraintFactory,
+    read: Callable[[Constraint], object],
+) -> None:
+    """Test no reader rebuilds the members from the stored field.
+
+    The core holds the type-strict member set, built once during
+    construction, and the members' Python tuple is built once with it:
+    every reader, ``__repr__`` included, leaves the same tuple object in
+    place.
+    """
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+    stored = constraint.values
+
+    read(constraint)
+
+    assert constraint.values is stored
+    assert constraint.members is stored
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_pickle_round_trip_preserves_evaluation(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test a pickled-and-restored set constraint still evaluates correctly."""
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+
+    restored = _round_trip_through_pickle(constraint)
+
+    assert tuple(getattr(restored, field_name)) == tuple(
+        getattr(constraint, field_name)
+    )
+    _assert_membership_agrees_with_public_field(restored, field_name)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+@pytest.mark.parametrize(
+    "duplicate",
+    [pytest.param(copy.copy, id="copy"), pytest.param(copy.deepcopy, id="deepcopy")],
+)
+def test_set_constraint_copy_preserves_evaluation(
+    factory: SetConstraintFactory,
+    field_name: str,
+    duplicate: Callable[[Constraint], Constraint],
+) -> None:
+    """Test shallow and deep copies still evaluate against their own member set."""
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+
+    duplicated = duplicate(constraint)
+
+    assert tuple(getattr(duplicated, field_name)) == tuple(
+        getattr(constraint, field_name)
+    )
+    _assert_membership_agrees_with_public_field(duplicated, field_name)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_rebuilt_with_new_values_decides_against_them(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test a constraint rebuilt with other members decides against those.
+
+    The kinds are no dataclasses, so a caller rebuilds one with
+    ``type(constraint)(constraint.variable, values)``, as the param layer
+    does; the rebuilt constraint holds its own member set.
+    """
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    replaced = cast(Constraint, type(constraint)(constraint.variable, (7, 8)))
+
+    assert set(getattr(replaced, field_name)) == {7, 8}
+    _assert_membership_agrees_with_public_field(replaced, field_name)
+    assert _evaluate_bound(replaced, 7) is not _evaluate_bound(replaced, _ABSENT_PROBE)
+    assert _evaluate_bound(replaced, 1) is _evaluate_bound(replaced, _ABSENT_PROBE)
+
+
+@pytest.mark.parametrize("factory, field_name", _SET_KINDS_WITH_FIELD)
+def test_set_constraint_member_set_cannot_drift_from_the_public_field(
+    factory: SetConstraintFactory, field_name: str
+) -> None:
+    """Test the public field stays the sole source of truth for membership.
+
+    Neither the public field nor the derived member set is writable, so
+    the two cannot be driven apart after construction.
+    """
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+
+    with pytest.raises(FrozenMutationError, match=f'"{field_name}"'):
+        setattr(constraint, field_name, (7, 8))
+    with pytest.raises(FrozenMutationError, match='"_members"'):
+        cast(Any, constraint)._members = frozenset()
+
+    _assert_membership_agrees_with_public_field(constraint, field_name)
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize(
+    "duplicate",
+    [
+        pytest.param(_round_trip_through_pickle, id="pickle"),
+        pytest.param(copy.copy, id="copy"),
+        pytest.param(copy.deepcopy, id="deepcopy"),
+    ],
+)
+def test_set_constraint_equivalence_survives_duplication(
+    factory: SetConstraintFactory,
+    duplicate: Callable[[Constraint], Constraint],
+) -> None:
+    """Test structural and alpha equivalence hold between a constraint and its copy."""
+    constraint = factory(mock_identifier("x", 0), _MEMBERS)
+
+    duplicated = duplicate(constraint)
+
+    assert constraint.is_structurally_equivalent(duplicated)
+    assert duplicated.is_structurally_equivalent(constraint)
+    assert constraint.is_alpha_equivalent(duplicated)
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+def test_set_constraint_rejects_a_non_identifier_variable(
+    kind: type[InSetConstraint | NotInSetConstraint],
+) -> None:
+    """Test a non-identifier variable is rejected at construction.
+
+    Scope, canonical ordering, and evaluation all key on the identifier.
+    Without this check the constructor accepts any object,
+    `get_free_identifiers` returns a value violating its own declared
+    return type, and the mistake surfaces as a raw `AttributeError` from
+    the ordering key, arbitrarily far from the call that caused it.
+    """
+    with pytest.raises(ConstraintError, match="constrains an identifier"):
+        kind("oops", {1})  # type: ignore[arg-type]
+
+
+# =============================================================================
+# Number-subclass members are the exact numbers they denote
+# =============================================================================
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
+
+    LOW = 1
+    HIGH = 3
+
+
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+_NUMBER_SUBCLASS_MEMBERS = [
+    pytest.param(_Level.HIGH, 3, id="int_subclass"),
+    pytest.param(_Measure(1.5), 1.5, id="float_subclass"),
+]
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_stores_a_number_subclass_member_as_its_exact_value(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test the stored member is the exact number its literal holds.
+
+    A member lifts to a literal holding the exact number, so membership
+    has to accept exactly the values that literal equals. A member kept
+    as its subclass would lift to an expression accepting a value
+    membership refuses, and a solver-backed answer would then disagree
+    with evaluation.
+    """
+    constraint = kind(mock_identifier("x", 0), {member})
+
+    assert constraint.members == (exact_member,)
+    assert [type(value) for value in constraint.values] == [type(exact_member)]
+
+
+@pytest.mark.parametrize(
+    ("kind", "member_outcome", "non_member_outcome"), _KINDS_WITH_EVALUATE_OUTCOMES
+)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_decides_a_number_subclass_as_the_exact_value(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test a subclass and its exact twin are one member, bound either way round."""
+    x = mock_identifier("x", 0)
+
+    assert kind(x, {member}).evaluate_with_bindings({x: exact_member}) is (
+        member_outcome
+    )
+    assert kind(x, {exact_member}).evaluate_with_bindings({x: member}) is (
+        member_outcome
+    )
+    assert kind(x, {exact_member}).evaluate_with_bindings(
+        {x: LiteralExpression(member)}
+    ) is (member_outcome)
+    assert kind(x, {member}).evaluate_with_bindings({x: exact_member + 1}) is (
+        non_member_outcome
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "member_outcome", "non_member_outcome"), _KINDS_WITH_EVALUATE_OUTCOMES
+)
+def test_set_constraint_keeps_a_bool_apart_from_an_int_subclass(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member_outcome: ConstraintOutcome,
+    non_member_outcome: ConstraintOutcome,
+) -> None:
+    """Test an ``int`` subclass is the ``int`` it denotes, never a ``bool``.
+
+    ``_Level.LOW`` carries ``1``, which ``True`` equals, but ``bool`` is a
+    kind of its own for members as it is for literals.
+    """
+    del member_outcome
+    x = mock_identifier("x", 0)
+
+    assert kind(x, {True}).evaluate_with_bindings({x: _Level.LOW}) is (
+        non_member_outcome
+    )
+    assert kind(x, {_Level.LOW}).evaluate_with_bindings({x: True}) is (
+        non_member_outcome
+    )
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_with_a_number_subclass_member_is_its_exact_twin(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test equivalence, the ordering key, and deduplication see one member."""
+    x = mock_identifier("x", 0)
+    constraint = kind(x, {member})
+    twin = kind(x, {exact_member})
+
+    assert constraint.is_structurally_equivalent(twin)
+    assert constraint.is_alpha_equivalent(twin)
+    assert constraint.build_ordering_key() == twin.build_ordering_key()
+    assert len(kind(x, [member, exact_member]).members) == 1
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_with_a_number_subclass_member_round_trips(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test a serialization round trip gives back an equivalent constraint.
+
+    A number goes over the wire as the exact number, so under type-strict
+    equality a member kept as its subclass would come back as a different
+    member.
+    """
+    x = mock_identifier("x", 0)
+    constraint = kind(x, {member})
+
+    data = json.loads(json.dumps(constraint.serialize_to_dict()))
+    restored = kind.deserialize_from_dict(data)
+
+    assert data == kind(x, {exact_member}).serialize_to_dict()
+    assert restored.is_structurally_equivalent(constraint)
+
+
+@pytest.mark.parametrize("kind", SET_KINDS)
+@pytest.mark.parametrize(("member", "exact_member"), _NUMBER_SUBCLASS_MEMBERS)
+def test_set_constraint_lifts_a_number_subclass_member_to_its_exact_literal(
+    kind: type[InSetConstraint | NotInSetConstraint],
+    member: float,
+    exact_member: float,
+) -> None:
+    """Test the converted expression is the one the exact twin converts to."""
+    x = mock_identifier("x", 0)
+
+    expression = kind(x, {member}).convert_to_expression()
+
+    assert expression.is_structurally_equivalent(
+        kind(x, {exact_member}).convert_to_expression()
+    )
+
+
+def test_set_constraint_container_member_holds_number_subclass_leaves_exactly() -> None:
+    """Test the leaves of a container member are their exact numbers too."""
+    x = mock_identifier("x", 0)
+    constraint = InSetConstraint(x, {(_Level.HIGH, _Measure(1.5))})
+    bindings: dict[Identifier, Any] = {x: (3, 1.5)}
+
+    leaves = cast(tuple[Any, ...], constraint.members[0])
+
+    assert [type(leaf) for leaf in leaves] == [int, float]
+    assert constraint.evaluate_with_bindings(bindings) is ConstraintOutcome.SATISFIED
+
+
+# =============================================================================
+# NaN set members
+# =============================================================================
+
+_NAN_MEMBER_FORMS = [
+    pytest.param(float("nan"), id="bare_float"),
+    pytest.param(math.nan, id="math_nan"),
+    pytest.param((float("nan"), 1.0), id="nested_in_tuple"),
+    pytest.param(frozenset({float("nan")}), id="nested_in_frozenset"),
+]
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+@pytest.mark.parametrize("nan_member", _NAN_MEMBER_FORMS)
+def test_set_constraint_rejects_a_declared_nan_member(
+    factory: SetConstraintFactory,
+    nan_member: Any,
+) -> None:
+    """Test declaring a NaN member, bare or nested, raises `ConstraintError`."""
+    with pytest.raises(ConstraintError, match="NaN"):
+        factory(mock_identifier("x", 0), {nan_member})
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_rejects_a_declared_numpy_float64_nan_member(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a NumPy `float64` NaN member is refused like any float NaN."""
+    np = pytest.importorskip("numpy")
+
+    with pytest.raises(ConstraintError, match="NaN"):
+        factory(mock_identifier("x", 0), {np.float64("nan")})
+
+
+@pytest.mark.usefixtures("v1_wire")
+@pytest.mark.parametrize("kind", SET_KINDS)
+def test_set_constraint_deserialize_rejects_a_tampered_nan_member(
+    kind: type[InSetConstraint | NotInSetConstraint],
+) -> None:
+    """Test deserializing a payload carrying a NaN member fails like construction."""
+    payload = kind(mock_identifier("x", 0), {1.0}).serialize_to_dict()
+    payload["__data__"]["values"] = [  # type: ignore[index]  # test: modify serialized
+        serialize_registry_wrapped_value(float("nan")),
+    ]
+
+    with pytest.raises(DeserializationValueError, match="NaN"):
+        kind.deserialize_from_dict(payload)
+
+
+_NAN_BINDING_OUTCOMES = [
+    pytest.param(InSetConstraint, ConstraintOutcome.VIOLATED, id="in_set"),
+    pytest.param(NotInSetConstraint, ConstraintOutcome.SATISFIED, id="not_in_set"),
+]
+
+
+@pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
+def test_set_constraint_evaluate_with_bindings_decides_a_nan_binding(
+    factory: SetConstraintFactory,
+    outcome: ConstraintOutcome,
+) -> None:
+    """Test a NaN-bound value against an ordinary member still decides."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {1.0})
+
+    assert constraint.evaluate_with_bindings({x: float("nan")}) is outcome
+
+
+@pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
+def test_constraint_system_evaluate_with_bindings_decides_a_nan_binding(
+    factory: SetConstraintFactory,
+    outcome: ConstraintOutcome,
+) -> None:
+    """Test a NaN binding decides through the constraint system's bindings path too."""
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(factory(x, {1.0}))
+
+    assert system.evaluate_with_bindings({x: float("nan")}) is outcome
+
+
+@pytest.mark.parametrize("factory, outcome", _NAN_BINDING_OUTCOMES)
+def test_constraint_system_check_satisfiability_with_bindings_decides_a_nan_binding(
+    factory: SetConstraintFactory,
+    outcome: ConstraintOutcome,
+) -> None:
+    """Test a NaN binding decides through the satisfiability-with-bindings path too."""
+    x = mock_identifier("x", 0)
+    system = create_constraint_system(factory(x, {1.0}))
+
+    assert system.check_satisfiability_with_bindings({x: float("nan")}, {}) is outcome
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_still_accepts_an_ordinary_float_member(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test an ordinary, non-NaN float member still constructs and decides."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, {1.5})
+
+    assert constraint.is_satisfied_with_bindings({x: 1.5}) is in_set
+
+
+# =============================================================================
+# -0.0 / 0.0 member normalization
+# =============================================================================
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_stores_a_negative_zero_member_with_a_positive_sign(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a declared -0.0 member is stored as the positive-signed 0.0."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, {-0.0})
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    stored = cast(float, constraint.members[0])
+
+    assert stored == 0.0
+    assert math.copysign(1.0, stored) == 1.0
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_stores_a_nested_negative_zero_leaf_with_a_positive_sign(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test a -0.0 leaf nested in a tuple member is stored as positive-signed 0.0."""
+    x = mock_identifier("x", 0)
+    constraint = factory(x, [(-0.0,)])
+    assert isinstance(constraint, (InSetConstraint, NotInSetConstraint))
+
+    leaf = cast(tuple[Any, ...], constraint.members[0])[0]
+
+    assert leaf == 0.0
+    assert math.copysign(1.0, leaf) == 1.0
+
+
+@pytest.mark.parametrize("factory", SET_KINDS)
+def test_set_constraint_negative_zero_binding_matches_a_declared_positive_zero_member(
+    factory: SetConstraintFactory,
+) -> None:
+    """Test binding -0.0 against a declared 0.0 member is still a match."""
+    x = mock_identifier("x", 0)
+    in_set = factory is InSetConstraint
+    constraint = factory(x, {0.0})
+
+    assert constraint.is_satisfied_with_bindings({x: -0.0}) is in_set
+
+
+def test_constraint_system_equivalent_for_negative_and_positive_zero() -> None:
+    """Test a two-member system agrees on equivalence regardless of zero's sign.
+
+    Both systems also carry an `InSetConstraint` over `{-1.0}` alongside the
+    signed-zero member. The ordering key that sorts a system's members
+    renders the sign of zero, so pairing the zero member with another member
+    exercises whether that sign leaks into the members' relative order,
+    rather than only into a lone constraint's own equivalence.
+    """
+    x = mock_identifier("x", 0)
+    negative_zero_system = create_constraint_system(
+        InSetConstraint(x, {-0.0}), InSetConstraint(x, {-1.0})
+    )
+    positive_zero_system = create_constraint_system(
+        InSetConstraint(x, {0.0}), InSetConstraint(x, {-1.0})
+    )
+
+    assert negative_zero_system.is_structurally_equivalent(positive_zero_system)
+
+
+def test_constraint_system_serializes_alike_for_negative_and_positive_zero() -> None:
+    """Test the same two-member system serializes alike regardless of zero's sign."""
+    x = mock_identifier("x", 0)
+    negative_zero_system = create_constraint_system(
+        InSetConstraint(x, {-0.0}), InSetConstraint(x, {-1.0})
+    )
+    positive_zero_system = create_constraint_system(
+        InSetConstraint(x, {0.0}), InSetConstraint(x, {-1.0})
+    )
+
+    assert (
+        negative_zero_system.serialize_to_dict()
+        == positive_zero_system.serialize_to_dict()
+    )

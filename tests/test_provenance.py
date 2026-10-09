@@ -8,6 +8,7 @@ from fhy_core.provenance import (
     CallSiteProvenance,
     FileProvenance,
     FusedProvenance,
+    HasProvenance,
     NamedProvenance,
     Position,
     Provenance,
@@ -17,13 +18,9 @@ from fhy_core.provenance import (
 from fhy_core.serialization import (
     SerializationError,
 )
-from fhy_core.traits import (
-    Equal,
-    HasProvenance,
-    Orderable,
-    PartialEqual,
-    PartialOrderable,
-)
+from fhy_core.traits import Equal, Orderable, PartialEqual, PartialOrderable
+
+from .v1 import reads_v1
 
 # ============================================================================
 # Position
@@ -502,6 +499,7 @@ def test_provenance_is_hashable(provenance: Provenance) -> None:
     assert hash(provenance) == hash(provenance)
 
 
+@reads_v1
 def test_provenance_deserialization_with_unknown_type_id_raises() -> None:
     """Test deserializing an unknown `__type__` raises `SerializationError`."""
     with pytest.raises(SerializationError):

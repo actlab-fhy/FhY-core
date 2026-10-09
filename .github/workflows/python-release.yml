@@ -1,27 +1,129 @@
 name: Release and Upload Python Package
 
+# The package needs its Rust extension (fhy_core._rs), so a release builds a
+# wheel for each supported platform and Python version with maturin, plus an
+# sdist (which needs a Rust toolchain to install). One job then publishes
+# every artifact.
+
 on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
-  deploy:
+  linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build Wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --locked --out dist --find-interpreter
+      - name: Upload Wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist
+
+  macos:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          - runner: macos-13
+            target: x86_64
+          - runner: macos-14
+            target: aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Pythons
+        uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.11
+            3.12
+            3.13
+            3.14
+      - name: Build Wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --locked --out dist --find-interpreter
+      - name: Upload Wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: dist
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Pythons
+        uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.11
+            3.12
+            3.13
+            3.14
+          architecture: x64
+      - name: Build Wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x64
+          args: --release --locked --out dist --find-interpreter
+      - name: Upload Wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-x64
+          path: dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+  deploy:
+    needs: [linux, macos, windows, sdist]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: pypi
     permissions:
       # Required for PyPI Trusted Publishing (OIDC); no API token needed.
       id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Build package
-        run: uv build
-
       - name: Publish to PyPI
-        run: uv publish
+        run: uv publish dist/*

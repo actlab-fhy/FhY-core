@@ -4,22 +4,27 @@ __all__ = ["get_registered_errors", "register_error"]
 
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import TypeVar
 
 _COMPILER_ERRORS: dict[type[Exception], str] = {}
 
+_ErrorClassT = TypeVar("_ErrorClassT", bound=type[Exception])
 
-def register_error(error: type[Exception]) -> type[Exception]:
+
+def register_error(error: _ErrorClassT) -> _ErrorClassT:
     """Decorator to register custom compiler exceptions.
 
     Decorated exception classes are added to a read-only catalog that
     tooling (CLI ``--list-errors`` flags, documentation generators) can
-    consult via :func:`get_registered_errors`.
+    consult via :func:`get_registered_errors`. The class is returned
+    unchanged and typed as the class it is, so a type checker that
+    applies class decorators still sees the attributes it adds.
 
     Args:
         error: Custom exception to be registered.
 
     Returns:
-        Custom exception registered
+        The registered exception class itself.
 
     """
     _COMPILER_ERRORS[error] = error.__doc__ or error.__name__

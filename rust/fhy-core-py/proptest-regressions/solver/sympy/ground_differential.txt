@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6d6377c1875fa485c85682eb7b7e3a28f4a1ab9d45ec74b791d96b5aa3b2b634 # shrinks to tree = Expression((piecewise (less 0 1) 0 (max (multiply (sqrt -1) 1) 0)))
+cc 76ea64813569aa08e2445f7868c65db503b907e93d09f81daca4c77e8161474f # shrinks to tree = Expression((or (or (less 0 0) (less 0 (floor_mod (piecewise true 0 (clamp 0 0 (floor_mod 0 0))) -1))) (less 0 0)))

@@ -1,15 +1,34 @@
-"""Unique identifier for named compiler objects."""
+"""Unique identifier for named compiler objects.
+
+An :class:`Identifier` stores its id and name hint itself and draws new ids
+from the Rust extension's (``fhy_core._rs``) process-global counter, which
+Rust code shares, so exactly one counter issues ids in a process.
+
+The class stays in Python, and only the counter comes from the extension. A
+Rust-backed class makes every attribute read, equality check, and hash cross
+into the extension, which is significantly slower than reading plain Python
+attributes.
+"""
 
 from fhy_core.utils.override import override
 
-__all__ = ["Identifier"]
+__all__ = ["HasIdentifier", "Identifier"]
 
-from threading import Lock
-from typing import Any, ClassVar, TypedDict, TypeGuard, final
+from collections.abc import Callable
+from typing import (
+    Any,
+    Final,
+    NamedTuple,
+    Protocol,
+    TypedDict,
+    TypeGuard,
+    final,
+    runtime_checkable,
+)
 
 from fhy_core.utils import is_strict_int
 
-from .logger import get_logger
+from . import _rs
 from .serialization import (
     DeserializationDictStructureError,
     DeserializationValueError,
@@ -20,7 +39,48 @@ from .serialization import (
 from .traits.equality import EqualMixin
 from .traits.frozen import FrozenMixin
 
-_LOGGER = get_logger(__name__)
+# Ids below this are reserved for the identifiers the package ships, so the
+# counter starts here. Matches the Rust implementation:
+# `fhy_core::identifier::RESERVED_ID_COUNT`.
+_RESERVED_ID_COUNT: Final[int] = 65_536
+# Exclusive upper bound of every id: the counter issues none at or above it,
+# and no payload id at or above it is read. Matches the Rust implementation:
+# `fhy_core::identifier::ID_CAP`.
+_ID_CAP: Final[int] = 2**63
+# Exclusive upper bound of a payload id that advances the counter, so no
+# payload can raise the counter past it; an id from here up to `_ID_CAP` is
+# read only if this process issued it. Matches the Rust implementation:
+# `fhy_core::identifier::ADVANCE_CAP`.
+_ADVANCE_CAP: Final[int] = 2**62
+
+
+class _ReservedIdentifier(NamedTuple):
+    """The fixed id and name hint of one identifier the package ships."""
+
+    id: int
+    name_hint: str
+
+
+# The reserved-id table: the fixed ids of the identifiers the package ships,
+# so a shipped tag or constant, and its payload, is the same in every
+# process. Ids are grouped by family: note kinds in 0..16, op attributes in
+# 16..32, value domains in 32..48 and the built-in expression constants in
+# 48..64. Matches the Rust implementation: `fhy_core::identifier::reserved`,
+# entry for entry.
+_RESERVED_RATIONALE_NOTE_KIND: Final = _ReservedIdentifier(0, "rationale")
+_RESERVED_SUGGESTION_NOTE_KIND: Final = _ReservedIdentifier(1, "suggestion")
+_RESERVED_REMARK_NOTE_KIND: Final = _ReservedIdentifier(2, "remark")
+_RESERVED_OTHER_NOTE_KIND: Final = _ReservedIdentifier(3, "other")
+_RESERVED_COMMUTATIVE: Final = _ReservedIdentifier(16, "commutative")
+_RESERVED_ASSOCIATIVE: Final = _ReservedIdentifier(17, "associative")
+_RESERVED_PURE: Final = _ReservedIdentifier(18, "pure")
+_RESERVED_ELEMENTWISE: Final = _ReservedIdentifier(19, "elementwise")
+_RESERVED_DATA_DOMAIN: Final = _ReservedIdentifier(32, "data")
+_RESERVED_ADDRESS_DOMAIN: Final = _ReservedIdentifier(33, "address")
+_RESERVED_PI_CONSTANT: Final = _ReservedIdentifier(48, "pi")
+_RESERVED_E_CONSTANT: Final = _ReservedIdentifier(49, "e")
+_RESERVED_INF_CONSTANT: Final = _ReservedIdentifier(50, "inf")
+_RESERVED_NAN_CONSTANT: Final = _ReservedIdentifier(51, "nan")
 
 
 class _IdentifierData(TypedDict):
@@ -40,6 +100,23 @@ def _is_valid_identifier_data(data: SerializedDict) -> TypeGuard[_IdentifierData
     return isinstance(data["name_hint"], str)
 
 
+def _is_utf8_encodable(text: str) -> bool:
+    """Return whether ``text`` has no lone surrogates, so it encodes as UTF-8."""
+    if text.isascii():
+        return True
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+# Bound once, so a construction skips the module attribute lookups.
+_allocate_id: Callable[[], int] = _rs.allocate_identifier_id
+_advance_counter_past: Callable[[int], None] = _rs.advance_identifier_counter_past
+_next_id: Callable[[], int] = _rs.next_identifier_id
+
+
 @final
 @register_serializable(type_id="id")
 class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
@@ -48,12 +125,35 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     Two ``Identifier`` instances are equal iff they share the same ``id``;
     ``name_hint`` is a debugging aid and is not consulted by ``__eq__`` or
     ``__hash__``. Ids are drawn from a single process-global,
-    monotonically-increasing counter and are never reused.
+    monotonically-increasing counter and are never reused. The ids
+    ``0..65_536`` are reserved for the identifiers the package ships, such
+    as the shipped note kinds, op attributes and value domains, which hold
+    the same fixed ids in every process, so the counter starts at
+    ``65_536``.
 
     Construction and deserialization are thread-safe and share the same
     counter: a deserialized id cannot collide with a subsequently
     constructed id, regardless of interleaving. Deserializing an id
-    greater than the next-to-be-issued value advances the counter past it.
+    greater than or equal to the next-to-be-issued value advances the
+    counter past it. Unpickling, copying, and deep-copying restore an
+    identifier through deserialization, so they advance the counter the
+    same way. A pickle holds only the id and the name hint.
+
+    Ids are non-negative integers below ``2**63``. Deserialization accepts
+    an int ``id`` with ``0 <= id < 2**62``, which advances the counter, or
+    an ``id`` below ``2**63`` that this process issued, and raises
+    ``DeserializationValueError`` for any other int before it touches the
+    counter. So no payload can raise the counter past ``2**62``, and every
+    id the counter issues reads back. Construction raises
+    ``RuntimeError("identifier id space exhausted")``, and leaves the
+    counter unchanged, once the counter reaches ``2**63``, which takes
+    ``2**62`` constructions after any payload.
+
+    A name hint must be a ``str`` encodable as UTF-8: construction raises
+    ``TypeError`` for any other type and ``ValueError`` for a string holding
+    a lone surrogate code point (U+D800 to U+DFFF), in both cases without
+    consuming an id, and deserialization raises
+    ``DeserializationValueError`` for such a string.
 
     ``repr`` of an ``Identifier`` returns ``"<name_hint>::<id>"``. The form
     is for debugging only. It is not a serialization protocol and is not
@@ -66,15 +166,19 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     process-global id space.
     """
 
-    _next_id: ClassVar[int] = 0
-    _id_lock: ClassVar[Lock] = Lock()
     _id: int
     _name_hint: str
 
     def __init__(self, name_hint: str) -> None:
-        with Identifier._id_lock:
-            self._id = Identifier._next_id
-            Identifier._next_id += 1
+        if not isinstance(name_hint, str):
+            raise TypeError(
+                f"Identifier name hint must be a str, got {type(name_hint).__name__}."
+            )
+        if not _is_utf8_encodable(name_hint):
+            raise ValueError(
+                f"Identifier name hint must be encodable as UTF-8, got {name_hint!r}."
+            )
+        self._id = _allocate_id()
         self._name_hint = name_hint
 
     @property
@@ -102,22 +206,35 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
             raise DeserializationValueError(
                 cls, "id", "a non-negative integer", data["id"]
             )
+        # An id below 2**62 advances the counter; one below 2**63 is read only
+        # if this process issued it, below the counter. Matches the Rust
+        # implementation: `fhy_core::identifier::try_advance_counter_past`.
+        if data["id"] >= _ADVANCE_CAP and not (
+            data["id"] < _ID_CAP and data["id"] < _next_id()
+        ):
+            raise DeserializationValueError(
+                cls,
+                "id",
+                "a non-negative integer below 2**62, "
+                "or below 2**63 if this process issued it",
+                data["id"],
+            )
+        if not _is_utf8_encodable(data["name_hint"]):
+            raise DeserializationValueError(
+                cls, "name_hint", "a string encodable as UTF-8", data["name_hint"]
+            )
+        _advance_counter_past(data["id"])
         identifier = cls.__new__(cls)
         identifier._id = data["id"]
         identifier._name_hint = data["name_hint"]
-        advanced = False
-        with Identifier._id_lock:
-            if identifier._id >= Identifier._next_id:
-                Identifier._next_id = identifier._id + 1
-                advanced = True
-        if advanced:
-            _LOGGER.debug(
-                "advanced _next_id past %d (name_hint=%r)",
-                identifier._id,
-                identifier._name_hint,
-            )
         identifier.freeze()
         return identifier
+
+    @override
+    def __reduce__(
+        self,
+    ) -> tuple[Callable[[SerializedDict], "Identifier"], tuple[SerializedDict]]:
+        return (Identifier.deserialize_from_dict, (self.serialize_to_dict(),))
 
     @override
     def __eq__(self, other: Any) -> bool:
@@ -134,3 +251,46 @@ class Identifier(Serializable, FrozenMixin, EqualMixin, freeze_on_init=True):
     @override
     def __repr__(self) -> str:
         return f"{self._name_hint}::{self._id}"
+
+
+def _build_reserved_identifier(entry: _ReservedIdentifier) -> Identifier:
+    """Return the shipped identifier ``entry`` names, with its fixed id.
+
+    Builds the identifier as deserialization does, but never touches the id
+    counter, which issues fresh ids only from ``65_536`` upward.
+
+    Args:
+        entry: An entry of the reserved-id table.
+
+    Returns:
+        The frozen identifier with the entry's id and name hint.
+
+    Raises:
+        ValueError: If the entry's id lies outside the reserved block
+            ``[0, 65_536)``.
+
+    """
+    if not 0 <= entry.id < _RESERVED_ID_COUNT:
+        raise ValueError(
+            f"Reserved identifier id must lie in [0, {_RESERVED_ID_COUNT}), "
+            f"got {entry.id}."
+        )
+    identifier = Identifier.__new__(Identifier)
+    identifier._id = entry.id
+    identifier._name_hint = entry.name_hint
+    identifier.freeze()
+    return identifier
+
+
+@runtime_checkable
+class HasIdentifier(Protocol):
+    """Protocol for objects that have a stable identifier.
+
+    The protocol lives beside :class:`Identifier` rather than in
+    :mod:`fhy_core.traits` because its signature names an identifier,
+    which makes it vocabulary of this module rather than a generic
+    structural contract.
+    """
+
+    def get_identifier(self) -> Identifier:
+        """Return the object's stable identifier."""

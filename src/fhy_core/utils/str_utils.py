@@ -15,7 +15,9 @@ def format_comma_separated_list(
 
     Args:
         items: An iterable of items.
-        str_func: A function to convert each item to a string.
+        str_func: A function applied to each non-string item to produce
+            its string representation. Items that are already strings
+            are inserted as they are, without being passed to str_func.
         add_space: Whether to add a space after each comma.
 
     Returns:

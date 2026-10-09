@@ -13,12 +13,7 @@ from fhy_core.symbol_table import (
     SymbolTableFrame,
     VariableSymbolTableFrame,
 )
-from fhy_core.traits import (
-    Canonicalizable,
-    Frozen,
-    StructuralEquivalence,
-    Verifiable,
-)
+from fhy_core.traits import Canonicalizable, Frozen, StructuralEquivalence, Verifiable
 from fhy_core.types import CoreDataType, NumericalType, PrimitiveDataType, TypeQualifier
 
 from .conftest import mock_identifier

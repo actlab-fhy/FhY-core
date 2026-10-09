@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d679819984a85129254c21f189bdc79cfdfd1d43d6126d2111d921ac45e89999 # shrinks to tree = Logical(false, Leaf(0), Piecewise(Integer(0), Leaf(0), Leaf(0))), seeds = [0, 0, 0, 0, 0, 0, 0, 0]
+cc 6a36df95fa5cc8501342840fbc7b47d08a600a73eefdf96d81419bb494c93eb5 # shrinks to left = Leaf(0), right = Piecewise(Leaf(0), Binary(Add, Leaf(0), Piecewise(Integer(0), Leaf(0), Leaf(0))), Leaf(0)), operation = 0

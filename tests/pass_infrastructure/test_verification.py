@@ -1,4 +1,9 @@
-"""Tests for the verification registry, analysis, and auto-verification hooks.
+"""Tests for the verification registry, the analysis, and pipeline verification.
+
+A pipeline verifies its input once and every changed output, blaming the
+producing pass, with the passes registered for the IR's type; a standalone
+``execute`` never verifies, and ``set_verifier`` replaces the verifier or
+turns it off.
 
 Test isolation strategy: every test that touches the verification registry
 uses an IR class that is unique to that test, either defined inline or
@@ -14,6 +19,7 @@ from dataclasses import dataclass
 import pytest
 
 import fhy_core.pass_infrastructure as pass_infra
+from fhy_core import _rs
 from fhy_core.diagnostic import (
     DiagnosticLevel,
     Note,
@@ -23,12 +29,13 @@ from fhy_core.diagnostic import (
 from fhy_core.identifier import Identifier
 from fhy_core.pass_infrastructure import (
     Analysis,
-    AnalysisManager,
     AnalysisVisitablePass,
     CompilerPass,
     PassManager,
     PassRegistrationError,
+    PassRunRecord,
     PassValidationError,
+    ValidationManager,
     VerificationAnalysis,
     VerificationRegistry,
     register_pass,
@@ -440,22 +447,33 @@ def test_register_verification_adds_class_to_verification_registry(
     assert _Pass in VerificationRegistry.get_passes_for(fresh_box_ir)
 
 
-def test_register_verification_disables_auto_verify_on_decorated_class(
+def test_register_verification_leaves_the_class_a_pass_that_never_verifies(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
-    """Test that the decorator stamps ``_auto_verify = False`` on the class."""
+    """Test that a verification pass runs standalone without verifying its IR.
+
+    A standalone run never verifies, so a verification pass cannot recurse
+    into verification.
+    """
 
     @register_verification(
         fresh_box_ir,
         "tests.rv.auto_verify_off",
-        "Pass for _auto_verify flag test.",
+        "Pass for the standalone-run test.",
     )
     class _Pass(AnalysisVisitablePass[Visitable]):
+        invocations = 0
+
         @override
         def visit_unknown(self, node: Visitable) -> None:
             _ = node
+            type(self).invocations += 1
 
-    assert _Pass._auto_verify is False
+    result = _Pass().execute(fresh_box_ir(0))
+
+    assert result.output is None
+    assert _Pass.invocations == 1
+    assert not hasattr(_Pass, "_auto_verify")
 
 
 def test_register_verification_rejects_non_compiler_pass(
@@ -656,15 +674,15 @@ def test_verifiable_subclass_caches_positive_instantiation_result(
     _Cached(0)  # primes the cache
 
     # If subsequent instantiations consulted the registry again, breaking the
-    # registry's public lookup method would cause the test to fail. The
-    # positive-result cache means the lookup is never invoked again.
+    # registry lookup `VerifiableMixin` calls (`_rs`) would cause the test to
+    # fail. The positive-result cache means the lookup is never invoked again.
     def _unreachable(_ir_type: type) -> tuple[type[CompilerPass[object, object]], ...]:
         raise AssertionError(
-            "VerificationRegistry.get_passes_for should not be called after the "
+            "_rs.get_verification_passes_for should not be called after the "
             "positive-result cache is primed."
         )
 
-    monkeypatch.setattr(VerificationRegistry, "get_passes_for", _unreachable)
+    monkeypatch.setattr(_rs, "get_verification_passes_for", _unreachable)
 
     follow_up = _Cached(1)
 
@@ -790,19 +808,35 @@ def test_verify_default_report_can_be_raised_as_validation_failed_error() -> Non
 
 
 # ---------------------------------------------------------------------------
-# CompilerPass auto-verification: pre + post hook.
+# Pipeline verification: the input once, and every changed output.
 # ---------------------------------------------------------------------------
 
 
-def test_auto_verify_default_is_true_on_compiler_pass() -> None:
-    """Test that ``_auto_verify`` defaults to True on CompilerPass."""
-    assert CompilerPass._auto_verify is True
+def test_standalone_execute_never_verifies(fresh_box_ir: type[_BoxIR]) -> None:
+    """Test that a pass executed on its own does not verify its IR.
+
+    Only a pipeline verifies.
+    """
+    build_error_pass("tests.av.default.fail", "would-fail-in-a-pipeline", fresh_box_ir)
+
+    @register_pass("tests.av.default.identity", "Identity pass run standalone.")
+    class _IdentityPass(CompilerPass[object, object]):
+        @override
+        def run_pass(self, ir: object) -> object:
+            return ir
+
+    input_ir = fresh_box_ir(0)
+
+    assert _IdentityPass().execute(input_ir).output is input_ir
 
 
-def test_auto_verify_pre_raises_pass_validation_error_when_input_is_malformed(
+def test_pipeline_raises_pass_validation_error_when_its_input_is_malformed(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
-    """Test that pre-pass auto-verify raises when the input IR fails verification."""
+    """Test that a pipeline rejects an input that fails verification.
+
+    The input is verified once, blaming the first pass.
+    """
     build_error_pass("tests.av.pre.fail", "pre-failure", fresh_box_ir)
 
     @register_pass("tests.av.pre.identity", "Identity pass for pre-verify test.")
@@ -815,9 +849,17 @@ def test_auto_verify_pre_raises_pass_validation_error_when_input_is_malformed(
         def run_pass(self, ir: object) -> object:
             return ir
 
-    with pytest.raises(PassValidationError) as excinfo:
-        _IdentityPass().execute(fresh_box_ir(0))
+    manager = PassManager[object]()
+    manager.add_pass(_IdentityPass())
 
+    with pytest.raises(PassValidationError) as excinfo:
+        manager.run(fresh_box_ir(0))
+
+    assert str(excinfo.value) == (
+        'verification rejected the input of pass "tests.av.pre.identity" (errors: 1)'
+    )
+    assert excinfo.value.pass_name == "tests.av.pre.identity"
+    assert excinfo.value.records == ()
     assert isinstance(excinfo.value.report, ValidationReport)
     assert excinfo.value.report.has_errors() is True
     assert any(
@@ -826,10 +868,10 @@ def test_auto_verify_pre_raises_pass_validation_error_when_input_is_malformed(
     )
 
 
-def test_auto_verify_post_raises_when_pass_produces_malformed_output(
+def test_pipeline_raises_when_a_pass_produces_malformed_output(
     fresh_box_ir: type[_BoxIR], other_box_ir: type
 ) -> None:
-    """Test that post-pass auto-verify raises when the output IR fails verification."""
+    """Test that a pipeline rejects a changed output that fails verification."""
     build_error_pass("tests.av.post.check", "post-corruption", other_box_ir)
 
     @register_pass(
@@ -846,9 +888,16 @@ def test_auto_verify_post_raises_when_pass_produces_malformed_output(
             assert isinstance(ir, fresh_box_ir)
             return other_box_ir(ir.value)
 
-    with pytest.raises(PassValidationError) as excinfo:
-        _CorruptingPass().execute(fresh_box_ir(0))
+    manager = PassManager[object]()
+    manager.add_pass(_CorruptingPass())
 
+    with pytest.raises(PassValidationError) as excinfo:
+        manager.run(fresh_box_ir(0))
+
+    assert str(excinfo.value) == (
+        "verification rejected the output of pass "
+        '"tests.av.post.corrupting" (errors: 1)'
+    )
     assert excinfo.value.report is not None
     assert any(
         diagnostic.message_text == "post-corruption"
@@ -856,34 +905,39 @@ def test_auto_verify_post_raises_when_pass_produces_malformed_output(
     )
 
 
-def test_auto_verify_false_on_pass_class_disables_pre_and_post(
+def test_set_verifier_none_disables_input_and_output_verification(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
-    """Test that ``_auto_verify = False`` skips both hooks for the pass class."""
+    """Test that a pipeline without a verifier skips both checks.
+
+    `set_verifier(None)` turns verification off for the pipeline.
+    """
     build_error_pass("tests.av.disabled.fail", "would-fail-if-enabled", fresh_box_ir)
 
     @register_pass("tests.av.disabled.identity", "Identity pass with auto-verify off.")
     class _NoAutoVerifyPass(CompilerPass[object, object]):
-        _auto_verify = False
-
         @override
         def get_noop_output(self, ir: object) -> object:
             return ir
 
         @override
         def run_pass(self, ir: object) -> object:
-            return ir
+            assert isinstance(ir, fresh_box_ir)
+            return fresh_box_ir(ir.value + 1)
 
+    manager = PassManager[object]()
+    manager.add_pass(_NoAutoVerifyPass())
+    manager.set_verifier(None)
     input_ir = fresh_box_ir(0)
-    result = _NoAutoVerifyPass().execute(input_ir)
+    result = manager.run(input_ir)
 
-    assert result.output == input_ir
+    assert result.output == fresh_box_ir(1)
 
 
-def test_verification_pass_does_not_recurse_into_auto_verify(
+def test_verification_pass_does_not_recurse_into_verification(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
-    """Test that registered verification passes have ``_auto_verify = False``."""
+    """Test that verification passes run as checks, which never verify."""
 
     @register_verification(
         fresh_box_ir,
@@ -898,10 +952,8 @@ def test_verification_pass_does_not_recurse_into_auto_verify(
             _ = node
             type(self).invocations += 1
 
-    assert _Check._auto_verify is False
-
     @register_pass(
-        "tests.av.recurse.trigger", "Pass that triggers auto-verify on the IR."
+        "tests.av.recurse.trigger", "Pass that triggers verification on the IR."
     )
     class _TriggerPass(CompilerPass[object, object]):
         @override
@@ -912,20 +964,20 @@ def test_verification_pass_does_not_recurse_into_auto_verify(
         def run_pass(self, ir: object) -> object:
             return ir
 
-    _TriggerPass().execute(fresh_box_ir(0))
+    manager = PassManager[object]()
+    manager.add_pass(_TriggerPass())
+    manager.run(fresh_box_ir(0))
 
-    # Pre + post hooks each consult the verifier once for an unchanged
-    # identity pass, so the visit count is at most 2 - not infinite.
-    assert _Check.invocations >= 1
-    assert _Check.invocations <= 2
+    # The input is verified once; the unchanged output is not.
+    assert _Check.invocations == 1
 
 
 # ---------------------------------------------------------------------------
-# Caching: VerificationAnalysis goes through AnalysisManager.
+# Verification is uncached: a changed output is verified again.
 # ---------------------------------------------------------------------------
 
 
-def test_auto_verify_uses_analysis_manager_cache_across_passes(
+def test_pipeline_verifies_its_input_once_and_no_unchanged_output(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that an unchanged IR is verified once across two pipeline passes."""
@@ -966,12 +1018,53 @@ def test_auto_verify_uses_analysis_manager_cache_across_passes(
     manager.add_pass(_IdentityB())
     manager.run(fresh_box_ir(0))
 
-    # Pre-A computes; post-A returns the same IR and stays cached; pre-B hits
-    # the cache; post-B returns the same IR and reuses it again. Total: 1.
+    # The input is verified once; neither pass changes it, so neither
+    # output is verified. Total: 1.
     assert _CountingCheck.invocations == 1
 
 
-def test_auto_verify_recomputes_when_pass_changes_ir(
+def test_pipeline_verifies_a_changed_output_again(
+    fresh_box_ir: type[_BoxIR],
+) -> None:
+    """Test that verification is not cached: a node is verified every time
+    a pass returns it as a changed output."""
+
+    @register_verification(
+        fresh_box_ir, "tests.cache.again.count", "Counting verification pass."
+    )
+    class _CountingCheck(AnalysisVisitablePass[Visitable]):
+        invocations = 0
+
+        @override
+        def visit_unknown(self, node: Visitable) -> None:
+            _ = node
+            type(self).invocations += 1
+
+    original = fresh_box_ir(0)
+    replacement = fresh_box_ir(1)
+
+    @register_pass("tests.cache.again.forth", "Returns the replacement.")
+    class _ForthPass(CompilerPass[object, object]):
+        @override
+        def run_pass(self, ir: object) -> object:
+            return replacement
+
+    @register_pass("tests.cache.again.back", "Returns the original.")
+    class _BackPass(CompilerPass[object, object]):
+        @override
+        def run_pass(self, ir: object) -> object:
+            return original
+
+    manager = PassManager[object]()
+    manager.add_pass(_ForthPass())
+    manager.add_pass(_BackPass())
+    manager.run(original)
+
+    # The input, the replacement, and the original again: 3 checks.
+    assert _CountingCheck.invocations == 3
+
+
+def test_pipeline_verifies_the_output_of_a_changing_pass(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
     """Test that mutating the IR forces a fresh verification run on the new IR."""
@@ -1073,6 +1166,13 @@ def test_user_story_pipeline_blames_pass_that_produced_invalid_ir(
     with pytest.raises(PassValidationError) as excinfo:
         manager.run(fresh_box_ir(0))
 
+    assert str(excinfo.value) == (
+        'verification rejected the output of pass "tests.story.corrupt" (errors: 1)'
+    )
+    assert excinfo.value.pass_name == "tests.story.corrupt"
+    (record,) = excinfo.value.records
+    assert isinstance(record, PassRunRecord)
+    assert record.pass_name == "tests.story.first_clean"
     assert excinfo.value.report is not None
     error_messages = [
         diagnostic.message_text for diagnostic in excinfo.value.report.errors()
@@ -1134,10 +1234,9 @@ def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
 ) -> None:
     """Test the documented "registration is module-load-time" caching contract.
 
-    Once an analysis result is cached for a given IR identity, appending to
-    the registry does not retroactively invalidate that cache. This pins
-    the contract - callers who need the invalidation must clear the cache
-    themselves.
+    Once a run cached a `VerificationAnalysis` result for an IR node,
+    appending to the registry does not invalidate it for the rest of the
+    run. The next run starts with an empty cache, so the new pass runs.
     """
 
     @register_verification(
@@ -1149,35 +1248,47 @@ def test_registry_mutation_between_passes_does_not_invalidate_cached_results(
             _ = node
 
     _ = _Initial
+    reports: list[ValidationReport[object]] = []
 
-    manager: AnalysisManager[object] = AnalysisManager()
+    def register_late_pass() -> None:
+        @register_verification(
+            fresh_box_ir,
+            "tests.adv.registry_mutation.late",
+            "Late-added failing pass.",
+        )
+        class _Late(AnalysisVisitablePass[Visitable]):
+            @override
+            def visit_unknown(self, node: Visitable) -> None:
+                _ = node
+                self.report(DiagnosticLevel.ERROR, "late-failure")
+
+    @register_pass(
+        "tests.adv.registry_mutation.reader", "Reads the verification analysis."
+    )
+    class _ReaderPass(CompilerPass[object, object]):
+        registers_late_pass = True
+
+        @override
+        def run_pass(self, ir: object) -> object:
+            reports.append(self.get_analysis(VerificationAnalysis, ir))
+            if type(self).registers_late_pass:
+                type(self).registers_late_pass = False
+                register_late_pass()
+            reports.append(self.get_analysis(VerificationAnalysis, ir))
+            return ir
+
+    manager = PassManager[object]()
+    manager.add_pass(_ReaderPass())
+    manager.set_verifier(None)
     ir = fresh_box_ir(0)
 
-    first_report = manager.get(VerificationAnalysis, ir)
-    assert first_report.has_errors() is False
-
-    # Late registration: adds a NEW failing pass after caching has begun.
-    @register_verification(
-        fresh_box_ir,
-        "tests.adv.registry_mutation.late",
-        "Late-added failing pass.",
-    )
-    class _Late(AnalysisVisitablePass[Visitable]):
-        @override
-        def visit_unknown(self, node: Visitable) -> None:
-            _ = node
-            self.report(DiagnosticLevel.ERROR, "late-failure")
-
-    _ = _Late
-
+    manager.run(ir)
     # The same IR returns the cached (stale) result; no errors reported.
-    cached_report = manager.get(VerificationAnalysis, ir)
-    assert cached_report.has_errors() is False
+    assert [report.has_errors() for report in reports] == [False, False]
 
-    # After explicit clear, the new pass runs.
-    manager.clear(ir)
-    refreshed_report = manager.get(VerificationAnalysis, ir)
-    assert refreshed_report.has_errors() is True
+    # The next run's cache is empty, so the new pass runs.
+    manager.run(ir)
+    assert reports[2].has_errors() is True
 
 
 def test_verification_report_format_uses_validation_report_protocol(
@@ -1265,14 +1376,14 @@ def test_verifiable_subclass_with_passes_from_base_satisfies_check() -> None:
 
 
 # ---------------------------------------------------------------------------
-# CompilerPass auto-verify: empty registry is a silent no-op.
+# Pipeline verification: an empty registry is a silent no-op.
 # ---------------------------------------------------------------------------
 
 
-def test_auto_verify_is_silent_when_no_passes_registered_for_ir_type(
+def test_pipeline_verification_is_silent_when_no_passes_registered_for_ir_type(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
-    """Test that auto-verify is a no-op when the registry has no entries for the IR."""
+    """Test that verification is a no-op when the registry has no entries for the IR."""
 
     @register_pass(
         "tests.av.empty_registry", "Identity pass with no registered verifiers."
@@ -1287,28 +1398,40 @@ def test_auto_verify_is_silent_when_no_passes_registered_for_ir_type(
             return ir
 
     input_ir = fresh_box_ir(7)
-    result = _IdentityPass().execute(input_ir)
+    manager = PassManager[object]()
+    manager.add_pass(_IdentityPass())
+    result = manager.run(input_ir)
 
     assert result.output == input_ir
-    assert result.changed is False
+    (record,) = result.records
+    assert isinstance(record, PassRunRecord)
+    assert record.changed is False
 
 
 # ---------------------------------------------------------------------------
-# Cache GC interaction: VerificationAnalysis lives under AnalysisManager.
+# Cache GC interaction: VerificationAnalysis cached for a run.
 # ---------------------------------------------------------------------------
 
 
 def test_verification_analysis_cache_does_not_pin_ir(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
-    """Test that caching a verification report does not block IR garbage collection."""
+    """Test that caching a verification report does not pin the IR after the run."""
     build_clean_pass("tests.cache.gc.clean", fresh_box_ir)
 
-    manager: AnalysisManager[object] = AnalysisManager()
+    @register_pass("tests.cache.gc.reader", "Reads the verification analysis.")
+    class _ReaderPass(CompilerPass[object, object]):
+        @override
+        def run_pass(self, ir: object) -> object:
+            self.get_analysis(VerificationAnalysis, ir)
+            return fresh_box_ir(12)
+
+    manager = PassManager[object]()
+    manager.add_pass(_ReaderPass())
     ir = fresh_box_ir(11)
     weak_ir = weakref.ref(ir)
 
-    manager.get(VerificationAnalysis, ir)
+    manager.run(ir)
     assert weak_ir() is not None
 
     del ir
@@ -1338,14 +1461,14 @@ def test_pass_validation_error_remains_runtime_error_subclass() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline-level integration: auto-verify failures interrupt the pipeline.
+# Pipeline-level integration: verification failures interrupt the pipeline.
 # ---------------------------------------------------------------------------
 
 
-def test_pass_manager_surfaces_auto_verify_failure_to_caller(
+def test_pass_manager_surfaces_verification_failure_to_caller(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
-    """Test that auto-verify failures propagate out of PassManager.run."""
+    """Test that verification failures propagate out of PassManager.run."""
     build_error_pass("tests.pm_av.failure", "auto-verify-blocked", fresh_box_ir)
 
     @register_pass("tests.pm_av.identity", "Identity pass under auto-verify.")
@@ -1371,10 +1494,14 @@ def test_pass_manager_surfaces_auto_verify_failure_to_caller(
     )
 
 
-def test_pass_manager_continues_when_pass_disables_auto_verify(
+def test_pass_manager_continues_with_a_verifier_that_finds_nothing(
     fresh_box_ir: type[_BoxIR],
 ) -> None:
-    """Test that disabling auto-verify on a pass class lets the pipeline complete."""
+    """Test that replacing the verifier lets the pipeline complete.
+
+    `set_verifier` takes a `ValidationManager` in place of the registry
+    verifier, whose verification pass would block the run.
+    """
     build_error_pass(
         "tests.pm_av.continues_failure", "would-block-if-enabled", fresh_box_ir
     )
@@ -1383,8 +1510,6 @@ def test_pass_manager_continues_when_pass_disables_auto_verify(
         "tests.pm_av.identity_no_verify", "Identity pass with auto-verify disabled."
     )
     class _IdentityPass(CompilerPass[object, object]):
-        _auto_verify = False
-
         @override
         def get_noop_output(self, ir: object) -> object:
             return ir
@@ -1395,6 +1520,7 @@ def test_pass_manager_continues_when_pass_disables_auto_verify(
 
     manager = PassManager[object]()
     manager.add_pass(_IdentityPass())
+    manager.set_verifier(ValidationManager[object]())
     input_ir = fresh_box_ir(0)
     result = manager.run(input_ir)
 

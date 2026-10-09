@@ -3,13 +3,9 @@
 import pytest
 from immutabledict import immutabledict
 
-from fhy_core.expression import IdentifierExpression, LiteralExpression
 from fhy_core.identifier import Identifier
-from fhy_core.traits import (
-    Frozen,
-    FrozenMutationError,
-    StructuralEquivalence,
-)
+from fhy_core.symbolic.expression import IdentifierExpression, LiteralExpression
+from fhy_core.traits import Frozen, FrozenMutationError, StructuralEquivalence
 from fhy_core.types import (
     CoreDataType,
     FhYCoreTypeError,
@@ -26,7 +22,6 @@ from fhy_core.types import (
     promote_type_qualifiers,
     resolve_literal_core_data_type,
 )
-from fhy_core.types.core import _FLOAT_COMPLEX_DATA_TYPES, _INTEGER_DATA_TYPES
 
 from .conftest import mock_identifier
 
@@ -246,11 +241,12 @@ def test_core_data_type_partitions_cover_every_member() -> None:
     float/complex-partitioned, or BOOL (its own side branch). A new
     ``CoreDataType`` member added without slotting it into a partition would
     otherwise surface only as a downstream promotion gap; this makes the
-    drift a deterministic failure.
+    drift a deterministic failure. Read through the public API: a member of
+    a partition promotes with itself to itself, and one of no partition is
+    refused as a cross-family pair.
     """
-    covered = _INTEGER_DATA_TYPES | _FLOAT_COMPLEX_DATA_TYPES | {CoreDataType.BOOL}
-
-    assert covered == frozenset(CoreDataType)
+    for core_data_type in CoreDataType:
+        assert promote_core_data_types(core_data_type, core_data_type) is core_data_type
 
 
 @pytest.mark.parametrize(
@@ -301,7 +297,7 @@ def test_promote_core_data_types_raises_for_cross_family_pairs(
     core_data_type1: CoreDataType, core_data_type2: CoreDataType
 ) -> None:
     """Test cross-family promotion raises `FhYCoreTypeError`."""
-    with pytest.raises(FhYCoreTypeError, match="Unsupported"):
+    with pytest.raises(FhYCoreTypeError, match="unsupported"):
         promote_core_data_types(core_data_type1, core_data_type2)
 
 
@@ -320,7 +316,7 @@ def test_promote_primitive_data_types_raises_for_cross_family_pairs() -> None:
     int32 = PrimitiveDataType(CoreDataType.INT32)
     float32 = PrimitiveDataType(CoreDataType.FLOAT32)
 
-    with pytest.raises(FhYCoreTypeError, match="Unsupported"):
+    with pytest.raises(FhYCoreTypeError, match="unsupported"):
         promote_primitive_data_types(int32, float32)
 
 

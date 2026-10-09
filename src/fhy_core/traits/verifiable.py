@@ -18,6 +18,7 @@ __all__ = ["Verifiable", "VerifiableMixin", "VerificationError"]
 from abc import ABC
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from fhy_core import _rs
 from fhy_core.error import register_error
 
 if TYPE_CHECKING:
@@ -118,12 +119,7 @@ class VerifiableMixin(ABC):
             cls._verifiable_instantiation_ok = True
             return super().__new__(cls)
 
-        # Lazy import: pass_infrastructure imports from this module.
-        from fhy_core.pass_infrastructure.verification import (  # noqa: PLC0415
-            VerificationRegistry,
-        )
-
-        if VerificationRegistry.get_passes_for(cls):
+        if _rs.get_verification_passes_for(cls):
             cls._verifiable_instantiation_ok = True
             return super().__new__(cls)
 
@@ -151,9 +147,4 @@ class VerifiableMixin(ABC):
             to convert errors into a :class:`ValidationFailedError`.
 
         """
-        # Lazy import: pass_infrastructure imports from this module.
-        from fhy_core.pass_infrastructure.verification import (  # noqa: PLC0415
-            run_verification,
-        )
-
-        return run_verification(self)
+        return _rs.run_verification(self)

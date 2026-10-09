@@ -1,0 +1,238 @@
+"""Expression IR: syntax, entry registry, sorts, and the passes over them.
+
+The package is self-contained. It owns the expression tree, the
+process-wide registry of functions and constants, the ``FunctionSort``
+vocabulary, the built-in functions and constants seeded into the
+registry at import, and the passes that evaluate, inline, rewrite,
+pretty-print, and lower expressions to SymPy, Z3, or NumPy. None of it
+depends on the IR type system; assigning IR types to expressions is the
+job of the type-checking layer, which sits above this package.
+"""
+
+__all__ = [
+    "BUILTIN_CONSTANTS",
+    "BUILTIN_FUNCTIONS",
+    "AffineForm",
+    "AlternativesPattern",
+    "BinaryExpression",
+    "BinaryExpressionPattern",
+    "BinaryOperation",
+    "BuiltinConstants",
+    "BuiltinFunctions",
+    "CallExpression",
+    "CallExpressionPattern",
+    "CallTargetResolver",
+    "Capture",
+    "CapturePattern",
+    "ComplexInfinityLiftError",
+    "EntryLookupError",
+    "EntryRegistrationError",
+    "Expression",
+    "FiredRule",
+    "FunctionArityError",
+    "FunctionSort",
+    "IdentifierExpression",
+    "IdentifierPattern",
+    "LiteralExpression",
+    "LiteralPattern",
+    "LiteralType",
+    "LogicalExpression",
+    "LogicalExpressionPattern",
+    "LogicalOperation",
+    "MatchBindings",
+    "NativeConstant",
+    "NativeConstantBindingError",
+    "NativeConstantLoweringError",
+    "NativeFunction",
+    "NativeResultSortError",
+    "NonBooleanLogicalOperandError",
+    "NonFiniteCastError",
+    "PartialPiecewiseError",
+    "Pattern",
+    "PiecewiseExpression",
+    "PiecewiseExpressionPattern",
+    "PredicatePattern",
+    "RegisteredEntry",
+    "RegisteredFunction",
+    "RewriteCallbackError",
+    "RewriteError",
+    "RewriteRebuildError",
+    "RewriteRule",
+    "RewriteRuleApplier",
+    "Rule",
+    "StringLiteralPrecisionError",
+    "UnaryExpression",
+    "UnaryExpressionPattern",
+    "UnaryOperation",
+    "UnboundVariableError",
+    "UndecidableError",
+    "UnsupportedNumpyLoweringError",
+    "WildcardPattern",
+    "affine_form",
+    "apply_rewrite_rule",
+    "apply_rewrite_rules",
+    "build_literal_equivalence_key",
+    "call",
+    "convert_expression_to_sympy_expression",
+    "convert_expression_to_z3_expression",
+    "convert_sympy_expression_to_expression",
+    "does_pattern_match",
+    "evaluate_expression",
+    "evaluate_expression_with_numpy",
+    "get_native_constant_identifier",
+    "get_registered_entries",
+    "get_registered_entry",
+    "inline_functions",
+    "is_entry_registered",
+    "is_integer_valued_literal",
+    "is_python_value_compatible_with_sort",
+    "logical_and",
+    "logical_not",
+    "logical_or",
+    "make_binary_expression",
+    "make_unary_expression",
+    "match_pattern",
+    "pformat_expression",
+    "piecewise",
+    "register_function",
+    "register_native_constant",
+    "register_native_function",
+    "substitute_sympy_expression_variables",
+    "try_get_native_constant_for_identifier",
+    "try_get_registered_result_sort",
+    "validate_logical_operands",
+    "validate_predicate",
+]
+
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+from .builtins import (
+    BUILTIN_CONSTANTS,
+    BUILTIN_FUNCTIONS,
+    BuiltinConstants,
+    BuiltinFunctions,
+)
+from .core import (
+    BinaryExpression,
+    BinaryOperation,
+    CallExpression,
+    Expression,
+    IdentifierExpression,
+    LiteralExpression,
+    LiteralType,
+    LogicalExpression,
+    LogicalOperation,
+    PiecewiseExpression,
+    UnaryExpression,
+    UnaryOperation,
+    build_literal_equivalence_key,
+    call,
+    is_integer_valued_literal,
+    logical_and,
+    logical_not,
+    logical_or,
+    make_binary_expression,
+    make_unary_expression,
+    piecewise,
+    validate_logical_operands,
+    validate_predicate,
+)
+from .errors import (
+    ComplexInfinityLiftError,
+    NativeConstantBindingError,
+    NativeConstantLoweringError,
+    NativeResultSortError,
+    NonBooleanLogicalOperandError,
+    NonFiniteCastError,
+    PartialPiecewiseError,
+    StringLiteralPrecisionError,
+    UnboundVariableError,
+    UndecidableError,
+    UnsupportedNumpyLoweringError,
+)
+from .passes.affine import AffineForm, affine_form
+from .passes.evaluate import evaluate_expression
+from .passes.inline import FunctionArityError, inline_functions
+from .passes.numpy import evaluate_expression_with_numpy
+from .pattern import (
+    AlternativesPattern,
+    BinaryExpressionPattern,
+    CallExpressionPattern,
+    Capture,
+    CapturePattern,
+    FiredRule,
+    IdentifierPattern,
+    LiteralPattern,
+    LogicalExpressionPattern,
+    MatchBindings,
+    Pattern,
+    PiecewiseExpressionPattern,
+    PredicatePattern,
+    RewriteCallbackError,
+    RewriteError,
+    RewriteRebuildError,
+    RewriteRule,
+    RewriteRuleApplier,
+    Rule,
+    UnaryExpressionPattern,
+    WildcardPattern,
+    apply_rewrite_rule,
+    apply_rewrite_rules,
+    does_pattern_match,
+    match_pattern,
+)
+from .pprint import pformat_expression
+from .registry import (
+    CallTargetResolver,
+    EntryLookupError,
+    EntryRegistrationError,
+    NativeConstant,
+    NativeFunction,
+    RegisteredEntry,
+    RegisteredFunction,
+    get_native_constant_identifier,
+    get_registered_entries,
+    get_registered_entry,
+    is_entry_registered,
+    register_function,
+    register_native_constant,
+    register_native_function,
+    try_get_native_constant_for_identifier,
+    try_get_registered_result_sort,
+)
+from .sort import FunctionSort, is_python_value_compatible_with_sort
+
+if TYPE_CHECKING:
+    from .passes.sympy import (
+        convert_expression_to_sympy_expression,
+        convert_sympy_expression_to_expression,
+        substitute_sympy_expression_variables,
+    )
+    from .passes.z3 import convert_expression_to_z3_expression
+
+# The bridges import sympy and z3, which are optional, so their functions
+# are re-exported on first access rather than at import.
+_LAZY_BRIDGE_EXPORTS: dict[str, str] = {
+    "convert_expression_to_sympy_expression": ".passes.sympy",
+    "convert_sympy_expression_to_expression": ".passes.sympy",
+    "substitute_sympy_expression_variables": ".passes.sympy",
+    "convert_expression_to_z3_expression": ".passes.z3",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Return a bridge function, importing its bridge on first access.
+
+    Raises:
+        AttributeError: For any other name.
+        SolverBackendUnavailableError: If the bridge's package is not
+            installed.
+
+    """
+    module_name = _LAZY_BRIDGE_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value

@@ -1,0 +1,1273 @@
+"""Tests for the process-wide expression-IR registry.
+
+The registry holds three kinds of entries:
+
+- ``RegisteredFunction``: expression-bodied function with declared
+  parameter and result sorts.
+- ``NativeFunction``: Python-backed function with declared
+  parameter and result sorts.
+- ``NativeConstant``: named Python literal value with a declared
+  sort, plus the one canonical ``Identifier`` minted for it at
+  registration.
+
+Lookup helpers (``get_registered_entry``, ``get_registered_entries``,
+``is_entry_registered``) widen to ``RegisteredEntry``; callers that
+need to distinguish kinds use ``isinstance``.
+``get_native_constant_identifier`` and
+``try_get_native_constant_for_identifier`` are the two ends of the
+constant-identity mapping.
+"""
+
+import math
+import subprocess
+import sys
+
+import pytest
+
+from fhy_core.identifier import Identifier
+from fhy_core.symbolic.expression import (
+    CallExpression,
+    EntryLookupError,
+    EntryRegistrationError,
+    Expression,
+    FunctionSort,
+    IdentifierExpression,
+    LiteralExpression,
+    NativeConstant,
+    NativeFunction,
+    RegisteredFunction,
+    get_native_constant_identifier,
+    get_registered_entries,
+    get_registered_entry,
+    is_entry_registered,
+    register_function,
+    register_native_constant,
+    register_native_function,
+    try_get_native_constant_for_identifier,
+    try_get_registered_result_sort,
+)
+from fhy_core.symbolic.expression.builtins import BUILTIN_CONSTANTS
+from fhy_core.testing_patches import set_function_registry_state
+from fhy_core.traits.frozen import FrozenMutationError
+
+# =============================================================================
+# register_function: happy paths
+# =============================================================================
+
+
+def test_register_function_stores_name_parameters_and_body(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``register_function`` records the supplied name, parameters, and body."""
+    parameter = Identifier("x")
+    body = IdentifierExpression(parameter)
+
+    registered = register_function(
+        "test_identity",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=body,
+    )
+
+    assert registered.name == "test_identity"
+    assert registered.parameters == (parameter,)
+    assert registered.body is body
+
+
+def test_register_function_records_parameter_sorts_and_result_sort(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``register_function`` records the declared sorts on the stored entry."""
+    parameter = Identifier("x")
+    registered = register_function(
+        "test_sort_fields",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.NAT],
+        result_sort=FunctionSort.INT,
+        body=IdentifierExpression(parameter),
+    )
+
+    assert registered.parameter_sorts == (FunctionSort.NAT,)
+    assert registered.result_sort == FunctionSort.INT
+
+
+def test_register_function_returns_a_registered_function_instance(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``register_function`` returns a ``RegisteredFunction``."""
+    parameter = Identifier("x")
+
+    registered = register_function(
+        "test_returns_instance",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    assert isinstance(registered, RegisteredFunction)
+
+
+def test_register_function_with_multiple_parameters_records_order(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``register_function`` preserves the parameter order on registration."""
+    a = Identifier("a")
+    b = Identifier("b")
+    c = Identifier("c")
+
+    registered = register_function(
+        "test_three_params",
+        parameters=[a, b, c],
+        parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL, FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(a) + b + c,
+    )
+
+    assert registered.parameters == (a, b, c)
+
+
+def test_register_function_accepts_self_recursive_body(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body that calls its own registered name registers successfully.
+
+    A self-reference is by name (``CallExpression.function_name`` is a
+    plain string, not an ``Identifier``), so it never appears in the
+    body's free identifiers and never trips the closure check.
+    """
+    parameter = Identifier("x")
+
+    registered = register_function(
+        "test_self_recursive",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=CallExpression("test_self_recursive", (IdentifierExpression(parameter),)),
+    )
+
+    assert registered.name == "test_self_recursive"
+    assert is_entry_registered("test_self_recursive") is True
+
+
+def test_registered_function_dataclass_is_frozen(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``RegisteredFunction`` instances reject attribute mutation."""
+    parameter = Identifier("x")
+    registered = register_function(
+        "test_frozen",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    with pytest.raises(FrozenMutationError):
+        registered.name = "renamed"  # type: ignore[misc]
+
+
+# =============================================================================
+# register_function: rejection paths
+# =============================================================================
+
+
+def test_register_function_rejects_duplicate_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test re-registering an existing name raises ``EntryRegistrationError``."""
+    parameter = Identifier("x")
+    register_function(
+        "test_duplicate",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    with pytest.raises(EntryRegistrationError, match="test_duplicate"):
+        register_function(
+            "test_duplicate",
+            parameters=[parameter],
+            parameter_sorts=[FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(parameter),
+        )
+
+
+def test_register_function_rejects_captured_free_identifier(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body referencing identifiers outside the parameter list is rejected."""
+    parameter = Identifier("x")
+    captured = Identifier("y")
+
+    with pytest.raises(EntryRegistrationError, match="test_captured"):
+        register_function(
+            "test_captured",
+            parameters=[parameter],
+            parameter_sorts=[FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(parameter) + captured,
+        )
+
+
+def test_register_function_lists_multiple_captured_identifiers_in_sorted_order(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the captured-identifier error message lists every name, sorted.
+
+    Pins the sort and the comma-join so that error messages are stable
+    when a body captures more than one free identifier.
+    """
+    parameter = Identifier("a")
+    captured_z = Identifier("z")
+    captured_y = Identifier("y")
+    captured_x = Identifier("x")
+
+    with pytest.raises(EntryRegistrationError, match=r"x, y, z"):
+        register_function(
+            "test_captured_multiple",
+            parameters=[parameter],
+            parameter_sorts=[FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(parameter) + captured_z + captured_y + captured_x,
+        )
+
+
+def test_register_function_accepts_subset_of_parameters_used_in_body(
+    function_registry_snapshot: None,
+) -> None:
+    """Test parameters declared but unused in the body are still accepted.
+
+    Free-identifier validation is a subset relation: every body identifier
+    must be a declared parameter, but declared parameters may go unused.
+    """
+    used = Identifier("a")
+    unused = Identifier("b")
+
+    registered = register_function(
+        "test_unused_param",
+        parameters=[used, unused],
+        parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(used),
+    )
+
+    assert registered.parameters == (used, unused)
+
+
+def test_register_function_accepts_literal_only_body(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body with no identifiers is accepted (vacuously satisfies subset)."""
+    registered = register_function(
+        "test_literal_only_body",
+        parameters=[],
+        parameter_sorts=[],
+        result_sort=FunctionSort.REAL,
+        body=LiteralExpression(0),
+    )
+
+    assert registered.body.is_structurally_equivalent(LiteralExpression(0))
+
+
+def test_register_function_rejects_sort_arity_mismatch(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a parameter / parameter-sort length mismatch is rejected."""
+    a = Identifier("a")
+    b = Identifier("b")
+
+    with pytest.raises(EntryRegistrationError, match="test_sort_arity_mismatch"):
+        register_function(
+            "test_sort_arity_mismatch",
+            parameters=[a, b],
+            parameter_sorts=[FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(a) + b,
+        )
+
+
+def test_register_function_accepts_body_referencing_registered_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a body carrying a constant's canonical identifier is not captured.
+
+    ``pi`` is registered as a built-in constant; its canonical
+    identifier in a body is a constant reference, not a captured free
+    identifier.
+    """
+    x = Identifier("x")
+    pi = get_native_constant_identifier("pi")
+
+    # Should not raise: ``pi`` is the registered constant's identifier.
+    registered = register_function(
+        "test_body_uses_pi",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(x) * pi,
+    )
+
+    assert registered.name == "test_body_uses_pi"
+
+
+def test_register_function_rejects_body_identifier_merely_named_like_a_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test an identifier that only shares a constant's name is captured.
+
+    The exemption from the closure check is by identifier identity, so a
+    body referencing some other identifier called ``pi`` is capturing a
+    free variable and is rejected like any other capture.
+    """
+    x = Identifier("x")
+    pi_lookalike = Identifier("pi")
+
+    with pytest.raises(EntryRegistrationError, match="pi"):
+        register_function(
+            "test_body_uses_pi_lookalike",
+            parameters=[x],
+            parameter_sorts=[FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(x) * pi_lookalike,
+        )
+
+
+# =============================================================================
+# Lookup, listing, and presence (RegisteredFunction)
+# =============================================================================
+
+
+def test_get_registered_entry_returns_previously_registered_entry(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``get_registered_entry`` returns the same record as registration."""
+    parameter = Identifier("x")
+    expected = register_function(
+        "test_lookup",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    fetched = get_registered_entry("test_lookup")
+
+    assert fetched is expected or fetched == expected
+
+
+def test_get_registered_entry_raises_for_unknown_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``get_registered_entry`` raises ``EntryLookupError`` for unknowns."""
+    with pytest.raises(EntryLookupError, match="never_registered"):
+        get_registered_entry("never_registered")
+
+
+def test_is_entry_registered_true_after_registration(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``is_entry_registered`` returns True for a registered name."""
+    parameter = Identifier("x")
+    register_function(
+        "test_is_registered_true",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    assert is_entry_registered("test_is_registered_true") is True
+
+
+def test_is_entry_registered_false_for_unknown_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``is_entry_registered`` returns False for an unknown name."""
+    assert is_entry_registered("never_registered") is False
+
+
+def test_get_registered_entries_includes_registered_entry(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``get_registered_entries`` snapshots include newly registered entries."""
+    parameter = Identifier("x")
+    expected = register_function(
+        "test_snapshot_includes",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    snapshot = get_registered_entries()
+
+    assert "test_snapshot_includes" in snapshot
+    fetched = snapshot["test_snapshot_includes"]
+    assert fetched == expected or fetched is expected
+
+
+def test_get_registered_entries_returns_immutable_snapshot(
+    function_registry_snapshot: None,
+) -> None:
+    """Test mutating the snapshot does not affect the registry."""
+    parameter = Identifier("x")
+    register_function(
+        "test_snapshot_immutable",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    snapshot = get_registered_entries()
+    with pytest.raises(TypeError):
+        snapshot["test_snapshot_immutable"] = None  # type: ignore[index]
+
+
+# =============================================================================
+# Registry isolation (the conftest fixture)
+# =============================================================================
+
+
+def test_function_registry_snapshot_restores_state_after_test_a(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the snapshot fixture leaves the registry clean for the sibling test."""
+    parameter = Identifier("x")
+    register_function(
+        "test_isolation_marker",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    assert is_entry_registered("test_isolation_marker") is True
+
+
+def test_function_registry_snapshot_restores_state_after_test_b(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the marker registered in the sibling test does not leak here."""
+    assert is_entry_registered("test_isolation_marker") is False
+
+
+# =============================================================================
+# RegisteredFunction dataclass: direct construction invariants
+#
+# register_function's closure check (free identifiers must be a subset of
+# the declared parameters) lives on RegisteredFunction.__post_init__, so
+# it is enforced on direct construction too, not just through the
+# registry API.
+# =============================================================================
+
+
+def test_registered_function_direct_construction_leaves_captures_to_registration(
+    function_registry_snapshot: None,
+) -> None:
+    """Test only registration refuses a body capturing a free identifier.
+
+    Which identifiers a body may refer to depends on the registry it joins,
+    so an entry built directly holds the body, and registering the same
+    function refuses it, naming the captured identifier.
+    """
+    parameter = Identifier("x")
+    captured = Identifier("y")
+    body = IdentifierExpression(parameter) + captured
+
+    entry = RegisteredFunction(
+        name="test_direct_captured",
+        parameters=(parameter,),
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        body=body,
+    )
+
+    assert entry.body is body
+    with pytest.raises(EntryRegistrationError, match="y"):
+        register_function(
+            "test_direct_captured",
+            parameters=(parameter,),
+            parameter_sorts=(FunctionSort.REAL,),
+            result_sort=FunctionSort.REAL,
+            body=body,
+        )
+    assert not is_entry_registered("test_direct_captured")
+
+
+def test_registered_function_direct_construction_rejects_a_repeated_parameter() -> None:
+    """Test constructing ``RegisteredFunction`` refuses a parameter named twice."""
+    parameter = Identifier("x")
+
+    with pytest.raises(ValueError, match='repeats the parameter "x"'):
+        RegisteredFunction(
+            name="test_direct_repeated",
+            parameters=(parameter, parameter),
+            parameter_sorts=(FunctionSort.REAL, FunctionSort.REAL),
+            result_sort=FunctionSort.REAL,
+            body=IdentifierExpression(parameter),
+        )
+
+
+def test_registered_function_direct_construction_accepts_self_recursive_call() -> None:
+    """Test a self-referential ``CallExpression`` body passes the closure check."""
+    parameter = Identifier("x")
+
+    registered = RegisteredFunction(
+        name="test_direct_self_recursive",
+        parameters=(parameter,),
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        body=CallExpression(
+            "test_direct_self_recursive", (IdentifierExpression(parameter),)
+        ),
+    )
+
+    assert registered.body.get_free_identifiers() == {parameter}
+
+
+def test_registered_functions_with_separately_built_equal_bodies_are_equal() -> None:
+    """Test two entries whose bodies are built apart compare ``==``.
+
+    Expression ``==`` is structural, so the dataclass equality of two
+    entries with equal fields holds when their bodies are separately built,
+    equal trees.
+    """
+    parameter = Identifier("x")
+
+    def build(body: Expression) -> RegisteredFunction:
+        return RegisteredFunction(
+            name="test_equal_bodies",
+            parameters=(parameter,),
+            parameter_sorts=(FunctionSort.REAL,),
+            result_sort=FunctionSort.REAL,
+            body=body,
+        )
+
+    first = build(IdentifierExpression(parameter) + 1)
+    second = build(IdentifierExpression(parameter) + 1)
+
+    assert first.body is not second.body
+    assert first == second
+    assert hash(first) == hash(second)
+
+
+def test_registered_functions_swapping_their_parameters_are_alpha_equivalent() -> None:
+    """Test entries equal up to a consistent parameter renaming compare alike.
+
+    The parameters are a binder over the body, so the body is compared
+    under the binder frame pairing the two parameter lists: the Rust
+    renaming resolves each bound identifier through that frame.
+    """
+    a = Identifier("a")
+    b = Identifier("b")
+
+    def build(
+        parameters: tuple[Identifier, Identifier], body: Expression
+    ) -> RegisteredFunction:
+        return RegisteredFunction(
+            name="test_alpha_parameters",
+            parameters=parameters,
+            parameter_sorts=(FunctionSort.REAL, FunctionSort.REAL),
+            result_sort=FunctionSort.REAL,
+            body=body,
+        )
+
+    difference = build((a, b), IdentifierExpression(a) - b)
+    renamed = build((b, a), IdentifierExpression(b) - a)
+    reversed_difference = build((a, b), IdentifierExpression(b) - a)
+
+    assert difference.is_alpha_equivalent(renamed)
+    assert not difference.is_structurally_equivalent(renamed)
+    assert not difference.is_alpha_equivalent(reversed_difference)
+
+
+# =============================================================================
+# NativeFunction dataclass
+# =============================================================================
+
+
+def test_native_function_constructs_with_declared_sorts_and_implementation() -> None:
+    """Test ``NativeFunction`` stores the supplied fields."""
+    native = NativeFunction(
+        name="test_native_fn",
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    assert native.name == "test_native_fn"
+    assert native.parameter_sorts == (FunctionSort.REAL,)
+    assert native.result_sort == FunctionSort.REAL
+    assert native.implementation is math.sqrt
+
+
+def test_native_function_direct_construction_rejects_arity_mismatch() -> None:
+    """Test constructing ``NativeFunction`` directly rejects an arity mismatch."""
+    with pytest.raises(ValueError, match="test_direct_arity_mismatch"):
+        NativeFunction(
+            name="test_direct_arity_mismatch",
+            parameter_sorts=(FunctionSort.REAL, FunctionSort.REAL),
+            result_sort=FunctionSort.REAL,
+            implementation=math.sqrt,
+        )
+
+
+def test_native_function_direct_construction_accepts_signature_less_callable() -> None:
+    """Test a callable with no inspectable signature skips the arity check.
+
+    ``builtins.max`` is a C builtin with no signature ``inspect`` can
+    introspect, which is exactly the escape hatch the arity check
+    documents.
+    """
+    native = NativeFunction(
+        name="test_direct_signatureless",
+        parameter_sorts=(FunctionSort.REAL, FunctionSort.REAL),
+        result_sort=FunctionSort.REAL,
+        implementation=max,
+    )
+
+    assert native.implementation is max
+
+
+def test_native_function_dataclass_is_frozen() -> None:
+    """Test ``NativeFunction`` instances reject attribute mutation."""
+    native = NativeFunction(
+        name="test_native_frozen",
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    with pytest.raises(FrozenMutationError):
+        native.name = "renamed"  # type: ignore[misc]
+
+
+def test_native_function_equality_compares_all_fields() -> None:
+    """Test two ``NativeFunction`` with the same fields compare equal."""
+    a = NativeFunction(
+        name="test_eq",
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+    b = NativeFunction(
+        name="test_eq",
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    assert a == b
+
+
+def test_native_function_inequality_when_name_differs() -> None:
+    """Test two ``NativeFunction`` with different names compare unequal."""
+    a = NativeFunction(
+        name="a",
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+    b = NativeFunction(
+        name="b",
+        parameter_sorts=(FunctionSort.REAL,),
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    assert a != b
+
+
+# =============================================================================
+# NativeConstant dataclass
+# =============================================================================
+
+
+def test_native_constant_constructs_with_name_sort_and_value() -> None:
+    """Test ``NativeConstant`` stores the supplied fields."""
+    constant = NativeConstant(name="test_const", sort=FunctionSort.REAL, value=2.5)
+
+    assert constant.name == "test_const"
+    assert constant.sort == FunctionSort.REAL
+    assert constant.value == 2.5
+
+
+def test_native_constant_dataclass_is_frozen() -> None:
+    """Test ``NativeConstant`` instances reject attribute mutation."""
+    constant = NativeConstant(
+        name="test_const_frozen", sort=FunctionSort.REAL, value=1.0
+    )
+
+    with pytest.raises(FrozenMutationError):
+        constant.name = "renamed"  # type: ignore[misc]
+
+
+def test_native_constant_equality_compares_all_fields() -> None:
+    """Test two ``NativeConstant`` with the same fields compare equal."""
+    a = NativeConstant(name="c", sort=FunctionSort.REAL, value=1.0)
+    b = NativeConstant(name="c", sort=FunctionSort.REAL, value=1.0)
+
+    assert a == b
+
+
+def test_native_constant_inequality_when_value_differs() -> None:
+    """Test two ``NativeConstant`` with different values compare unequal."""
+    a = NativeConstant(name="c", sort=FunctionSort.REAL, value=1.0)
+    b = NativeConstant(name="c", sort=FunctionSort.REAL, value=2.0)
+
+    assert a != b
+
+
+# =============================================================================
+# register_native_function
+# =============================================================================
+
+
+def test_register_native_function_stores_supplied_fields(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``register_native_function`` records the supplied fields."""
+    registered = register_native_function(
+        "test_native_register",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    assert registered.name == "test_native_register"
+    assert registered.parameter_sorts == (FunctionSort.REAL,)
+    assert registered.result_sort == FunctionSort.REAL
+    assert registered.implementation is math.sqrt
+
+
+def test_register_native_function_returns_native_function_instance(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``register_native_function`` returns a ``NativeFunction``."""
+    registered = register_native_function(
+        "test_native_instance",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=math.exp,
+    )
+
+    assert isinstance(registered, NativeFunction)
+
+
+def test_register_native_function_rejects_arity_mismatch(
+    function_registry_snapshot: None,
+) -> None:
+    """Test registering a native function through the registry rejects bad arity."""
+    with pytest.raises(EntryRegistrationError, match="test_native_arity_mismatch"):
+        register_native_function(
+            "test_native_arity_mismatch",
+            parameter_sorts=[FunctionSort.REAL, FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            implementation=math.sqrt,
+        )
+
+
+def test_register_native_function_rejects_duplicate_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test re-registering an existing name raises ``EntryRegistrationError``."""
+    register_native_function(
+        "test_native_dup",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    with pytest.raises(EntryRegistrationError, match="test_native_dup"):
+        register_native_function(
+            "test_native_dup",
+            parameter_sorts=[FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            implementation=math.exp,
+        )
+
+
+def test_register_native_function_rejects_collision_with_registered_function(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a native registration cannot reuse an expression-bodied function name."""
+    parameter = Identifier("x")
+    register_function(
+        "test_native_collides_with_function",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    with pytest.raises(
+        EntryRegistrationError, match="test_native_collides_with_function"
+    ):
+        register_native_function(
+            "test_native_collides_with_function",
+            parameter_sorts=[FunctionSort.REAL],
+            result_sort=FunctionSort.REAL,
+            implementation=math.sqrt,
+        )
+
+
+# =============================================================================
+# register_native_constant
+# =============================================================================
+
+
+def test_register_native_constant_stores_supplied_fields(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``register_native_constant`` records the supplied fields."""
+    registered = register_native_constant(
+        "test_const_register", sort=FunctionSort.REAL, value=math.pi
+    )
+
+    assert registered.name == "test_const_register"
+    assert registered.sort == FunctionSort.REAL
+    assert registered.value == math.pi
+
+
+def test_register_native_constant_returns_native_constant_instance(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``register_native_constant`` returns a ``NativeConstant``."""
+    registered = register_native_constant(
+        "test_const_instance", sort=FunctionSort.REAL, value=1.0
+    )
+
+    assert isinstance(registered, NativeConstant)
+
+
+def test_register_native_constant_rejects_duplicate_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test re-registering an existing constant name raises."""
+    register_native_constant("test_const_dup", sort=FunctionSort.REAL, value=1.0)
+
+    with pytest.raises(EntryRegistrationError, match="test_const_dup"):
+        register_native_constant("test_const_dup", sort=FunctionSort.REAL, value=2.0)
+
+
+def test_register_native_constant_rejects_sort_value_incompatibility(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a constant whose value is incompatible with the sort is rejected."""
+    with pytest.raises(EntryRegistrationError, match="test_const_sort_mismatch"):
+        register_native_constant(
+            "test_const_sort_mismatch",
+            sort=FunctionSort.BOOL,
+            value=1.5,
+        )
+
+
+def test_register_native_constant_rejects_bool_for_int_sort(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a constant value of ``True`` is rejected for ``INT`` sort.
+
+    Pins down the strict-``bool`` rule against a permissive
+    ``isinstance(value, int)`` registration check.
+    """
+    with pytest.raises(EntryRegistrationError, match="test_const_bool_for_int"):
+        register_native_constant(
+            "test_const_bool_for_int",
+            sort=FunctionSort.INT,
+            value=True,
+        )
+
+
+def test_register_native_constant_rejects_collision_with_function(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a constant registration cannot reuse an existing function name."""
+    parameter = Identifier("x")
+    register_function(
+        "test_const_collides_with_function",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+
+    with pytest.raises(
+        EntryRegistrationError, match="test_const_collides_with_function"
+    ):
+        register_native_constant(
+            "test_const_collides_with_function",
+            sort=FunctionSort.REAL,
+            value=1.0,
+        )
+
+
+# =============================================================================
+# Widened lookup helpers (RegisteredEntry union)
+# =============================================================================
+
+
+def test_get_registered_entry_returns_native_function_when_registered(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup helper returns the stored ``NativeFunction`` instance."""
+    native = register_native_function(
+        "test_lookup_native",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    fetched = get_registered_entry("test_lookup_native")
+
+    assert fetched is native or fetched == native
+
+
+def test_get_registered_entry_returns_native_constant_when_registered(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup helper returns the stored ``NativeConstant`` instance."""
+    constant = register_native_constant(
+        "test_lookup_const", sort=FunctionSort.REAL, value=1.0
+    )
+
+    fetched = get_registered_entry("test_lookup_const")
+
+    assert fetched is constant or fetched == constant
+
+
+def test_is_entry_registered_true_for_native_function(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``is_entry_registered`` returns True for a registered native function."""
+    register_native_function(
+        "test_present_native",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=math.exp,
+    )
+
+    assert is_entry_registered("test_present_native") is True
+
+
+def test_is_entry_registered_true_for_native_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test ``is_entry_registered`` returns True for a registered constant."""
+    register_native_constant("test_present_const", sort=FunctionSort.REAL, value=math.e)
+
+    assert is_entry_registered("test_present_const") is True
+
+
+def test_get_registered_entries_snapshot_includes_all_entry_kinds(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the snapshot mapping holds the union of all three entry kinds."""
+    parameter = Identifier("x")
+    expression_function = register_function(
+        "test_snapshot_function",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        body=IdentifierExpression(parameter),
+    )
+    native_function = register_native_function(
+        "test_snapshot_native",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+    constant = register_native_constant(
+        "test_snapshot_const", sort=FunctionSort.REAL, value=1.0
+    )
+
+    snapshot = get_registered_entries()
+
+    assert snapshot.get("test_snapshot_function") == expression_function
+    assert snapshot.get("test_snapshot_native") == native_function
+    assert snapshot.get("test_snapshot_const") == constant
+
+
+# =============================================================================
+# try_get_registered_result_sort
+# =============================================================================
+
+
+def test_try_get_registered_result_sort_returns_native_function_result_sort(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup returns a registered native function's result sort."""
+    register_native_function(
+        "test_result_sort_native",
+        parameter_sorts=[FunctionSort.REAL],
+        result_sort=FunctionSort.REAL,
+        implementation=math.sqrt,
+    )
+
+    result_sort = try_get_registered_result_sort("test_result_sort_native")
+
+    assert result_sort == FunctionSort.REAL
+
+
+def test_try_get_registered_result_sort_returns_expression_function_result_sort(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup returns a registered expression-bodied function's result sort."""
+    parameter = Identifier("x")
+    register_function(
+        "test_result_sort_function",
+        parameters=[parameter],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=IdentifierExpression(parameter),
+    )
+
+    result_sort = try_get_registered_result_sort("test_result_sort_function")
+
+    assert result_sort == FunctionSort.INT
+
+
+def test_try_get_registered_result_sort_returns_none_for_unregistered_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup returns None for a name with no registered entry."""
+    assert try_get_registered_result_sort("never_registered") is None
+
+
+def test_try_get_registered_result_sort_returns_none_for_native_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test the lookup returns None for a constant, which declares no result sort."""
+    register_native_constant(
+        "test_result_sort_const", sort=FunctionSort.REAL, value=1.0
+    )
+
+    result_sort = try_get_registered_result_sort("test_result_sort_const")
+
+    assert result_sort is None
+
+
+# =============================================================================
+# Forward-referenced call targets
+#
+# A body may call a function that is not registered yet. Registration
+# stores the body without inspecting it, so the forward reference costs
+# nothing here; holding such a body to its declared result sort is the
+# job of `fhy_core.types.checking.check_all_registered_function_bodies`,
+# which runs once registration is complete.
+# =============================================================================
+
+
+def test_register_function_accepts_body_calling_an_unregistered_name(
+    function_registry_snapshot: None,
+) -> None:
+    """Test registering a function that calls an unregistered name still succeeds."""
+    x = Identifier("x")
+
+    registered = register_function(
+        "test_forward_reference",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_missing_dependency", (IdentifierExpression(x),)),
+    )
+
+    assert registered.name == "test_forward_reference"
+    assert is_entry_registered("test_forward_reference") is True
+
+
+def test_register_function_accepts_a_body_whose_forward_reference_is_incompatible(
+    function_registry_snapshot: None,
+) -> None:
+    """Test registration ignores a body that its eventual callee will contradict.
+
+    ``test_forward_reference_incompatible`` declares an INT result sort
+    but its body compares a call result against a literal, which
+    synthesizes BOOL. Registration stores it anyway -- it never
+    type-checks bodies -- and the sweep is what rejects it.
+    """
+    x = Identifier("x")
+
+    register_function(
+        "test_forward_reference_incompatible",
+        parameters=[x],
+        parameter_sorts=[FunctionSort.INT],
+        result_sort=FunctionSort.INT,
+        body=CallExpression("test_missing_dependency", (IdentifierExpression(x),)) < 5,
+    )
+
+    assert is_entry_registered("test_forward_reference_incompatible") is True
+
+
+# =============================================================================
+# Built-in constants registered at import time
+# =============================================================================
+
+
+def test_pi_is_registered_at_import_time() -> None:
+    """Test the ``pi`` constant is in the registry at package-import time."""
+    assert is_entry_registered("pi") is True
+
+
+def test_pi_lookup_returns_a_native_constant() -> None:
+    """Test looking up ``pi`` returns a ``NativeConstant`` carrying ``math.pi``."""
+    fetched = get_registered_entry("pi")
+
+    assert isinstance(fetched, NativeConstant)
+    assert fetched.value == math.pi
+
+
+def test_builtin_constants_mapping_covers_seeded_constants() -> None:
+    """Test ``BUILTIN_CONSTANTS`` exposes the canonical seeded constants."""
+    assert set(BUILTIN_CONSTANTS.keys()) >= {"pi", "e", "inf", "nan"}
+
+
+# =============================================================================
+# Canonical constant identifiers
+# =============================================================================
+
+
+def test_get_native_constant_identifier_is_stable_across_calls() -> None:
+    """Test a constant's canonical identifier does not change between lookups."""
+    first = get_native_constant_identifier("pi")
+    second = get_native_constant_identifier("pi")
+
+    assert first == second
+    assert first.name_hint == "pi"
+
+
+@pytest.mark.parametrize("constant_name", ["pi", "e", "inf", "nan"])
+def test_each_seeded_constant_owns_a_distinct_identifier(constant_name: str) -> None:
+    """Test each seeded constant resolves back to its own entry by identity."""
+    identifier = get_native_constant_identifier(constant_name)
+
+    entry = try_get_native_constant_for_identifier(identifier)
+
+    assert entry is get_registered_entry(constant_name)
+
+
+def test_get_native_constant_identifier_raises_for_an_unregistered_name() -> None:
+    """Test asking for an unregistered constant's identifier raises."""
+    with pytest.raises(EntryLookupError, match="test_const_never_registered"):
+        get_native_constant_identifier("test_const_never_registered")
+
+
+def test_get_native_constant_identifier_raises_for_a_function_name() -> None:
+    """Test a registered function's name has no canonical constant identifier."""
+    with pytest.raises(EntryLookupError, match="sqrt"):
+        get_native_constant_identifier("sqrt")
+
+
+def test_register_native_constant_mints_an_identifier_for_the_new_constant(
+    function_registry_snapshot: None,
+) -> None:
+    """Test registering a constant makes its canonical identifier available."""
+    registered = register_native_constant(
+        "test_const_identity", sort=FunctionSort.REAL, value=1.5
+    )
+
+    identifier = get_native_constant_identifier("test_const_identity")
+
+    assert identifier.name_hint == "test_const_identity"
+    assert try_get_native_constant_for_identifier(identifier) is registered
+
+
+def test_try_get_native_constant_for_identifier_rejects_a_same_named_identifier() -> (
+    None
+):
+    """Test an identifier that merely shares a constant's name resolves to nothing."""
+    lookalike = Identifier("pi")
+
+    assert try_get_native_constant_for_identifier(lookalike) is None
+
+
+def test_try_get_native_constant_for_identifier_rejects_a_function_named_identifier() -> (  # noqa: E501
+    None
+):
+    """Test an identifier named after a registered function resolves to nothing."""
+    function_lookalike = Identifier("sqrt")
+
+    assert try_get_native_constant_for_identifier(function_lookalike) is None
+
+
+def test_restoring_a_registry_snapshot_drops_identifiers_it_does_not_carry(
+    function_registry_snapshot: None,
+) -> None:
+    """Test a constant registered inside a snapshotted test stops resolving after it.
+
+    ``function_registry_snapshot`` restores the pre-test registry, and
+    the canonical identifiers are pruned with it, so a constant
+    registered here leaves nothing behind that a later test could still
+    resolve.
+    """
+    snapshot = dict(get_registered_entries())
+    register_native_constant("test_const_pruned", sort=FunctionSort.REAL, value=2.0)
+    identifier = get_native_constant_identifier("test_const_pruned")
+
+    set_function_registry_state(snapshot)
+
+    assert try_get_native_constant_for_identifier(identifier) is None
+    with pytest.raises(EntryLookupError, match="test_const_pruned"):
+        get_native_constant_identifier("test_const_pruned")
+
+
+# =============================================================================
+# Pinned built-in constant ids
+# =============================================================================
+
+# The built-in constants hold fixed ids from the reserved block, as the
+# shipped tags do, so they draw nothing from the counter and are the same in
+# every process, whatever it did first.
+_PINNED_BUILTIN_CONSTANT_IDS = {"pi": 48, "e": 49, "inf": 50, "nan": 51}
+
+
+def test_builtin_constants_keep_their_pinned_canonical_ids() -> None:
+    """Test the built-in constants keep the ids a serialized reference resolves by.
+
+    The ids are the reserved table's, so a wire form naming a constant
+    resolves to it in any process; a constant's name hint is its name.
+    """
+    ids = {
+        name: get_native_constant_identifier(name).id
+        for name in _PINNED_BUILTIN_CONSTANT_IDS
+    }
+
+    assert ids == _PINNED_BUILTIN_CONSTANT_IDS
+    assert all(
+        get_native_constant_identifier(name).name_hint == name
+        for name in _PINNED_BUILTIN_CONSTANT_IDS
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_builtin_constants_keep_their_pinned_canonical_ids_in_a_fresh_interpreter() -> (
+    None
+):
+    """Test the pinned canonical ids hold from a clean process start.
+
+    Earlier tests in this process may have drawn ids from the counter; a
+    fresh interpreter shows the ids a real deserializing process sees,
+    which are the reserved ones whatever the process did first.
+    """
+    names = tuple(_PINNED_BUILTIN_CONSTANT_IDS)
+    output = subprocess.check_output(
+        [
+            sys.executable,
+            "-c",
+            "import fhy_core.symbolic.expression as expression\n"
+            f"names = {names!r}\n"
+            "print(' '.join("
+            "str(expression.get_native_constant_identifier(name).id) "
+            "for name in names))",
+        ],
+        text=True,
+    ).strip()
+
+    ids = dict(zip(names, (int(part) for part in output.split()), strict=True))
+
+    assert ids == _PINNED_BUILTIN_CONSTANT_IDS

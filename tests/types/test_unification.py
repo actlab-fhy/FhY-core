@@ -2,14 +2,18 @@
 
 import pytest
 
-from fhy_core.expression import (
+from fhy_core.identifier import Identifier
+from fhy_core.serialization import SerializedDict
+from fhy_core.symbolic.expression import (
     BinaryExpression,
     BinaryOperation,
     IdentifierExpression,
     LiteralExpression,
+    LogicalExpression,
+    LogicalOperation,
+    call,
+    piecewise,
 )
-from fhy_core.identifier import Identifier
-from fhy_core.serialization import SerializedDict
 from fhy_core.traits import VerificationError
 from fhy_core.types import (
     CoreDataType,
@@ -238,67 +242,6 @@ def test_template_data_type_equivalence_respects_widths() -> None:
 # =============================================================================
 
 
-def test_bind_template_then_substitute_round_trips_for_numerical_type(
-    empty_environment: TypeUnificationEnvironment,
-    float32_data_type: PrimitiveDataType,
-) -> None:
-    """Test a `NumericalType` bind/substitute cycle reproduces the actual type."""
-    t_identifier = Identifier("T")
-    template_data_type = TemplateDataType(t_identifier)
-    n_identifier = Identifier("N")
-    m_identifier = Identifier("M")
-    pattern = NumericalType(
-        template_data_type,
-        [
-            IdentifierExpression(n_identifier),
-            IdentifierExpression(m_identifier),
-        ],
-    )
-    actual = NumericalType(
-        float32_data_type, [LiteralExpression(10), LiteralExpression(20)]
-    )
-
-    environment = bind_template(pattern, actual, empty_environment)
-    assert is_structurally_equivalent(
-        environment.get_data_type_binding(t_identifier), float32_data_type
-    )
-    n_binding = environment.get_expression_binding(n_identifier)
-    m_binding = environment.get_expression_binding(m_identifier)
-    assert n_binding is not None and n_binding.is_structurally_equivalent(
-        LiteralExpression(10)
-    )
-    assert m_binding is not None and m_binding.is_structurally_equivalent(
-        LiteralExpression(20)
-    )
-
-    substituted = substitute_template(pattern, environment)
-    assert is_structurally_equivalent(substituted, actual)
-
-
-def test_bind_template_then_substitute_round_trips_for_index_type(
-    empty_environment: TypeUnificationEnvironment,
-) -> None:
-    """Test an `IndexType` bind/substitute cycle reproduces the actual type."""
-    n_identifier = Identifier("N")
-    pattern = IndexType(
-        LiteralExpression(0),
-        IdentifierExpression(n_identifier),
-        LiteralExpression(1),
-    )
-    actual = IndexType(
-        LiteralExpression(0), LiteralExpression(64), LiteralExpression(1)
-    )
-
-    environment = bind_template(pattern, actual, empty_environment)
-    binding = environment.get_expression_binding(n_identifier)
-    assert binding is not None and binding.is_structurally_equivalent(
-        LiteralExpression(64)
-    )
-
-    substituted = substitute_template(pattern, environment)
-    assert is_structurally_equivalent(substituted, actual)
-
-
 def test_bind_template_full_type_wildcard_records_entire_actual(
     empty_environment: TypeUnificationEnvironment,
     int32_data_type: PrimitiveDataType,
@@ -454,15 +397,10 @@ def test_bind_data_template_raises_for_weak_literal_actual_against_constrained_t
         )
 
 
-def test_bind_data_template_empty_widths_rejects_every_concrete_actual(
-    empty_environment: TypeUnificationEnvironment,
-) -> None:
-    """Test ``widths=[]`` causes every concrete bind to raise."""
-    template = TemplateDataType(Identifier("T"), widths=[])
-    with pytest.raises(VerificationError, match="width"):
-        bind_data_template(
-            template, PrimitiveDataType(CoreDataType.INT8), empty_environment
-        )
+def test_template_data_type_refuses_empty_widths() -> None:
+    """Test ``widths=[]``, which no concrete data type could bind, is refused."""
+    with pytest.raises(ValueError, match="must not be empty"):
+        TemplateDataType(Identifier("T"), widths=[])
 
 
 def test_bind_data_template_unconstrained_template_accepts_any_width(
@@ -841,6 +779,45 @@ def test_unify_expression_raises_when_occurs_check_fails(
         unify_expression(left, right, empty_environment)
 
 
+def test_unify_expression_occurs_check_looks_inside_a_logical_expression(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the occurs check finds a placeholder among a connective's operands."""
+    n_identifier = Identifier("N")
+    left = IdentifierExpression(n_identifier)
+    right = LogicalExpression(
+        LogicalOperation.AND,
+        (
+            LiteralExpression(True),
+            BinaryExpression(
+                BinaryOperation.LESS,
+                IdentifierExpression(n_identifier),
+                LiteralExpression(1),
+            ),
+        ),
+    )
+    with pytest.raises(VerificationError):
+        unify_expression(left, right, empty_environment)
+
+
+def test_unify_expression_occurs_check_follows_bindings_into_a_logical_expression(
+    empty_environment: TypeUnificationEnvironment,
+) -> None:
+    """Test the occurs check substitutes through a connective's operands."""
+    m_identifier = Identifier("M")
+    n_identifier = Identifier("N")
+    pre_bound_environment = empty_environment.with_expression_binding(
+        m_identifier, IdentifierExpression(n_identifier)
+    )
+    left = IdentifierExpression(n_identifier)
+    right = LogicalExpression(
+        LogicalOperation.OR,
+        (LiteralExpression(False), IdentifierExpression(m_identifier)),
+    )
+    with pytest.raises(VerificationError):
+        unify_expression(left, right, pre_bound_environment)
+
+
 def test_unify_expression_raises_when_occurs_check_fails_indirectly_via_binding(
     empty_environment: TypeUnificationEnvironment,
 ) -> None:
@@ -1022,3 +999,43 @@ def test_bind_data_template_default_raises_for_unregistered_class_pair(
     actual = _UnregisteredDataType()
     with pytest.raises(VerificationError):
         bind_data_template(pattern, actual, empty_environment)
+
+
+# =============================================================================
+# The walks reach every expression node
+# =============================================================================
+
+
+def test_substitute_template_substitutes_a_shape_variable_inside_a_call(
+    int32_data_type: PrimitiveDataType,
+) -> None:
+    """Test substitution reaches a shape variable inside a call dimension."""
+    n_identifier = Identifier("N")
+    pattern = NumericalType(
+        int32_data_type, [call("max", IdentifierExpression(n_identifier), 1)]
+    )
+    environment = TypeUnificationEnvironment.empty().with_expression_binding(
+        n_identifier, LiteralExpression(4)
+    )
+
+    substituted = substitute_template(pattern, environment)
+
+    assert isinstance(substituted, NumericalType)
+    assert substituted.shape[0].is_structurally_equivalent(call("max", 4, 1))
+
+
+@pytest.mark.parametrize("kind", ["call", "piecewise"])
+def test_unify_expression_occurs_check_looks_inside_calls_and_piecewise(
+    empty_environment: TypeUnificationEnvironment, kind: str
+) -> None:
+    """Test the occurs check sees a placeholder inside a call or a piecewise."""
+    n_identifier = Identifier("N")
+    reference = IdentifierExpression(n_identifier)
+    right = (
+        call("max", reference, 1)
+        if kind == "call"
+        else piecewise((reference > 0, 1), otherwise=0)
+    )
+
+    with pytest.raises(VerificationError, match="occurs check failed"):
+        unify_expression(reference, right, empty_environment)

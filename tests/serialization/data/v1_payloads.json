@@ -1,0 +1,1143 @@
+{
+ "binary_expression": {
+  "__data__": {
+   "left": {
+    "__data__": {
+     "identifier": {
+      "id": 61000,
+      "name_hint": "x"
+     }
+    },
+    "__type__": "identifier_expression"
+   },
+   "operation": "floor_divide",
+   "right": {
+    "__data__": {
+     "value": 3
+    },
+    "__type__": "literal_expression"
+   }
+  },
+  "__type__": "binary_expression"
+ },
+ "call_expression": {
+  "__data__": {
+   "arguments": [
+    {
+     "__data__": {
+      "identifier": {
+       "id": 61000,
+       "name_hint": "x"
+      }
+     },
+     "__type__": "identifier_expression"
+    },
+    {
+     "__data__": {
+      "identifier": {
+       "id": 61001,
+       "name_hint": "y"
+      }
+     },
+     "__type__": "identifier_expression"
+    }
+   ],
+   "function_name": "max"
+  },
+  "__type__": "call_expression"
+ },
+ "categorical_domain": {
+  "__data__": {
+   "categories": [
+    {
+     "__data__": "a",
+     "__type__": "builtins.str"
+    },
+    {
+     "__data__": "b",
+     "__type__": "builtins.str"
+    }
+   ]
+  },
+  "__type__": "categorical_domain"
+ },
+ "constraint_system": {
+  "__data__": {
+   "constraints": [
+    {
+     "__data__": {
+      "expression": {
+       "__data__": {
+        "left": {
+         "__data__": {
+          "identifier": {
+           "id": 61000,
+           "name_hint": "x"
+          }
+         },
+         "__type__": "identifier_expression"
+        },
+        "operation": "greater",
+        "right": {
+         "__data__": {
+          "value": 0
+         },
+         "__type__": "literal_expression"
+        }
+       },
+       "__type__": "binary_expression"
+      }
+     },
+     "__type__": "equation_constraint"
+    },
+    {
+     "__data__": {
+      "values": [
+       {
+        "__data__": 1,
+        "__type__": "builtins.int"
+       },
+       {
+        "__data__": 2,
+        "__type__": "builtins.int"
+       }
+      ],
+      "variable": {
+       "id": 61000,
+       "name_hint": "x"
+      }
+     },
+     "__type__": "in_set_constraint"
+    },
+    {
+     "__data__": {
+      "values": [
+       {
+        "__data__": 3,
+        "__type__": "builtins.int"
+       }
+      ],
+      "variable": {
+       "id": 61001,
+       "name_hint": "y"
+      }
+     },
+     "__type__": "not_in_set_constraint"
+    }
+   ]
+  },
+  "__type__": "constraint_system"
+ },
+ "equation_constraint": {
+  "__data__": {
+   "expression": {
+    "__data__": {
+     "left": {
+      "__data__": {
+       "identifier": {
+        "id": 61000,
+        "name_hint": "x"
+       }
+      },
+      "__type__": "identifier_expression"
+     },
+     "operation": "greater",
+     "right": {
+      "__data__": {
+       "value": 0
+      },
+      "__type__": "literal_expression"
+     }
+    },
+    "__type__": "binary_expression"
+   }
+  },
+  "__type__": "equation_constraint"
+ },
+ "function_frame": {
+  "__data__": {
+   "keyword": "proc",
+   "name": {
+    "id": 61004,
+    "name_hint": "f"
+   },
+   "signature": [
+    {
+     "type": {
+      "__data__": {
+       "data_type": {
+        "__data__": {
+         "core_data_type": "int32"
+        },
+        "__type__": "primitive_data_type"
+       },
+       "shape": []
+      },
+      "__type__": "numerical_type"
+     },
+     "type_qualifier": "input"
+    },
+    {
+     "type": {
+      "__data__": {
+       "data_type": {
+        "__data__": {
+         "core_data_type": "int32"
+        },
+        "__type__": "primitive_data_type"
+       },
+       "shape": []
+      },
+      "__type__": "numerical_type"
+     },
+     "type_qualifier": "output"
+    }
+   ]
+  },
+  "__type__": "function_symbol_table_frame"
+ },
+ "identifier": {
+  "id": 61000,
+  "name_hint": "x"
+ },
+ "identifier_expression": {
+  "__data__": {
+   "identifier": {
+    "id": 61000,
+    "name_hint": "x"
+   }
+  },
+  "__type__": "identifier_expression"
+ },
+ "import_frame": {
+  "__data__": {
+   "name": {
+    "id": 61004,
+    "name_hint": "f"
+   }
+  },
+  "__type__": "import_symbol_table_frame"
+ },
+ "in_set_constraint": {
+  "__data__": {
+   "values": [
+    {
+     "__data__": true,
+     "__type__": "builtins.bool"
+    },
+    {
+     "__data__": 2.5,
+     "__type__": "builtins.float"
+    },
+    {
+     "__data__": [
+      {
+       "__data__": 3,
+       "__type__": "builtins.int"
+      },
+      {
+       "__data__": 4,
+       "__type__": "builtins.int"
+      }
+     ],
+     "__type__": "builtins.frozenset"
+    },
+    {
+     "__data__": 1,
+     "__type__": "builtins.int"
+    },
+    {
+     "__data__": "a",
+     "__type__": "builtins.str"
+    },
+    {
+     "__data__": [
+      {
+       "__data__": 1,
+       "__type__": "builtins.int"
+      },
+      {
+       "__data__": 2,
+       "__type__": "builtins.int"
+      }
+     ],
+     "__type__": "builtins.tuple"
+    }
+   ],
+   "variable": {
+    "id": 61000,
+    "name_hint": "x"
+   }
+  },
+  "__type__": "in_set_constraint"
+ },
+ "index_type": {
+  "__data__": {
+   "lower_bound": {
+    "__data__": {
+     "value": 0
+    },
+    "__type__": "literal_expression"
+   },
+   "stride": {
+    "__data__": {
+     "value": 2
+    },
+    "__type__": "literal_expression"
+   },
+   "upper_bound": {
+    "__data__": {
+     "identifier": {
+      "id": 61002,
+      "name_hint": "N"
+     }
+    },
+    "__type__": "identifier_expression"
+   }
+  },
+  "__type__": "index_type"
+ },
+ "integer_domain": {
+  "__data__": {
+   "non_negative": false,
+   "zero_included": true
+  },
+  "__type__": "integer_domain"
+ },
+ "interval_integer_domain": {
+  "__data__": {
+   "non_negative": false,
+   "prefer_inclusive": true,
+   "zero_included": true
+  },
+  "__type__": "interval_integer_domain"
+ },
+ "literal_big_int": {
+  "__data__": {
+   "value": 1267650600228229401496703205376
+  },
+  "__type__": "literal_expression"
+ },
+ "literal_bool": {
+  "__data__": {
+   "value": true
+  },
+  "__type__": "literal_expression"
+ },
+ "literal_decimal": {
+  "__data__": {
+   "value": "1.25"
+  },
+  "__type__": "literal_expression"
+ },
+ "literal_decimal_integral": {
+  "__data__": {
+   "value": "100.0"
+  },
+  "__type__": "literal_expression"
+ },
+ "literal_float": {
+  "__data__": {
+   "value": 1.5
+  },
+  "__type__": "literal_expression"
+ },
+ "literal_float_integral": {
+  "__data__": {
+   "value": 2.0
+  },
+  "__type__": "literal_expression"
+ },
+ "literal_float_tiny": {
+  "__data__": {
+   "value": 5e-324
+  },
+  "__type__": "literal_expression"
+ },
+ "literal_int": {
+  "__data__": {
+   "value": 7
+  },
+  "__type__": "literal_expression"
+ },
+ "literal_negative_int": {
+  "__data__": {
+   "value": -12
+  },
+  "__type__": "literal_expression"
+ },
+ "logical_expression": {
+  "__data__": {
+   "operands": [
+    {
+     "__data__": {
+      "left": {
+       "__data__": {
+        "identifier": {
+         "id": 61000,
+         "name_hint": "x"
+        }
+       },
+       "__type__": "identifier_expression"
+      },
+      "operation": "greater",
+      "right": {
+       "__data__": {
+        "value": 0
+       },
+       "__type__": "literal_expression"
+      }
+     },
+     "__type__": "binary_expression"
+    },
+    {
+     "__data__": {
+      "value": true
+     },
+     "__type__": "literal_expression"
+    },
+    {
+     "__data__": {
+      "value": false
+     },
+     "__type__": "literal_expression"
+    }
+   ],
+   "operation": "or"
+  },
+  "__type__": "logical_expression"
+ },
+ "natural_domain": {
+  "__data__": {
+   "non_negative": true,
+   "zero_included": false
+  },
+  "__type__": "integer_domain"
+ },
+ "not_in_set_constraint": {
+  "__data__": {
+   "values": [
+    {
+     "__data__": 3,
+     "__type__": "builtins.int"
+    }
+   ],
+   "variable": {
+    "id": 61000,
+    "name_hint": "x"
+   }
+  },
+  "__type__": "not_in_set_constraint"
+ },
+ "note": {
+  "kind": {
+   "description": "Uncategorized note.",
+   "name": {
+    "id": 3,
+    "name_hint": "other"
+   }
+  },
+  "message": "hello"
+ },
+ "note_kind": {
+  "description": "Uncategorized note.",
+  "name": {
+   "id": 3,
+   "name_hint": "other"
+  }
+ },
+ "numerical_type": {
+  "__data__": {
+   "data_type": {
+    "__data__": {
+     "core_data_type": "int32"
+    },
+    "__type__": "primitive_data_type"
+   },
+   "shape": [
+    {
+     "__data__": {
+      "value": 4
+     },
+     "__type__": "literal_expression"
+    },
+    {
+     "__data__": {
+      "identifier": {
+       "id": 61002,
+       "name_hint": "N"
+      }
+     },
+     "__type__": "identifier_expression"
+    }
+   ]
+  },
+  "__type__": "numerical_type"
+ },
+ "numerical_type_ellipsis": {
+  "__data__": {
+   "data_type": {
+    "__data__": {
+     "data_type": {
+      "id": 61003,
+      "name_hint": "T"
+     },
+     "widths": null
+    },
+    "__type__": "template_data_type"
+   },
+   "shape": [
+    {
+     "__data__": {
+      "value": 2
+     },
+     "__type__": "literal_expression"
+    },
+    {
+     "__data__": {},
+     "__type__": "__numerical_type_shape_ellipsis__"
+    }
+   ]
+  },
+  "__type__": "numerical_type"
+ },
+ "numerical_type_scalar": {
+  "__data__": {
+   "data_type": {
+    "__data__": {
+     "core_data_type": "int32"
+    },
+    "__type__": "primitive_data_type"
+   },
+   "shape": []
+  },
+  "__type__": "numerical_type"
+ },
+ "numerical_type_wildcard": {
+  "__data__": {
+   "data_type": {
+    "__data__": {
+     "core_data_type": "int32"
+    },
+    "__type__": "primitive_data_type"
+   },
+   "shape": [
+    {
+     "__data__": {},
+     "__type__": "__numerical_type_shape_ellipsis__"
+    }
+   ]
+  },
+  "__type__": "numerical_type"
+ },
+ "op_attribute": {
+  "description": "Op output is invariant under operand swap.",
+  "name": {
+   "id": 16,
+   "name_hint": "commutative"
+  }
+ },
+ "ordinal_domain": {
+  "__data__": {
+   "sorted_values": [
+    {
+     "__data__": 1,
+     "__type__": "builtins.int"
+    },
+    {
+     "__data__": 2.5,
+     "__type__": "builtins.float"
+    },
+    {
+     "__data__": 3,
+     "__type__": "builtins.int"
+    }
+   ]
+  },
+  "__type__": "ordinal_domain"
+ },
+ "param": {
+  "constraint_system": {
+   "__data__": {
+    "constraints": []
+   },
+   "__type__": "constraint_system"
+  },
+  "domain": {
+   "__data__": {
+    "non_negative": false,
+    "zero_included": true
+   },
+   "__type__": "integer_domain"
+  },
+  "variable": {
+   "id": 61007,
+   "name_hint": "p"
+  }
+ },
+ "param_assignment": {
+  "param": {
+   "constraint_system": {
+    "__data__": {
+     "constraints": []
+    },
+    "__type__": "constraint_system"
+   },
+   "domain": {
+    "__data__": {
+     "non_negative": false,
+     "zero_included": true
+    },
+    "__type__": "integer_domain"
+   },
+   "variable": {
+    "id": 61007,
+    "name_hint": "p"
+   }
+  },
+  "value": {
+   "__data__": 5,
+   "__type__": "builtins.int"
+  }
+ },
+ "param_ordinal": {
+  "constraint_system": {
+   "__data__": {
+    "constraints": []
+   },
+   "__type__": "constraint_system"
+  },
+  "domain": {
+   "__data__": {
+    "sorted_values": [
+     {
+      "__data__": 1,
+      "__type__": "builtins.int"
+     },
+     {
+      "__data__": 2,
+      "__type__": "builtins.int"
+     },
+     {
+      "__data__": 3,
+      "__type__": "builtins.int"
+     }
+    ]
+   },
+   "__type__": "ordinal_domain"
+  },
+  "variable": {
+   "id": 61008,
+   "name_hint": "o"
+  }
+ },
+ "permutation_domain": {
+  "__data__": {
+   "ordered_members": [
+    {
+     "__data__": "n",
+     "__type__": "builtins.str"
+    },
+    {
+     "__data__": "c",
+     "__type__": "builtins.str"
+    },
+    {
+     "__data__": "h",
+     "__type__": "builtins.str"
+    },
+    {
+     "__data__": "w",
+     "__type__": "builtins.str"
+    }
+   ]
+  },
+  "__type__": "permutation_domain"
+ },
+ "piecewise_expression": {
+  "__data__": {
+   "conditions": [
+    {
+     "__data__": {
+      "left": {
+       "__data__": {
+        "identifier": {
+         "id": 61000,
+         "name_hint": "x"
+        }
+       },
+       "__type__": "identifier_expression"
+      },
+      "operation": "greater",
+      "right": {
+       "__data__": {
+        "value": 0
+       },
+       "__type__": "literal_expression"
+      }
+     },
+     "__type__": "binary_expression"
+    },
+    {
+     "__data__": {
+      "left": {
+       "__data__": {
+        "identifier": {
+         "id": 61000,
+         "name_hint": "x"
+        }
+       },
+       "__type__": "identifier_expression"
+      },
+      "operation": "less",
+      "right": {
+       "__data__": {
+        "value": -5
+       },
+       "__type__": "literal_expression"
+      }
+     },
+     "__type__": "binary_expression"
+    }
+   ],
+   "otherwise": {
+    "__data__": {
+     "value": 0
+    },
+    "__type__": "literal_expression"
+   },
+   "values": [
+    {
+     "__data__": {
+      "value": 1
+     },
+     "__type__": "literal_expression"
+    },
+    {
+     "__data__": {
+      "value": 2
+     },
+     "__type__": "literal_expression"
+    }
+   ]
+  },
+  "__type__": "piecewise_expression"
+ },
+ "position": {
+  "column": 8,
+  "line": 2
+ },
+ "primitive_data_type": {
+  "__data__": {
+   "core_data_type": "int32"
+  },
+  "__type__": "primitive_data_type"
+ },
+ "provenance_call_site": {
+  "__data__": {
+   "callee": {
+    "__data__": {
+     "file_path": "src/a.fhy",
+     "span": {
+      "end_offset": 3,
+      "end_position": {
+       "column": 4,
+       "line": 1
+      },
+      "start_offset": 0,
+      "start_position": {
+       "column": 1,
+       "line": 1
+      }
+     }
+    },
+    "__type__": "provenance.file"
+   },
+   "caller": {
+    "__data__": {},
+    "__type__": "provenance.unknown"
+   }
+  },
+  "__type__": "provenance.call_site"
+ },
+ "provenance_file": {
+  "__data__": {
+   "file_path": "src/a.fhy",
+   "span": {
+    "end_offset": 3,
+    "end_position": {
+     "column": 4,
+     "line": 1
+    },
+    "start_offset": 0,
+    "start_position": {
+     "column": 1,
+     "line": 1
+    }
+   }
+  },
+  "__type__": "provenance.file"
+ },
+ "provenance_file_no_span": {
+  "__data__": {
+   "file_path": "b.fhy",
+   "span": null
+  },
+  "__type__": "provenance.file"
+ },
+ "provenance_fused": {
+  "__data__": {
+   "metadata": "fuse",
+   "sources": [
+    {
+     "__data__": {
+      "file_path": "src/a.fhy",
+      "span": {
+       "end_offset": 3,
+       "end_position": {
+        "column": 4,
+        "line": 1
+       },
+       "start_offset": 0,
+       "start_position": {
+        "column": 1,
+        "line": 1
+       }
+      }
+     },
+     "__type__": "provenance.file"
+    },
+    {
+     "__data__": {
+      "file_path": "c.fhy",
+      "span": null
+     },
+     "__type__": "provenance.file"
+    }
+   ]
+  },
+  "__type__": "provenance.fused"
+ },
+ "provenance_fused_unlabelled": {
+  "__data__": {
+   "metadata": null,
+   "sources": [
+    {
+     "__data__": {
+      "file_path": "src/a.fhy",
+      "span": {
+       "end_offset": 3,
+       "end_position": {
+        "column": 4,
+        "line": 1
+       },
+       "start_offset": 0,
+       "start_position": {
+        "column": 1,
+        "line": 1
+       }
+      }
+     },
+     "__type__": "provenance.file"
+    },
+    {
+     "__data__": {
+      "file_path": "c.fhy",
+      "span": null
+     },
+     "__type__": "provenance.file"
+    }
+   ]
+  },
+  "__type__": "provenance.fused"
+ },
+ "provenance_named": {
+  "__data__": {
+   "child": {
+    "__data__": {
+     "file_path": "src/a.fhy",
+     "span": {
+      "end_offset": 3,
+      "end_position": {
+       "column": 4,
+       "line": 1
+      },
+      "start_offset": 0,
+      "start_position": {
+       "column": 1,
+       "line": 1
+      }
+     }
+    },
+    "__type__": "provenance.file"
+   },
+   "name": "lib"
+  },
+  "__type__": "provenance.named"
+ },
+ "provenance_unknown": {
+  "__data__": {},
+  "__type__": "provenance.unknown"
+ },
+ "real_domain": {
+  "__data__": {},
+  "__type__": "real_domain"
+ },
+ "shared_subtree": {
+  "__data__": {
+   "left": {
+    "__data__": {
+     "left": {
+      "__data__": {
+       "identifier": {
+        "id": 61000,
+        "name_hint": "x"
+       }
+      },
+      "__type__": "identifier_expression"
+     },
+     "operation": "add",
+     "right": {
+      "__data__": {
+       "value": 1
+      },
+      "__type__": "literal_expression"
+     }
+    },
+    "__type__": "binary_expression"
+   },
+   "operation": "multiply",
+   "right": {
+    "__data__": {
+     "left": {
+      "__data__": {
+       "identifier": {
+        "id": 61000,
+        "name_hint": "x"
+       }
+      },
+      "__type__": "identifier_expression"
+     },
+     "operation": "add",
+     "right": {
+      "__data__": {
+       "value": 1
+      },
+      "__type__": "literal_expression"
+     }
+    },
+    "__type__": "binary_expression"
+   }
+  },
+  "__type__": "binary_expression"
+ },
+ "span": {
+  "end_offset": 3,
+  "end_position": {
+   "column": 4,
+   "line": 1
+  },
+  "start_offset": 0,
+  "start_position": {
+   "column": 1,
+   "line": 1
+  }
+ },
+ "span_unknown": {
+  "end_offset": null,
+  "end_position": null,
+  "start_offset": null,
+  "start_position": null
+ },
+ "symbol_table": {
+  "namespaces": [
+   {
+    "namespace_name": {
+     "id": 61005,
+     "name_hint": "ns"
+    },
+    "parent_namespace_name": null,
+    "symbols": [
+     {
+      "frame": {
+       "__data__": {
+        "name": {
+         "id": 61000,
+         "name_hint": "x"
+        },
+        "type": {
+         "__data__": {
+          "data_type": {
+           "__data__": {
+            "core_data_type": "int32"
+           },
+           "__type__": "primitive_data_type"
+          },
+          "shape": []
+         },
+         "__type__": "numerical_type"
+        },
+        "type_qualifier": "state"
+       },
+       "__type__": "variable_symbol_table_frame"
+      },
+      "symbol_name": {
+       "id": 61000,
+       "name_hint": "x"
+      }
+     },
+     {
+      "frame": {
+       "__data__": {
+        "keyword": "proc",
+        "name": {
+         "id": 61004,
+         "name_hint": "f"
+        },
+        "signature": [
+         {
+          "type": {
+           "__data__": {
+            "data_type": {
+             "__data__": {
+              "core_data_type": "int32"
+             },
+             "__type__": "primitive_data_type"
+            },
+            "shape": []
+           },
+           "__type__": "numerical_type"
+          },
+          "type_qualifier": "input"
+         },
+         {
+          "type": {
+           "__data__": {
+            "data_type": {
+             "__data__": {
+              "core_data_type": "int32"
+             },
+             "__type__": "primitive_data_type"
+            },
+            "shape": []
+           },
+           "__type__": "numerical_type"
+          },
+          "type_qualifier": "output"
+         }
+        ]
+       },
+       "__type__": "function_symbol_table_frame"
+      },
+      "symbol_name": {
+       "id": 61004,
+       "name_hint": "f"
+      }
+     }
+    ]
+   },
+   {
+    "namespace_name": {
+     "id": 61006,
+     "name_hint": "child"
+    },
+    "parent_namespace_name": {
+     "id": 61005,
+     "name_hint": "ns"
+    },
+    "symbols": [
+     {
+      "frame": {
+       "__data__": {
+        "name": {
+         "id": 61001,
+         "name_hint": "y"
+        }
+       },
+       "__type__": "import_symbol_table_frame"
+      },
+      "symbol_name": {
+       "id": 61001,
+       "name_hint": "y"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "template_data_type": {
+  "__data__": {
+   "data_type": {
+    "id": 61003,
+    "name_hint": "T"
+   },
+   "widths": null
+  },
+  "__type__": "template_data_type"
+ },
+ "template_data_type_widths": {
+  "__data__": {
+   "data_type": {
+    "id": 61003,
+    "name_hint": "T"
+   },
+   "widths": [
+    16,
+    32
+   ]
+  },
+  "__type__": "template_data_type"
+ },
+ "unary_expression": {
+  "__data__": {
+   "operand": {
+    "__data__": {
+     "identifier": {
+      "id": 61000,
+      "name_hint": "x"
+     }
+    },
+    "__type__": "identifier_expression"
+   },
+   "operation": "negate"
+  },
+  "__type__": "unary_expression"
+ },
+ "value_domain": {
+  "description": "a child",
+  "name": {
+   "id": 61010,
+   "name_hint": "frozen_domain"
+  },
+  "parent": {
+   "description": "Concrete data values flowing through the IR.",
+   "name": {
+    "id": 32,
+    "name_hint": "data"
+   },
+   "parent": null
+  }
+ },
+ "variable_frame": {
+  "__data__": {
+   "name": {
+    "id": 61000,
+    "name_hint": "x"
+   },
+   "type": {
+    "__data__": {
+     "data_type": {
+      "__data__": {
+       "core_data_type": "int32"
+      },
+      "__type__": "primitive_data_type"
+     },
+     "shape": []
+    },
+    "__type__": "numerical_type"
+   },
+   "type_qualifier": "input"
+  },
+  "__type__": "variable_symbol_table_frame"
+ }
+}

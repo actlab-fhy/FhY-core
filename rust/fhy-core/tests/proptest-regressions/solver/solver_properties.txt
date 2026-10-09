@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 237c668f4bac9070971ad7afe2f45a1f1a6a909cdacf662f81889ed920697e61 # shrinks to generated = Not(Compare(Equal, Multiply(X, FloorMod(Literal(0), 1)), X))
+cc b571a28d6e9f2b5ef43c39c3ff61af84fff175442c761c2192c911abc7b8018c # shrinks to left = Expression(0), right = Expression((multiply (floor_divide 0 -1) (add 0 0))), operation = Less
+cc ba2036baf9ec0804e91f8f00aee17352f97f8c28fc90bb8096cf864abaf02679 # shrinks to antecedent = Not(Compare(Equal, Multiply(FloorDivide(Negate(Literal(0)), 1), X), Negate(X))), consequent = And(Compare(Equal, X, Add(X, Multiply(X, Literal(0)))), Compare(Equal, FloorMod(FloorDivide(Literal(3), 3), 2), FloorMod(FloorDivide(Literal(3), 2), 2)))

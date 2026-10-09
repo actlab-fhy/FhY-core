@@ -1,16 +1,18 @@
 # mypy: disable-error-code="misc"
 """Tests the basic compiler traits."""
 
+import copy
 import datetime
 import decimal
 import enum
 import fractions
 import pathlib
+import pickle
 import re
 from abc import abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Annotated, ClassVar, Final
+from typing import Annotated, ClassVar, Final, Self
 
 import pytest
 from immutabledict import immutabledict
@@ -22,8 +24,9 @@ from fhy_core.diagnostic import (
     ValidationFailedError,
     ValidationReport,
 )
-from fhy_core.identifier import Identifier
-from fhy_core.provenance import Provenance
+from fhy_core.identifier import HasIdentifier, Identifier
+from fhy_core.provenance import HasProvenance, Provenance
+from fhy_core.serialization import DeserializationValueError
 from fhy_core.traits import (
     Equal,
     EqualMixin,
@@ -32,8 +35,6 @@ from fhy_core.traits import (
     FrozenMixin,
     FrozenMutationError,
     FrozenValidationError,
-    HasIdentifier,
-    HasProvenance,
     Interned,
     InternedMixin,
     Orderable,
@@ -44,7 +45,6 @@ from fhy_core.traits import (
     PartialOrderableMixin,
     VerifiableMixin,
 )
-from fhy_core.utils import Self
 from fhy_core.utils.override import override
 from fhy_core.value_domain import DATA_DOMAIN
 
@@ -174,6 +174,18 @@ class _AutoFrozenPoint(FrozenMixin):
     y: int
 
 
+class _AutoFrozenBox(FrozenMixin):
+    """Auto-frozen fixture with a hand-written ``__init__``.
+
+    Both bookkeeping slots (the frozen flag and the construction depth)
+    are set on every instance, so pickling captures them and restoration
+    must succeed regardless of the order the slots come back in.
+    """
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+
 class _InternedValue(InternedMixin[str]):
     def __init__(self, key: str, value: int) -> None:
         self.key = key
@@ -247,6 +259,31 @@ class _DataclassInternedValue(InternedMixin[str]):
     @override
     def get_intern_key(self) -> str:
         return self.key
+
+
+@dataclass(eq=False)
+class _CustomEqualityInternedValue(InternedMixin[str]):
+    """Interned value whose own equality also compares an excluded field."""
+
+    key: str
+    note: str = field(compare=False)
+
+    def __post_init__(self) -> None:
+        self.register_interned_instance()
+
+    @override
+    def get_intern_key(self) -> str:
+        return self.key
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, _CustomEqualityInternedValue):
+            return NotImplemented
+        return (self.key, self.note) == (other.key, other.note)
+
+    @override
+    def __hash__(self) -> int:
+        return hash((self.key, self.note))
 
 
 @dataclass
@@ -630,9 +667,57 @@ def test_interned_construct_from_fields_returns_canonical_for_existing_key() -> 
     _DataclassInternedValue.clear_interned_registry()
     canonical = _DataclassInternedValue("dup", 1)
 
-    restored = _DataclassInternedValue.construct_from_fields({"key": "dup", "value": 2})
+    restored = _DataclassInternedValue.construct_from_fields({"key": "dup", "value": 1})
 
     assert restored is canonical
+
+
+def test_interned_construct_from_fields_rejects_a_conflicting_compared_field() -> None:
+    """Test a rebuilt duplicate unequal to the canonical is rejected."""
+    _DataclassInternedValue.clear_interned_registry()
+    canonical = _DataclassInternedValue("conflict", 1)
+
+    with pytest.raises(DeserializationValueError) as exc_info:
+        _DataclassInternedValue.construct_from_fields({"key": "conflict", "value": 2})
+
+    assert str(exc_info.value) == (
+        "Payload for \"_DataclassInternedValue\" key 'conflict' conflicts with the "
+        "canonical instance on value (canonical 1, payload 2)."
+    )
+    assert _DataclassInternedValue.get_interned("conflict") is canonical
+
+
+def test_interned_conflict_error_falls_back_when_no_compared_field_differs() -> None:
+    """Test an unequal duplicate whose compared fields all match is still named.
+
+    A subclass with its own `__eq__` can be unequal to the canonical while
+    every equality-relevant dataclass field matches, so the error cannot list
+    a field and describes the conflict as on the compared fields as a whole.
+    """
+    _CustomEqualityInternedValue.clear_interned_registry()
+    canonical = _CustomEqualityInternedValue("custom", "first")
+
+    with pytest.raises(DeserializationValueError) as exc_info:
+        _CustomEqualityInternedValue.construct_from_fields(
+            {"key": "custom", "note": "second"}
+        )
+
+    assert str(exc_info.value) == (
+        "Payload for \"_CustomEqualityInternedValue\" key 'custom' conflicts with "
+        "the canonical instance on its compared fields."
+    )
+    assert _CustomEqualityInternedValue.get_interned("custom") is canonical
+
+
+def test_interned_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test the reconstruction hook accepts an `immutabledict` field mapping."""
+    _DataclassInternedValue.clear_interned_registry()
+
+    restored = _DataclassInternedValue.construct_from_fields(
+        immutabledict({"key": "imm", "value": 3})
+    )
+
+    assert restored == _DataclassInternedValue("imm", 3)
 
 
 def test_interned_construct_from_fields_warns_on_ignored_metadata(
@@ -810,12 +895,12 @@ def test_auto_freeze_subclass_can_set_own_state_before_outermost_freeze() -> Non
 
 
 def test_frozen_protocol_does_not_expose_assert_write_protected() -> None:
-    """Test the ``Frozen`` protocol no longer exposes ``assert_write_protected``."""
+    """Test the ``Frozen`` protocol does not expose ``assert_write_protected``."""
     assert not hasattr(Frozen, "assert_write_protected")
 
 
 def test_frozen_freeze_method_takes_no_arguments() -> None:
-    """Test ``freeze()`` no longer accepts ``deep`` (or any) keyword argument."""
+    """Test ``freeze()`` does not accept ``deep`` (or any) keyword argument."""
 
     class _SimpleFrozen(FrozenMixin):
         def __init__(self, value: int) -> None:
@@ -828,7 +913,7 @@ def test_frozen_freeze_method_takes_no_arguments() -> None:
 
 
 def test_assert_frozen_takes_no_arguments() -> None:
-    """Test ``assert_frozen()`` no longer accepts ``deep``/``strict`` kwargs."""
+    """Test ``assert_frozen()`` does not accept ``deep``/``strict`` kwargs."""
 
     class _SimpleFrozen(FrozenMixin):
         def __init__(self, value: int) -> None:
@@ -1112,11 +1197,7 @@ def test_field_type_check_accepts_type_field() -> None:
 
 
 def test_field_type_check_accepts_self_field() -> None:
-    """Test a ``Self``-typed field passes the check across Python versions.
-
-    ``Self`` is sourced from the ``fhy_core.utils`` compatibility shim so the
-    module imports on Python 3.10, where ``typing.Self`` does not exist.
-    """
+    """Test a ``Self``-typed field passes the check."""
 
     @dataclass(frozen=True)
     class _GoodSelf(FrozenMixin):
@@ -1391,3 +1472,45 @@ def test_freeze_on_init_false_blocks_inherit_default_when_child_does_not_overrid
 
     instance = _ChildInheritsOptOut(1)
     assert instance.is_frozen is False
+
+
+# =============================================================================
+# FrozenMixin: pickle & deepcopy round-trips
+# =============================================================================
+
+
+def test_pickle_round_trip_restores_value_and_frozen_state() -> None:
+    """Test pickling an auto-frozen instance restores its state still frozen."""
+    box = _AutoFrozenBox(7)
+
+    restored = pickle.loads(pickle.dumps(box))
+
+    assert restored.value == 7
+    assert restored.is_frozen
+    with pytest.raises(FrozenMutationError):
+        restored.value = 8
+
+
+def test_deepcopy_restores_value_and_frozen_state() -> None:
+    """Test deep-copying an auto-frozen instance restores its state still frozen."""
+    box = _AutoFrozenBox(7)
+
+    duplicate = copy.deepcopy(box)
+
+    assert duplicate is not box
+    assert duplicate.value == 7
+    assert duplicate.is_frozen
+    with pytest.raises(FrozenMutationError):
+        duplicate.value = 8
+
+
+def test_pickle_round_trip_restores_native_frozen_dataclass() -> None:
+    """Test pickling a dataclass-frozen instance keeps its dataclass freezing."""
+    point = _AutoFrozenPoint(1, 2)
+
+    restored = pickle.loads(pickle.dumps(point))
+
+    assert (restored.x, restored.y) == (1, 2)
+    assert restored.is_frozen
+    with pytest.raises(FrozenMutationError):
+        restored.x = 4

@@ -10,8 +10,8 @@ from fhy_core.diagnostic import (
     Note,
     NoteKind,
 )
-from fhy_core.identifier import Identifier
-from fhy_core.traits import Equal, HasIdentifier, Interned, PartialEqual
+from fhy_core.identifier import HasIdentifier, Identifier
+from fhy_core.traits import Equal, Interned, PartialEqual
 
 _DEFAULT_NOTE_KINDS = (
     RATIONALE_NOTE_KIND,

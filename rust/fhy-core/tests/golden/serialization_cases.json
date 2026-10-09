@@ -1,0 +1,690 @@
+{
+ "provenance": {
+  "package": "fhy_core",
+  "package_version": "0.2.0",
+  "git_commit": "d4309e995fb9aa087dc8c4bb0a5e5ed896f62ac7",
+  "python_version": "3.11.13 (main, Jun  4 2025, 08:57:30) [GCC 9.4.0]",
+  "generator_command": "uv run --no-sync python rust/fhy-core/tests/golden/generate_serialization_cases.py"
+ },
+ "cases": [
+  {
+   "name": "identifier",
+   "class": "fhy_core.identifier.Identifier",
+   "rust_type": "Identifier",
+   "v2": "{\"id\":61000,\"name_hint\":\"x\"}",
+   "foreign": []
+  },
+  {
+   "name": "position",
+   "class": "fhy_core.provenance.Position",
+   "rust_type": "Position",
+   "v2": "{\"line\":2,\"column\":8}",
+   "foreign": []
+  },
+  {
+   "name": "span",
+   "class": "fhy_core.provenance.Span",
+   "rust_type": "Span",
+   "v2": "{\"start_offset\":0,\"end_offset\":3,\"start_position\":{\"line\":1,\"column\":1},\"end_position\":{\"line\":1,\"column\":4}}",
+   "foreign": []
+  },
+  {
+   "name": "span_unknown",
+   "class": "fhy_core.provenance.Span",
+   "rust_type": "Span",
+   "v2": "{\"start_offset\":null,\"end_offset\":null,\"start_position\":null,\"end_position\":null}",
+   "foreign": []
+  },
+  {
+   "name": "note",
+   "class": "fhy_core.diagnostic.Note",
+   "rust_type": "Note",
+   "v2": "{\"message\":\"hello\",\"kind\":{\"name\":{\"id\":3,\"name_hint\":\"other\"},\"description\":\"Uncategorized note.\"}}",
+   "foreign": []
+  },
+  {
+   "name": "note_kind",
+   "class": "fhy_core.diagnostic.NoteKind",
+   "rust_type": "NoteKind",
+   "v2": "{\"name\":{\"id\":3,\"name_hint\":\"other\"},\"description\":\"Uncategorized note.\"}",
+   "foreign": []
+  },
+  {
+   "name": "op_attribute",
+   "class": "fhy_core.op_attribute.OpAttribute",
+   "rust_type": "OpAttribute",
+   "v2": "{\"name\":{\"id\":16,\"name_hint\":\"commutative\"},\"description\":\"Op output is invariant under operand swap.\"}",
+   "foreign": []
+  },
+  {
+   "name": "value_domain",
+   "class": "fhy_core.value_domain.ValueDomain",
+   "rust_type": "ValueDomain",
+   "v2": "{\"levels\":[{\"name\":{\"id\":32,\"name_hint\":\"data\"},\"description\":\"Concrete data values flowing through the IR.\"},{\"name\":{\"id\":61010,\"name_hint\":\"frozen_domain\"},\"description\":\"a child\"}]}",
+   "foreign": []
+  },
+  {
+   "name": "provenance_unknown",
+   "class": "fhy_core.provenance.UnknownProvenance",
+   "rust_type": "Provenance",
+   "v2": "{\"unknown\":{}}",
+   "foreign": []
+  },
+  {
+   "name": "provenance_file",
+   "class": "fhy_core.provenance.FileProvenance",
+   "rust_type": "Provenance",
+   "v2": "{\"file\":{\"file_path\":\"src/a.fhy\",\"span\":{\"start_offset\":0,\"end_offset\":3,\"start_position\":{\"line\":1,\"column\":1},\"end_position\":{\"line\":1,\"column\":4}}}}",
+   "foreign": []
+  },
+  {
+   "name": "provenance_file_no_span",
+   "class": "fhy_core.provenance.FileProvenance",
+   "rust_type": "Provenance",
+   "v2": "{\"file\":{\"file_path\":\"b.fhy\",\"span\":null}}",
+   "foreign": []
+  },
+  {
+   "name": "provenance_named",
+   "class": "fhy_core.provenance.NamedProvenance",
+   "rust_type": "Provenance",
+   "v2": "{\"named\":{\"name\":\"lib\",\"child\":{\"file\":{\"file_path\":\"src/a.fhy\",\"span\":{\"start_offset\":0,\"end_offset\":3,\"start_position\":{\"line\":1,\"column\":1},\"end_position\":{\"line\":1,\"column\":4}}}}}}",
+   "foreign": []
+  },
+  {
+   "name": "provenance_call_site",
+   "class": "fhy_core.provenance.CallSiteProvenance",
+   "rust_type": "Provenance",
+   "v2": "{\"call_site\":{\"callee\":{\"file\":{\"file_path\":\"src/a.fhy\",\"span\":{\"start_offset\":0,\"end_offset\":3,\"start_position\":{\"line\":1,\"column\":1},\"end_position\":{\"line\":1,\"column\":4}}}},\"caller\":{\"unknown\":{}}}}",
+   "foreign": []
+  },
+  {
+   "name": "provenance_fused",
+   "class": "fhy_core.provenance.FusedProvenance",
+   "rust_type": "Provenance",
+   "v2": "{\"fused\":{\"sources\":[{\"file\":{\"file_path\":\"src/a.fhy\",\"span\":{\"start_offset\":0,\"end_offset\":3,\"start_position\":{\"line\":1,\"column\":1},\"end_position\":{\"line\":1,\"column\":4}}}},{\"file\":{\"file_path\":\"c.fhy\",\"span\":null}}],\"label\":\"fuse\"}}",
+   "foreign": []
+  },
+  {
+   "name": "provenance_fused_unlabelled",
+   "class": "fhy_core.provenance.FusedProvenance",
+   "rust_type": "Provenance",
+   "v2": "{\"fused\":{\"sources\":[{\"file\":{\"file_path\":\"src/a.fhy\",\"span\":{\"start_offset\":0,\"end_offset\":3,\"start_position\":{\"line\":1,\"column\":1},\"end_position\":{\"line\":1,\"column\":4}}}},{\"file\":{\"file_path\":\"c.fhy\",\"span\":null}}],\"label\":null}}",
+   "foreign": []
+  },
+  {
+   "name": "unary_expression",
+   "class": "fhy_core.symbolic.expression.core.UnaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"unary\":{\"operation\":\"negate\",\"operand\":0}}]}",
+   "foreign": []
+  },
+  {
+   "name": "binary_expression",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"literal\":{\"int\":\"3\"}},{\"binary\":{\"operation\":\"floor_divide\",\"left\":0,\"right\":1}}]}",
+   "foreign": []
+  },
+  {
+   "name": "logical_expression",
+   "class": "fhy_core.symbolic.expression.core.LogicalExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"literal\":{\"int\":\"0\"}},{\"binary\":{\"operation\":\"greater\",\"left\":0,\"right\":1}},{\"literal\":{\"bool\":true}},{\"literal\":{\"bool\":false}},{\"logical\":{\"operation\":\"or\",\"operands\":[2,3,4]}}]}",
+   "foreign": []
+  },
+  {
+   "name": "identifier_expression",
+   "class": "fhy_core.symbolic.expression.core.IdentifierExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_int",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"int\":\"7\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_big_int",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"int\":\"1267650600228229401496703205376\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_negative_int",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"int\":\"-12\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_float",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"1.5\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_float_integral",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"2\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_float_tiny",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"5e-324\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_decimal",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"decimal\":\"1.25\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_decimal_integral",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"decimal\":\"100\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "literal_bool",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"bool\":true}}]}",
+   "foreign": []
+  },
+  {
+   "name": "piecewise_expression",
+   "class": "fhy_core.symbolic.expression.core.PiecewiseExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"literal\":{\"int\":\"0\"}},{\"binary\":{\"operation\":\"greater\",\"left\":0,\"right\":1}},{\"literal\":{\"int\":\"1\"}},{\"literal\":{\"int\":\"-5\"}},{\"binary\":{\"operation\":\"less\",\"left\":0,\"right\":4}},{\"literal\":{\"int\":\"2\"}},{\"piecewise\":{\"cases\":[[2,3],[5,6]],\"otherwise\":1}}]}",
+   "foreign": []
+  },
+  {
+   "name": "call_expression",
+   "class": "fhy_core.symbolic.expression.core.CallExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"identifier\":{\"id\":61001,\"name_hint\":\"y\"}},{\"call\":{\"callee\":{\"builtin\":\"max\"},\"arguments\":[0,1]}}]}",
+   "foreign": []
+  },
+  {
+   "name": "shared_subtree",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"literal\":{\"int\":\"1\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"binary\":{\"operation\":\"multiply\",\"left\":2,\"right\":2}}]}",
+   "foreign": []
+  },
+  {
+   "name": "primitive_data_type",
+   "class": "fhy_core.types.core.PrimitiveDataType",
+   "rust_type": "DataType",
+   "v2": "{\"primitive\":\"int32\"}",
+   "foreign": []
+  },
+  {
+   "name": "template_data_type",
+   "class": "fhy_core.types.core.TemplateDataType",
+   "rust_type": "DataType",
+   "v2": "{\"template\":{\"identifier\":{\"id\":61003,\"name_hint\":\"T\"},\"widths\":null}}",
+   "foreign": []
+  },
+  {
+   "name": "template_data_type_widths",
+   "class": "fhy_core.types.core.TemplateDataType",
+   "rust_type": "DataType",
+   "v2": "{\"template\":{\"identifier\":{\"id\":61003,\"name_hint\":\"T\"},\"widths\":[16,32]}}",
+   "foreign": []
+  },
+  {
+   "name": "numerical_type",
+   "class": "fhy_core.types.core.NumericalType",
+   "rust_type": "Type",
+   "v2": "{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[{\"expression\":{\"nodes\":[{\"literal\":{\"int\":\"4\"}}]}},{\"expression\":{\"nodes\":[{\"identifier\":{\"id\":61002,\"name_hint\":\"N\"}}]}}]}}",
+   "foreign": []
+  },
+  {
+   "name": "numerical_type_scalar",
+   "class": "fhy_core.types.core.NumericalType",
+   "rust_type": "Type",
+   "v2": "{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[]}}",
+   "foreign": []
+  },
+  {
+   "name": "numerical_type_ellipsis",
+   "class": "fhy_core.types.core.NumericalType",
+   "rust_type": "Type",
+   "v2": "{\"numerical\":{\"data_type\":{\"template\":{\"identifier\":{\"id\":61003,\"name_hint\":\"T\"},\"widths\":null}},\"shape\":[{\"expression\":{\"nodes\":[{\"literal\":{\"int\":\"2\"}}]}},\"wildcard\"]}}",
+   "foreign": []
+  },
+  {
+   "name": "numerical_type_wildcard",
+   "class": "fhy_core.types.core.NumericalType",
+   "rust_type": "Type",
+   "v2": "{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[\"wildcard\"]}}",
+   "foreign": []
+  },
+  {
+   "name": "index_type",
+   "class": "fhy_core.types.core.IndexType",
+   "rust_type": "Type",
+   "v2": "{\"index\":{\"lower_bound\":{\"nodes\":[{\"literal\":{\"int\":\"0\"}}]},\"upper_bound\":{\"nodes\":[{\"identifier\":{\"id\":61002,\"name_hint\":\"N\"}}]},\"stride\":{\"nodes\":[{\"literal\":{\"int\":\"2\"}}]}}}",
+   "foreign": []
+  },
+  {
+   "name": "import_frame",
+   "class": "fhy_core.symbol_table.ImportSymbolTableFrame",
+   "rust_type": "SymbolFrame",
+   "v2": "{\"import\":{\"name\":{\"id\":61004,\"name_hint\":\"f\"}}}",
+   "foreign": []
+  },
+  {
+   "name": "variable_frame",
+   "class": "fhy_core.symbol_table.VariableSymbolTableFrame",
+   "rust_type": "SymbolFrame",
+   "v2": "{\"variable\":{\"name\":{\"id\":61000,\"name_hint\":\"x\"},\"type\":{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[]}},\"type_qualifier\":\"input\"}}",
+   "foreign": []
+  },
+  {
+   "name": "function_frame",
+   "class": "fhy_core.symbol_table.FunctionSymbolTableFrame",
+   "rust_type": "SymbolFrame",
+   "v2": "{\"function\":{\"name\":{\"id\":61004,\"name_hint\":\"f\"},\"keyword\":\"proc\",\"signature\":[{\"type_qualifier\":\"input\",\"type\":{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[]}}},{\"type_qualifier\":\"output\",\"type\":{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[]}}}]}}",
+   "foreign": []
+  },
+  {
+   "name": "equation_constraint",
+   "class": "fhy_core.symbolic.constraint.core.EquationConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"equation\":{\"expression\":{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"literal\":{\"int\":\"0\"}},{\"binary\":{\"operation\":\"greater\",\"left\":0,\"right\":1}}]}}}",
+   "foreign": []
+  },
+  {
+   "name": "in_set_constraint",
+   "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":61000,\"name_hint\":\"x\"},\"values\":[{\"bool\":true},{\"float\":\"2.5\"},{\"frozen_set\":[{\"int\":\"3\"},{\"int\":\"4\"}]},{\"int\":\"1\"},{\"str\":\"a\"},{\"tuple\":[{\"int\":\"1\"},{\"int\":\"2\"}]}]}}",
+   "foreign": []
+  },
+  {
+   "name": "not_in_set_constraint",
+   "class": "fhy_core.symbolic.constraint.core.NotInSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"not_in_set\":{\"variable\":{\"id\":61000,\"name_hint\":\"x\"},\"values\":[{\"int\":\"3\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "constraint_system",
+   "class": "fhy_core.symbolic.constraint.system.ConstraintSystem",
+   "rust_type": "ConstraintSystem",
+   "v2": "{\"constraints\":[{\"equation\":{\"expression\":{\"nodes\":[{\"identifier\":{\"id\":61000,\"name_hint\":\"x\"}},{\"literal\":{\"int\":\"0\"}},{\"binary\":{\"operation\":\"greater\",\"left\":0,\"right\":1}}]}}},{\"in_set\":{\"variable\":{\"id\":61000,\"name_hint\":\"x\"},\"values\":[{\"int\":\"1\"},{\"int\":\"2\"}]}},{\"not_in_set\":{\"variable\":{\"id\":61001,\"name_hint\":\"y\"},\"values\":[{\"int\":\"3\"}]}}]}",
+   "foreign": []
+  },
+  {
+   "name": "integer_domain",
+   "class": "fhy_core.symbolic.param.domains.IntegerDomain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"integer\":{\"non_negative\":false,\"zero_included\":true}}",
+   "foreign": []
+  },
+  {
+   "name": "natural_domain",
+   "class": "fhy_core.symbolic.param.domains.IntegerDomain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"integer\":{\"non_negative\":true,\"zero_included\":false}}",
+   "foreign": []
+  },
+  {
+   "name": "real_domain",
+   "class": "fhy_core.symbolic.param.domains.RealDomain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"real\":{}}",
+   "foreign": []
+  },
+  {
+   "name": "interval_integer_domain",
+   "class": "fhy_core.symbolic.param.domains.IntervalIntegerDomain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"interval_integer\":{\"prefer_inclusive\":true,\"non_negative\":false,\"zero_included\":true}}",
+   "foreign": []
+  },
+  {
+   "name": "ordinal_domain",
+   "class": "fhy_core.symbolic.param.domains.OrdinalDomain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"ordinal\":{\"sorted_values\":[{\"int\":\"1\"},{\"float\":\"2.5\"},{\"int\":\"3\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "categorical_domain",
+   "class": "fhy_core.symbolic.param.domains.CategoricalDomain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"categorical\":{\"categories\":[{\"str\":\"a\"},{\"str\":\"b\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "permutation_domain",
+   "class": "fhy_core.symbolic.param.domains.PermutationDomain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"permutation\":{\"ordered_members\":[{\"str\":\"n\"},{\"str\":\"c\"},{\"str\":\"h\"},{\"str\":\"w\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "param",
+   "class": "fhy_core.symbolic.param.core.Param",
+   "rust_type": "Param",
+   "v2": "{\"domain\":{\"integer\":{\"non_negative\":false,\"zero_included\":true}},\"variable\":{\"id\":61007,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}}",
+   "foreign": []
+  },
+  {
+   "name": "param_ordinal",
+   "class": "fhy_core.symbolic.param.core.Param",
+   "rust_type": "Param",
+   "v2": "{\"domain\":{\"ordinal\":{\"sorted_values\":[{\"int\":\"1\"},{\"int\":\"2\"},{\"int\":\"3\"}]}},\"variable\":{\"id\":61008,\"name_hint\":\"o\"},\"constraint_system\":{\"constraints\":[]}}",
+   "foreign": []
+  },
+  {
+   "name": "param_assignment",
+   "class": "fhy_core.symbolic.param.core.ParamAssignment",
+   "rust_type": "ParamAssignment",
+   "v2": "{\"param\":{\"domain\":{\"integer\":{\"non_negative\":false,\"zero_included\":true}},\"variable\":{\"id\":61007,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}},\"value\":{\"int\":\"5\"}}",
+   "foreign": []
+  },
+  {
+   "name": "symbol_table",
+   "class": "fhy_core.symbol_table.SymbolTable",
+   "rust_type": "SymbolTable",
+   "v2": "{\"namespaces\":[{\"namespace_name\":{\"id\":61005,\"name_hint\":\"ns\"},\"parent_namespace_name\":null,\"symbols\":[{\"symbol_name\":{\"id\":61000,\"name_hint\":\"x\"},\"frame\":{\"variable\":{\"name\":{\"id\":61000,\"name_hint\":\"x\"},\"type\":{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[]}},\"type_qualifier\":\"state\"}}},{\"symbol_name\":{\"id\":61004,\"name_hint\":\"f\"},\"frame\":{\"function\":{\"name\":{\"id\":61004,\"name_hint\":\"f\"},\"keyword\":\"proc\",\"signature\":[{\"type_qualifier\":\"input\",\"type\":{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[]}}},{\"type_qualifier\":\"output\",\"type\":{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[]}}}]}}}]},{\"namespace_name\":{\"id\":61006,\"name_hint\":\"child\"},\"parent_namespace_name\":{\"id\":61005,\"name_hint\":\"ns\"},\"symbols\":[{\"symbol_name\":{\"id\":61001,\"name_hint\":\"y\"},\"frame\":{\"import\":{\"name\":{\"id\":61001,\"name_hint\":\"y\"}}}}]}]}",
+   "foreign": []
+  },
+  {
+   "name": "foreign_constraint",
+   "class": "fhy_core.symbolic.constraint.core.Constraint",
+   "rust_type": "Constraint",
+   "v2": "{\"custom\":{\"type_id\":\"golden.even\",\"data\":\"{\\\"variable\\\":{\\\"id\\\":61900,\\\"name_hint\\\":\\\"x\\\"}}\"}}",
+   "foreign": [
+    "golden.even"
+   ]
+  },
+  {
+   "name": "foreign_constraint_system",
+   "class": "fhy_core.symbolic.constraint.system.ConstraintSystem",
+   "rust_type": "ConstraintSystem",
+   "v2": "{\"constraints\":[{\"custom\":{\"type_id\":\"golden.even\",\"data\":\"{\\\"variable\\\":{\\\"id\\\":61900,\\\"name_hint\\\":\\\"x\\\"}}\"}},{\"equation\":{\"expression\":{\"nodes\":[{\"identifier\":{\"id\":61901,\"name_hint\":\"y\"}},{\"literal\":{\"int\":\"0\"}},{\"binary\":{\"operation\":\"greater\",\"left\":0,\"right\":1}}]}}},{\"in_set\":{\"variable\":{\"id\":61901,\"name_hint\":\"y\"},\"values\":[{\"int\":\"3\"},{\"opaque\":{\"type_id\":\"golden.token\",\"data\":\"{\\\"value\\\":1}\"}},{\"opaque\":{\"type_id\":\"golden.token\",\"data\":\"{\\\"value\\\":2}\"}}]}}]}",
+   "foreign": [
+    "golden.even",
+    "golden.token",
+    "golden.token"
+   ]
+  },
+  {
+   "name": "foreign_member",
+   "class": "fhy_core.symbolic.constraint.core.NotInSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"not_in_set\":{\"variable\":{\"id\":61900,\"name_hint\":\"x\"},\"values\":[{\"opaque\":{\"type_id\":\"golden.token\",\"data\":\"{\\\"value\\\":5}\"}}]}}",
+   "foreign": [
+    "golden.token"
+   ]
+  },
+  {
+   "name": "foreign_domain",
+   "class": "fhy_core.symbolic.param.domains.ParamDomain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"custom\":{\"type_id\":\"golden.domain\",\"data\":\"{\\\"modulus\\\":2}\"}}",
+   "foreign": [
+    "golden.domain"
+   ]
+  },
+  {
+   "name": "foreign_categorical_domain",
+   "class": "fhy_core.symbolic.param.domains.CategoricalDomain",
+   "rust_type": "ParamDomain",
+   "v2": "{\"categorical\":{\"categories\":[{\"opaque\":{\"type_id\":\"golden.token\",\"data\":\"{\\\"value\\\":1}\"}},{\"opaque\":{\"type_id\":\"golden.token\",\"data\":\"{\\\"value\\\":2}\"}}]}}",
+   "foreign": [
+    "golden.token",
+    "golden.token"
+   ]
+  },
+  {
+   "name": "foreign_param",
+   "class": "fhy_core.symbolic.param.core.Param",
+   "rust_type": "Param",
+   "v2": "{\"domain\":{\"custom\":{\"type_id\":\"golden.domain\",\"data\":\"{\\\"modulus\\\":2}\"}},\"variable\":{\"id\":61904,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}}",
+   "foreign": [
+    "golden.domain"
+   ]
+  },
+  {
+   "name": "foreign_assignment",
+   "class": "fhy_core.symbolic.param.core.ParamAssignment",
+   "rust_type": "ParamAssignment",
+   "v2": "{\"param\":{\"domain\":{\"categorical\":{\"categories\":[{\"opaque\":{\"type_id\":\"golden.token\",\"data\":\"{\\\"value\\\":1}\"}},{\"opaque\":{\"type_id\":\"golden.token\",\"data\":\"{\\\"value\\\":2}\"}}]}},\"variable\":{\"id\":61905,\"name_hint\":\"q\"},\"constraint_system\":{\"constraints\":[]}},\"value\":{\"opaque\":{\"type_id\":\"golden.token\",\"data\":\"{\\\"value\\\":2}\"}}}",
+   "foreign": [
+    "golden.token",
+    "golden.token",
+    "golden.token"
+   ]
+  },
+  {
+   "name": "foreign_type",
+   "class": "fhy_core.types.core.Type",
+   "rust_type": "Type",
+   "v2": "{\"extension\":{\"type_id\":\"golden.type\",\"data\":\"{\\\"tag\\\":\\\"tile\\\"}\"}}",
+   "foreign": [
+    "golden.type"
+   ]
+  },
+  {
+   "name": "foreign_type_in_frame",
+   "class": "fhy_core.symbol_table.VariableSymbolTableFrame",
+   "rust_type": "SymbolFrame",
+   "v2": "{\"variable\":{\"name\":{\"id\":61901,\"name_hint\":\"y\"},\"type\":{\"extension\":{\"type_id\":\"golden.type\",\"data\":\"{\\\"tag\\\":\\\"tile\\\"}\"}},\"type_qualifier\":\"input\"}}",
+   "foreign": [
+    "golden.type"
+   ]
+  },
+  {
+   "name": "foreign_frame",
+   "class": "fhy_core.symbol_table.SymbolTableFrame",
+   "rust_type": "SymbolFrame",
+   "v2": "{\"custom\":{\"type_id\":\"golden.frame\",\"data\":\"{\\\"name\\\":{\\\"id\\\":61903,\\\"name_hint\\\":\\\"f\\\"},\\\"note\\\":\\\"noted\\\"}\"}}",
+   "foreign": [
+    "golden.frame"
+   ]
+  },
+  {
+   "name": "foreign_frames_in_table",
+   "class": "fhy_core.symbol_table.SymbolTable",
+   "rust_type": "SymbolTable",
+   "v2": "{\"namespaces\":[{\"namespace_name\":{\"id\":61902,\"name_hint\":\"ns\"},\"parent_namespace_name\":null,\"symbols\":[{\"symbol_name\":{\"id\":61903,\"name_hint\":\"f\"},\"frame\":{\"custom\":{\"type_id\":\"golden.frame\",\"data\":\"{\\\"name\\\":{\\\"id\\\":61903,\\\"name_hint\\\":\\\"f\\\"},\\\"note\\\":\\\"noted\\\"}\"}}},{\"symbol_name\":{\"id\":61900,\"name_hint\":\"x\"},\"frame\":{\"variable\":{\"name\":{\"id\":61900,\"name_hint\":\"x\"},\"type\":{\"extension\":{\"type_id\":\"golden.type\",\"data\":\"{\\\"tag\\\":\\\"tile\\\"}\"}},\"type_qualifier\":\"state\"}}}]}]}",
+   "foreign": [
+    "golden.frame",
+    "golden.type"
+   ]
+  },
+  {
+   "name": "shape_of_a_scalar",
+   "class": "fhy_core.types.core.NumericalType",
+   "rust_type": "Type",
+   "v2": "{\"numerical\":{\"data_type\":{\"primitive\":\"int32\"},\"shape\":[]}}",
+   "foreign": []
+  },
+  {
+   "name": "identifier_members",
+   "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":61910,\"name_hint\":\"x\"},\"values\":[{\"identifier\":{\"id\":99,\"name_hint\":\"b\"}},{\"identifier\":{\"id\":100,\"name_hint\":\"a\"}},{\"int\":\"3\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "identifier_categorical_param",
+   "class": "fhy_core.symbolic.param.core.Param",
+   "rust_type": "Param",
+   "v2": "{\"domain\":{\"categorical\":{\"categories\":[{\"identifier\":{\"id\":99,\"name_hint\":\"b\"}},{\"identifier\":{\"id\":100,\"name_hint\":\"a\"}}]}},\"variable\":{\"id\":61911,\"name_hint\":\"p\"},\"constraint_system\":{\"constraints\":[]}}",
+   "foreign": []
+  },
+  {
+   "name": "random_0000",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"decimal\":\"826.31\"}},{\"literal\":{\"float\":\"1e300\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":0,\"right\":1}},{\"literal\":{\"bool\":false}},{\"binary\":{\"operation\":\"add\",\"left\":2,\"right\":3}},{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"decimal\":\"834.764\"}},{\"binary\":{\"operation\":\"less\",\"left\":5,\"right\":6}},{\"unary\":{\"operation\":\"negate\",\"operand\":7}},{\"binary\":{\"operation\":\"less\",\"left\":4,\"right\":8}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0001",
+   "class": "fhy_core.symbolic.expression.core.UnaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"bool\":true}},{\"unary\":{\"operation\":\"negate\",\"operand\":0}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0002",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":62001,\"name_hint\":\"v1\"}},{\"literal\":{\"float\":\"5e-324\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"literal\":{\"bool\":false}},{\"binary\":{\"operation\":\"less\",\"left\":2,\"right\":3}},{\"literal\":{\"bool\":true}},{\"unary\":{\"operation\":\"negate\",\"operand\":5}},{\"unary\":{\"operation\":\"negate\",\"operand\":6}},{\"binary\":{\"operation\":\"subtract\",\"left\":4,\"right\":7}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0003",
+   "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":62004,\"name_hint\":\"v4\"},\"values\":[{\"int\":\"-44\"},{\"int\":\"-19\"},{\"str\":\"s3\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "random_0004",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"-2.25\"}},{\"literal\":{\"bool\":false}},{\"binary\":{\"operation\":\"subtract\",\"left\":0,\"right\":1}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0005",
+   "class": "fhy_core.symbolic.expression.core.UnaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"int\":\"270402799576694868274\"}},{\"literal\":{\"float\":\"1e300\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":0,\"right\":1}},{\"literal\":{\"float\":\"0.5\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":2,\"right\":3}},{\"unary\":{\"operation\":\"negate\",\"operand\":4}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0006",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"float\":\"1e300\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"literal\":{\"decimal\":\"21.635\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":2,\"right\":3}},{\"literal\":{\"bool\":false}},{\"literal\":{\"decimal\":\"496.749\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":5,\"right\":6}},{\"binary\":{\"operation\":\"less\",\"left\":4,\"right\":7}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0007",
+   "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":62005,\"name_hint\":\"v5\"},\"values\":[{\"float\":\"2.440976310070501\"},{\"str\":\"s2\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "random_0008",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"int\":\"-748587365893223504043\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0009",
+   "class": "fhy_core.symbolic.expression.core.UnaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"1e300\"}},{\"literal\":{\"decimal\":\"491.076\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":0,\"right\":1}},{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"int\":\"73010634630222817602\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":3,\"right\":4}},{\"binary\":{\"operation\":\"multiply\",\"left\":2,\"right\":5}},{\"unary\":{\"operation\":\"negate\",\"operand\":6}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0010",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"inf\"}},{\"identifier\":{\"id\":62006,\"name_hint\":\"v6\"}},{\"binary\":{\"operation\":\"add\",\"left\":0,\"right\":1}},{\"binary\":{\"operation\":\"multiply\",\"left\":2,\"right\":0}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0011",
+   "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":62001,\"name_hint\":\"v1\"},\"values\":[{\"int\":\"-12\"},{\"str\":\"s5\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "random_0012",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":62003,\"name_hint\":\"v3\"}},{\"literal\":{\"bool\":false}},{\"binary\":{\"operation\":\"subtract\",\"left\":0,\"right\":1}},{\"literal\":{\"int\":\"930889783948106962025\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":2,\"right\":3}},{\"literal\":{\"int\":\"1061598553195548238731\"}},{\"unary\":{\"operation\":\"negate\",\"operand\":5}},{\"unary\":{\"operation\":\"negate\",\"operand\":6}},{\"binary\":{\"operation\":\"multiply\",\"left\":4,\"right\":7}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0013",
+   "class": "fhy_core.symbolic.expression.core.LiteralExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"0.5\"}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0014",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"identifier\":{\"id\":62000,\"name_hint\":\"v0\"}},{\"unary\":{\"operation\":\"negate\",\"operand\":0}},{\"literal\":{\"bool\":true}},{\"binary\":{\"operation\":\"add\",\"left\":1,\"right\":2}},{\"identifier\":{\"id\":62007,\"name_hint\":\"v7\"}},{\"literal\":{\"bool\":false}},{\"binary\":{\"operation\":\"multiply\",\"left\":4,\"right\":5}},{\"identifier\":{\"id\":62006,\"name_hint\":\"v6\"}},{\"binary\":{\"operation\":\"add\",\"left\":6,\"right\":7}},{\"binary\":{\"operation\":\"less\",\"left\":3,\"right\":8}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0015",
+   "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":62003,\"name_hint\":\"v3\"},\"values\":[{\"bool\":true},{\"float\":\"4.206033274540845\"},{\"float\":\"5.011489315678628\"},{\"float\":\"7.795154544037651\"},{\"str\":\"s5\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "random_0016",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"float\":\"5e-324\"}},{\"identifier\":{\"id\":62004,\"name_hint\":\"v4\"}},{\"binary\":{\"operation\":\"multiply\",\"left\":0,\"right\":1}},{\"unary\":{\"operation\":\"negate\",\"operand\":2}},{\"literal\":{\"int\":\"-583552179942011031951\"}},{\"unary\":{\"operation\":\"negate\",\"operand\":4}},{\"binary\":{\"operation\":\"add\",\"left\":3,\"right\":5}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0017",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"decimal\":\"540.918\"}},{\"literal\":{\"decimal\":\"799.535\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":0,\"right\":1}},{\"literal\":{\"int\":\"-506193023692128473589\"}},{\"literal\":{\"int\":\"163825721495570090249\"}},{\"binary\":{\"operation\":\"less\",\"left\":3,\"right\":4}},{\"binary\":{\"operation\":\"add\",\"left\":2,\"right\":5}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0018",
+   "class": "fhy_core.symbolic.expression.core.BinaryExpression",
+   "rust_type": "Expression",
+   "v2": "{\"nodes\":[{\"literal\":{\"int\":\"-59434999825114648912\"}},{\"literal\":{\"decimal\":\"560.329\"}},{\"binary\":{\"operation\":\"subtract\",\"left\":0,\"right\":1}},{\"unary\":{\"operation\":\"negate\",\"operand\":2}},{\"literal\":{\"bool\":true}},{\"unary\":{\"operation\":\"negate\",\"operand\":4}},{\"literal\":{\"decimal\":\"78.44\"}},{\"binary\":{\"operation\":\"add\",\"left\":5,\"right\":6}},{\"binary\":{\"operation\":\"subtract\",\"left\":3,\"right\":7}}]}",
+   "foreign": []
+  },
+  {
+   "name": "random_0019",
+   "class": "fhy_core.symbolic.constraint.core.InSetConstraint",
+   "rust_type": "Constraint",
+   "v2": "{\"in_set\":{\"variable\":{\"id\":62005,\"name_hint\":\"v5\"},\"values\":[{\"bool\":true},{\"int\":\"-29\"}]}}",
+   "foreign": []
+  },
+  {
+   "name": "value_frozenset_of_tuples",
+   "class": "builtins.frozenset",
+   "rust_type": "Value",
+   "v2": "{\"frozen_set\":[{\"tuple\":[{\"float\":\"2.5\"},{\"bool\":true}]},{\"tuple\":[{\"float\":\"1e300\"},{\"float\":\"0\"}]},{\"tuple\":[{\"int\":\"1\"},{\"str\":\"a\"}]},{\"tuple\":[{\"tuple\":[]},{\"tuple\":[{\"int\":\"3\"}]}]}]}",
+   "foreign": []
+  },
+  {
+   "name": "value_tuple_of_an_identifier",
+   "class": "builtins.tuple",
+   "rust_type": "Value",
+   "v2": "{\"tuple\":[{\"identifier\":{\"id\":61912,\"name_hint\":\"a\"}},{\"int\":\"1\"}]}",
+   "foreign": []
+  }
+ ]
+}

@@ -16,6 +16,31 @@ compiler stack. It provides:
     simplifies serialization of class hierarchies (e.g., AST nodes) by embedding
     type information in the dict form.
 
+Wire versions
+-------------
+Payloads are written in one of two wire versions (`WireVersion`):
+
+- ``V2``, the default, is the format the Rust core's serde defines. A class
+  the Rust core backs writes exactly what the core writes for the same
+  value, so ``to_json()`` is byte-identical to ``serde_json::to_string`` of
+  the core value. A family is tagged serde's way, ``{tag: data}``: a Rust
+  family by its core variant name (``{"file": {..}}``), a Python-defined
+  family by its type id. A Python-defined part of a Rust value, such as a
+  third-party ``Constraint`` in a ``ConstraintSystem``, is a foreign part,
+  ``{"type_id": .., "data": <its canonical JSON text>}``, under the family's
+  foreign variant (``{"custom": ..}``, ``{"extension": ..}`` or
+  ``{"opaque": ..}``). ``to_json()`` with no arguments writes the canonical
+  text: compact, keys in the order written, UTF-8.
+- ``V1``, the ``{"__type__": .., "__data__": ..}`` envelope format of the
+  package before 0.3, is deprecated. It is written only inside
+  ``with wire_version(WireVersion.V1):``, and read wherever a reader meets
+  it; both warn with ``DeprecationWarning``. Reading and writing V1 are
+  removed in 0.3.0: convert stored V1 payloads before then, with
+  `upgrade_v1_payload` or ``python -m fhy_core.serialization_upgrade``.
+
+Readers accept both versions, and tell them apart at each payload's root: a
+V1 family payload is exactly the two-key envelope, which no V2 payload is.
+
 Binary format
 -------------
 Binary serialization uses a compact envelope:
@@ -31,7 +56,9 @@ Binary serialization uses a compact envelope:
 - `payload` is the encoded representation of the object, determined by CODEC.
 
 Default behavior:
-- CODEC=JSON and payload = UTF-8 JSON encoding of `serialize_to_dict()`.
+- CODEC=JSON and payload = UTF-8 JSON encoding of `serialize_to_dict()`:
+  the canonical text under V2, envelope VERSION 2; sorted compact JSON
+  under V1, VERSION 1.
 
 Custom behavior:
 - Classes may override `get_binary_codec()`, `serialize_to_binary()`,
@@ -77,10 +104,12 @@ should define a non-JSON binary codec by overriding ``get_binary_codec``
 and ``serialize_to_binary`` / ``deserialize_from_binary`` on the
 relevant class.
 
-``NaN`` and ``+/-Infinity`` are rejected at serialization time: both
-``serialize_to_binary`` (JSON codec) and ``to_json`` pass
-``allow_nan=False`` to ``json.dumps`` and re-raise the resulting
-``ValueError`` as ``SerializationValueError``. This prevents accidentally
+``NaN`` and ``+/-Infinity`` in a class's own dict payload are rejected at
+serialization time: both ``serialize_to_binary`` (JSON codec) and
+``to_json`` pass ``allow_nan=False`` to ``json.dumps`` and re-raise the
+resulting ``ValueError`` as ``SerializationValueError``. Under V2 the values
+the Rust core defines hold their floats as strings (``{"float": "NaN"}``),
+so a non-finite float literal or member serializes. This prevents accidentally
 emitting non-standard ``"NaN"`` / ``"Infinity"`` tokens that strict
 third-party JSON parsers would reject. Applications that need
 NaN-tolerant serialization must use a non-JSON codec.
@@ -109,8 +138,11 @@ __all__ = [
     "SerializedDict",
     "SerializedObject",
     "SerializedValue",
+    "WireVersion",
     "WrappedFamilySerializable",
+    "current_wire_version",
     "deserialize_registry_wrapped_value",
+    "deserialize_value",
     "is_registry_wrapped_value",
     "is_registry_wrapped_value_leaf",
     "is_serialized_dict",
@@ -121,15 +153,22 @@ __all__ = [
     "register_field_codec",
     "register_serializable",
     "serialize_registry_wrapped_value",
+    "serialize_value",
+    "upgrade_v1_payload",
+    "wire_version",
 ]
 
+import contextlib
 import dataclasses
 import enum
 import importlib
 import json
 import struct
+import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
+from enum import StrEnum
 from pathlib import PurePath
 from pprint import pformat
 from types import UnionType
@@ -153,7 +192,6 @@ from immutabledict import immutabledict
 
 from .error import register_error
 from .logger import get_logger
-from .utils.enum import StrEnum
 from .utils.type_hint_utils import (
     get_origin_and_arguments,
     resolve_field_annotations,
@@ -210,6 +248,128 @@ def is_serialized_dict(v: Any) -> TypeGuard[SerializedDict]:
 
 
 _T = TypeVar("_T", bound="Serializable")
+_R = TypeVar("_R")
+
+
+class WireVersion(StrEnum):
+    """The wire versions payloads are written in (see the module docstring)."""
+
+    V1 = "v1"
+    V2 = "v2"
+
+
+_WIRE_VERSION: ContextVar[WireVersion] = ContextVar(
+    "fhy_core_wire_version", default=WireVersion.V2
+)
+"""The version the writers write in this context; read by the extension too."""
+
+_V1_REMOVAL = "0.3.0"
+
+
+@contextlib.contextmanager
+def wire_version(version: WireVersion) -> Iterator[None]:
+    """Write payloads in ``version`` inside the ``with`` block.
+
+    The version is a context variable, so it holds for the current thread
+    or task only, and every writer reached inside the block, including the
+    nested calls of a third party's classes, writes in it. Readers accept
+    both versions whatever the context.
+
+    Args:
+        version: The version to write.
+
+    Warns:
+        DeprecationWarning: When ``version`` is ``WireVersion.V1``, which is
+            deprecated.
+    """
+    version = WireVersion(version)
+    if version is WireVersion.V1:
+        warnings.warn(
+            "Writing the V1 wire format is deprecated and will be removed in "
+            f"{_V1_REMOVAL}; write the default V2 format instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+    token = _WIRE_VERSION.set(version)
+    try:
+        yield
+    finally:
+        _WIRE_VERSION.reset(token)
+
+
+def current_wire_version() -> WireVersion:
+    """Return the version the writers write in this context."""
+    return _WIRE_VERSION.get()
+
+
+_READING_V1: ContextVar[bool] = ContextVar("fhy_core_reading_v1", default=False)
+"""Whether a V1 payload is being read, so its nested readers do not warn again."""
+
+
+def _read_v1(class_type: type, read: Callable[[], _R], *, stacklevel: int = 4) -> _R:
+    """Return ``read()``, the reading of a V1 payload of ``class_type``.
+
+    Warns once, at the outermost V1 payload, not at the payloads it nests,
+    attributing the warning ``stacklevel`` frames up from the warning call.
+    """
+    if _READING_V1.get():
+        return read()
+    _warn_v1_read(class_type, stacklevel=stacklevel)
+    token = _READING_V1.set(True)
+    try:
+        return read()
+    finally:
+        _READING_V1.reset(token)
+
+
+def _warn_v1_read(class_type: type, *, stacklevel: int = 2) -> None:
+    """Warn that a reader of ``class_type`` met a deprecated V1 payload.
+
+    The default ``stacklevel`` names the caller of the extension's reader,
+    which calls this without a Python frame of its own.
+    """
+    if _READING_V1.get():
+        return
+    warnings.warn(
+        f'Reading the V1 wire format (a "{class_type.__name__}" payload) is '
+        f"deprecated and will be removed in {_V1_REMOVAL}; convert stored "
+        "payloads with fhy_core.serialization.upgrade_v1_payload.",
+        DeprecationWarning,
+        stacklevel=stacklevel,
+    )
+
+
+def _is_v1_envelope(data: Any) -> bool:
+    """Return whether ``data`` is a V1 family payload.
+
+    It is one when it holds an envelope key: a well-formed envelope, or a
+    malformed one, which the V1 reader refuses with its own errors; no V2
+    payload has such a key. Inside a V1 payload being read, every nested
+    payload is read as V1, so a malformed one fails as V1 fails.
+    """
+    return _READING_V1.get() or (
+        isinstance(data, dict) and ("__type__" in data or "__data__" in data)
+    )
+
+
+def _dump_canonical_json(payload: Any) -> str:
+    """Return the canonical V2 text of ``payload``.
+
+    Compact separators, keys in the order written, and non-ASCII text as
+    itself rather than escaped, as ``serde_json::to_string`` writes the
+    same value.
+
+    Raises:
+        SerializationValueError: If the payload holds ``NaN`` or an infinity.
+    """
+    try:
+        return json.dumps(
+            payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        )
+    except ValueError as exc:
+        raise SerializationValueError(
+            "a JSON-finite numeric payload (no NaN or Infinity)", payload
+        ) from exc
 
 
 class SerializationFormat(StrEnum):
@@ -508,7 +668,8 @@ def serialize_registry_wrapped_value(value: RegistryWrappedValue) -> SerializedD
     """Serialize a scalar/serializable value into a wrapped registry dict.
 
     Frozenset elements are sorted by ``repr`` so the wrapped form is
-    deterministic across processes.
+    deterministic across processes. This is the V1 form of a value, which
+    V1 payloads hold; `serialize_value` writes the V2 form.
 
     Raises:
         SerializationTypeError: If ``value`` is not a supported leaf,
@@ -621,6 +782,8 @@ def _deserialize_registry_wrapped_container_value(
 def deserialize_registry_wrapped_value(data: SerializedDict) -> RegistryWrappedValue:
     """Deserialize a wrapped registry dict to scalar/serializable value.
 
+    This reads the V1 form of a value; `deserialize_value` reads the V2 form.
+
     Raises:
         DeserializationDictStructureError: If ``data`` is not a valid wrapped
             registry dict.
@@ -656,6 +819,116 @@ def deserialize_registry_wrapped_value(data: SerializedDict) -> RegistryWrappedV
     return obj
 
 
+def serialize_value(value: RegistryWrappedValue) -> SerializedDict:
+    """Return the V2 form of a member value, as the Rust core writes a value.
+
+    ``{"bool": b}``, ``{"int": "12"}``, ``{"float": "1.5"}``, ``{"str": ..}``,
+    ``{"identifier": {"id": .., "name_hint": ..}}`` for an ``Identifier``,
+    ``{"tuple": [..]}``, ``{"frozen_set": [..]}`` (in the canonical member
+    order), or ``{"opaque": <foreign part>}`` for another ``Serializable``.
+
+    Raises:
+        SerializationTypeError: If ``value`` is not a supported leaf,
+            ``tuple``, ``frozenset``, or ``Serializable``.
+    """
+    from . import _rs  # noqa: PLC0415  # the extension imports this module
+
+    return _rs.serialize_wire_value(value)
+
+
+def deserialize_value(data: SerializedDict) -> RegistryWrappedValue:
+    """Return the member value of its V2 form, the inverse of `serialize_value`.
+
+    An identifier written as an opaque part, ``{"opaque": {"type_id": "id",
+    ..}}``, as 0.2.0 wrote it, reads as an ``Identifier`` too.
+
+    Raises:
+        DeserializationValueError: If ``data`` is not the V2 form of a value.
+        UnknownTypeIdError: If an opaque part's type id is not registered.
+    """
+    from . import _rs  # noqa: PLC0415  # the extension imports this module
+
+    return _rs.deserialize_wire_value(data)  # type: ignore[no-any-return]
+
+
+def _serialize_ordering_payload(value: "Serializable") -> SerializedDict:
+    """Return the V2 payload of ``value``, whatever version is being written.
+
+    The extension keys a ``Serializable`` member by it, so a member's key,
+    and so its place in the canonical member order, does not depend on the
+    version in effect when the member was read.
+    """
+    token = _WIRE_VERSION.set(WireVersion.V2)
+    try:
+        return value.serialize_to_dict()
+    finally:
+        _WIRE_VERSION.reset(token)
+
+
+def upgrade_v1_payload(
+    payload: SerializedObject, cls: type["Serializable"] | None = None
+) -> SerializedObject:
+    """Return the V2 payload of the V1 payload ``payload``, in the same format.
+
+    A dict gives a dict, JSON text a ``str`` and a binary blob ``bytes``. A
+    family envelope and a binary blob name their own class; any other dict
+    or JSON payload, such as a ``Param``'s or a ``SymbolTable``'s, needs
+    ``cls``. Classes are looked up in the registry only, so the modules
+    defining the payload's classes must be imported first. The V1 reader's
+    ``DeprecationWarning`` is not emitted. Removed with the V1 wire format.
+
+    Args:
+        payload: A V1 payload: a dict, JSON text as ``str`` or ``bytes``, or
+            a binary blob (starting with the ``FhYS`` magic).
+        cls: The class of a payload that is not a family envelope.
+
+    Returns:
+        The V2 payload, in the format given.
+
+    Raises:
+        SerializationError: If the payload cannot be read, or its class is
+            neither given nor named by the payload.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        if (
+            isinstance(payload, (bytes, bytearray, memoryview))
+            and bytes(payload[:4]) == _MAGIC
+        ):
+            obj = _loads_from_binary(payload)
+            token = _WIRE_VERSION.set(WireVersion.V2)
+            try:
+                return obj.to_bytes()
+            finally:
+                _WIRE_VERSION.reset(token)
+        as_text = isinstance(payload, (str, bytes, bytearray))
+        if as_text:
+            text = (
+                payload
+                if isinstance(payload, str)
+                else _decode_utf8(payload, context="JSON payload")  # type: ignore[arg-type]
+            )
+            data = _loads_json(text, context="JSON payload")
+        else:
+            data = payload
+        if not is_serialized_dict(data):
+            raise SerializationPayloadTypeError(SerializationFormat.DICT, dict, data)
+        if cls is None:
+            if not _is_v1_envelope(data) or not isinstance(
+                data.get(_WRAPPED_TYPE_KEY), str
+            ):
+                raise SerializationError(
+                    "The payload is not a family envelope; name its class with cls."
+                )
+            cls = _resolve_type_id(data[_WRAPPED_TYPE_KEY])  # type: ignore[arg-type]
+        obj = cls.deserialize_from_dict(data)
+    token = _WIRE_VERSION.set(WireVersion.V2)
+    try:
+        return obj.to_json() if as_text else obj.serialize_to_dict()
+    finally:
+        _WIRE_VERSION.reset(token)
+
+
 @overload
 def register_serializable(
     cls: type[_T], *, type_id: str | None = ..., alias: bool = ...
@@ -678,10 +951,18 @@ def register_serializable(
         cls: The class to register. Can be provided directly or via a decorator.
         type_id: The type id to register under. If omitted, uses the class' existing
             `_SERIALIZATION_CLASS_TYPE_ID` if present.
-        alias: If True, register `type_id` as an additional (legacy) id for the class
+        alias: If True, register `type_id` as an additional id for the class
             without changing the class' canonical `_SERIALIZATION_CLASS_TYPE_ID`.
             If False (default), `type_id` is treated as the canonical id: it will be
             set on the class (if not already set) and must match if already set.
+
+    Raises:
+        SerializationError: If another class is registered under the type id,
+            if a ``Variable`` or ``Alternative`` kind a downstream Rust crate
+            defines is registered under it (decoding asks the kinds first, so
+            the class could not read its own payloads back), or if the class
+            already has a different canonical type id. The class and the
+            registry are left unchanged.
     """
 
     def _wrapper(c: type[_T]) -> type[_T]:
@@ -696,6 +977,16 @@ def register_serializable(
             raise SerializationError(
                 f'Duplicate registration for type_id "{ty_id}": '
                 f"{_TYPE_REGISTRY[ty_id]} already registered; refusing to override."
+            )
+
+        from . import _rs  # noqa: PLC0415  # the extension imports this module
+
+        kind_class = _rs.get_search_space_kind_class(ty_id)
+        if kind_class is not None:
+            raise SerializationError(
+                f'Duplicate registration for type_id "{ty_id}": '
+                f"{kind_class} already registered as a Rust search-space kind; "
+                "refusing to override."
             )
 
         if type_id is not None and not alias:
@@ -716,7 +1007,10 @@ def register_serializable(
 
 
 _MAGIC: bytes = b"FhYS"
-_VERSION: int = 1
+_VERSION: int = 2
+"""The envelope version of a V2 payload."""
+_VERSION_V1: int = 1
+"""The envelope version of a V1 payload. V1: removed with the V1 wire format."""
 # MAGIC(4) | VERSION(u8) | CODEC(u8) | type_id_len(u16)
 _HEADER_STRUCT = struct.Struct("!4sBBH")
 _PAYLOAD_LEN_STRUCT = struct.Struct("!I")
@@ -744,7 +1038,8 @@ def _dump_to_binary(obj: "Serializable") -> bytes:
     if len(payload_bytes) > 0xFFFFFFFF:  # noqa: PLR2004  # pragma: no cover
         raise SerializationError("payload too large (>4GB).")
 
-    header = _HEADER_STRUCT.pack(_MAGIC, _VERSION, codec_u8, len(type_id))
+    version = _VERSION if _WIRE_VERSION.get() is WireVersion.V2 else _VERSION_V1
+    header = _HEADER_STRUCT.pack(_MAGIC, version, codec_u8, len(type_id))
     payload_len = _PAYLOAD_LEN_STRUCT.pack(len(payload_bytes))
     return header + type_id + payload_len + payload_bytes
 
@@ -782,9 +1077,10 @@ def _loads_from_binary(
         raise SerializationError(
             "Bad magic header; not a recognized serialization blob."
         )
-    if version != _VERSION:
+    if version not in (_VERSION, _VERSION_V1):
         raise VersionMismatchError(
-            f"Unsupported version {version}; expected {_VERSION}."
+            f"Unsupported version {version}; expected {_VERSION} "
+            f"(or the deprecated {_VERSION_V1})."
         )
 
     try:
@@ -823,6 +1119,12 @@ def _loads_from_binary(
         codec.value,
         payload_len,
     )
+    if version == _VERSION_V1:
+        return _read_v1(
+            cls,
+            lambda: cls.deserialize_from_binary(payload_bytes, codec=codec),
+            stacklevel=5,
+        )
     return cls.deserialize_from_binary(payload_bytes, codec=codec)
 
 
@@ -877,7 +1179,7 @@ class FieldCodec(Protocol):
 _SERIALIZE_SETUP_FLAG: Final[str] = "_fhy_serialize_setup_done"
 # Serialization plans are built once per class and cached forever; this assumes
 # a class's dataclass field schema is frozen after first use (see the matching
-# note on ``_PLAN_CACHE`` in ``traits/derived_equivalence.py``).
+# note on ``_PLAN_CACHE`` in ``term/derived_equivalence.py``).
 _SERIALIZE_PLAN_CACHE: dict[type, dict[str, FieldCodec]] = {}
 _FIELD_CODEC_REGISTRY: dict[type, FieldCodec] = {}
 
@@ -1426,7 +1728,7 @@ class Serializable(ABC):
         return local or _get_default_type_id(cls)
 
     @classmethod
-    def construct_from_fields(cls: type[_T], fields: dict[str, Any]) -> _T:
+    def construct_from_fields(cls: type[_T], fields: Mapping[str, Any]) -> _T:
         """Build an instance from already-decoded fields.
 
         Default reconstruction for derived ``deserialize_from_dict``. Override
@@ -1489,6 +1791,8 @@ class Serializable(ABC):
             raise CodecMismatchError(
                 f'Class "{type(self)}" does not implement binary codec "{codec}".'
             )
+        if _WIRE_VERSION.get() is WireVersion.V2:
+            return self.to_json().encode("utf-8")
         payload_dict = self.serialize_to_dict()
         try:
             return json.dumps(
@@ -1534,10 +1838,7 @@ class Serializable(ABC):
 
         if codec is BinaryPayloadCodec.JSON:
             text = _decode_utf8(payload, context="binary JSON payload")
-            payload_obj = _loads_json(text, context="binary JSON payload")
-            if not is_serialized_dict(payload_obj):
-                raise SerializationError("Payload did not decode to an object/dict.")
-            return cls.deserialize_from_dict(payload_obj)
+            return cls.from_json(text)
 
         raise UnknownCodecError(f'Unsupported codec "{codec}".')
 
@@ -1608,12 +1909,22 @@ class Serializable(ABC):
         else:
             raise SerializationError(f"Unsupported format: {fmt}")
 
-    def to_json(self, *, indent: int | None = None, sort_keys: bool = True) -> str:
+    def to_json(
+        self, *, indent: int | None = None, sort_keys: bool | None = None
+    ) -> str:
         """Serialize this object to a JSON string.
+
+        Under V2 (the default) with no arguments, returns the canonical text:
+        compact, keys in the order written, UTF-8, which for a value the
+        Rust core defines is byte-identical to the core's
+        ``serde_json::to_string``. ``indent`` or ``sort_keys=True``
+        re-formats it, equal by value. Under V1, returns the V1 text, keys
+        sorted unless ``sort_keys=False``.
 
         Args:
             indent: If specified, the JSON string is formatted with this indent level.
-            sort_keys: Whether to sort the keys in the JSON output.
+            sort_keys: Whether to sort the keys in the JSON output; by
+                default, not under V2 and so under V1.
 
         Returns:
             A JSON string representation of this object.
@@ -1625,6 +1936,23 @@ class Serializable(ABC):
 
         """
         payload = self.serialize_to_dict()
+        if _WIRE_VERSION.get() is WireVersion.V2:
+            if indent is None and not sort_keys:
+                return _dump_canonical_json(payload)
+            try:
+                return json.dumps(
+                    payload,
+                    indent=indent,
+                    sort_keys=bool(sort_keys),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+            except ValueError as exc:
+                raise SerializationValueError(
+                    "a JSON-finite numeric payload (no NaN or Infinity)", payload
+                ) from exc
+        if sort_keys is None:
+            sort_keys = True
         try:
             return json.dumps(
                 payload,
@@ -1743,17 +2071,87 @@ class WrappedFamilySerializable(Serializable, ABC):
         "serialize_data_to_dict",
         "deserialize_data_from_dict",
     )
+    _WIRE_FAMILY: ClassVar[str | None] = None
+    """The Rust family whose V2 form a family the Rust core backs writes.
+
+    Set on the families whose built-in members run on the Rust core and
+    whose base is a Python class (``Constraint``, ``ConstraintSystem``,
+    ``ParamDomain``, ``SymbolTableFrame``): their V2 payloads are the
+    core's, written and read by the extension, and a Python-defined member
+    writes its foreign part under the family's ``custom`` variant, as the
+    core writes it inside a Rust value.
+    """
 
     @override
     def serialize_to_dict(self) -> SerializedDict:
-        return {
-            _WRAPPED_TYPE_KEY: self.get_serialization_class_type_id(),
-            _WRAPPED_DATA_KEY: self.serialize_data_to_dict(),
-        }
+        if _WIRE_VERSION.get() is WireVersion.V1:
+            return _write_v1_envelope(self)
+        family = self._WIRE_FAMILY
+        if family is not None:
+            from . import _rs  # noqa: PLC0415  # the extension imports this module
+
+            return _rs.encode_wire_dict(family, self)
+        return {self.get_serialization_class_type_id(): self.serialize_data_to_dict()}
+
+    @override
+    def to_json(
+        self, *, indent: int | None = None, sort_keys: bool | None = None
+    ) -> str:
+        family = self._WIRE_FAMILY
+        if (
+            family is None
+            or indent is not None
+            or sort_keys
+            or _WIRE_VERSION.get() is WireVersion.V1
+        ):
+            return super().to_json(indent=indent, sort_keys=sort_keys)
+        from . import _rs  # noqa: PLC0415  # the extension imports this module
+
+        return _rs.encode_wire_json(family, self)
+
+    @classmethod
+    @override
+    def from_json(cls: type[_F], payload: str | bytes | bytearray) -> _F:
+        family = cls._WIRE_FAMILY
+        if family is None:
+            return super().from_json(payload)
+        from . import _rs  # noqa: PLC0415  # the extension imports this module
+
+        return _rs.decode_wire_family_json(family, cls, payload)  # type: ignore[no-any-return]
 
     @classmethod
     @override
     def deserialize_from_dict(cls: type[_F], data: SerializedDict) -> _F:
+        if _is_v1_envelope(data):
+            return _read_v1(cls, lambda: cls._deserialize_v1_envelope(data))
+        family = cls._WIRE_FAMILY
+        if family is not None:
+            from . import _rs  # noqa: PLC0415  # the extension imports this module
+
+            return _rs.decode_wire_family(family, cls, data)  # type: ignore[no-any-return]
+        if not isinstance(data, dict) or len(data) != 1:
+            raise DeserializationDictStructureError(
+                cls, {"<type id>": dict}, data if isinstance(data, dict) else {}
+            )
+        ((class_type_id, object_data),) = data.items()
+        if not is_serialized_dict(object_data):
+            raise DeserializationValueError(
+                cls, class_type_id, "a serialized dict payload", object_data
+            )
+        concrete_class = _resolve_type_id(class_type_id)
+        if not issubclass(concrete_class, cls):
+            raise SerializationError(
+                f'Wrapped type "{concrete_class}" is not a subclass of expected '
+                f'family "{cls}".'
+            )
+        return concrete_class.deserialize_data_from_dict(object_data)
+
+    @classmethod
+    def _deserialize_v1_envelope(cls: type[_F], data: SerializedDict) -> _F:
+        """Return the object of the V1 envelope ``data``, a member of ``cls``.
+
+        V1: removed with the V1 wire format.
+        """
         expected_keys = {_WRAPPED_TYPE_KEY, _WRAPPED_DATA_KEY}
         if not isinstance(data, dict) or set(data) != expected_keys:
             # Reject missing required keys *and* any unexpected extra keys, so
@@ -1816,6 +2214,59 @@ class WrappedFamilySerializable(Serializable, ABC):
 
         """
         return cast(_F, _derived_deserialize_from_dict(cls, data))
+
+
+def _write_v1_envelope(obj: WrappedFamilySerializable) -> SerializedDict:
+    """Return the V1 envelope of the family member ``obj``.
+
+    V1: removed with the V1 wire format.
+    """
+    return {
+        _WRAPPED_TYPE_KEY: obj.get_serialization_class_type_id(),
+        _WRAPPED_DATA_KEY: obj.serialize_data_to_dict(),
+    }
+
+
+def _foreign_payload(obj: Any, *, family: bool) -> tuple[str, str]:
+    """Return the type id and the canonical V2 text of the Python-defined part ``obj``.
+
+    A member of a family writes its data, ``serialize_data_to_dict()``; any
+    other value its whole payload, ``serialize_to_dict()``. The extension
+    calls this for each Python-defined part of a Rust value it writes.
+
+    Raises:
+        SerializationTypeError: If ``obj`` is not a ``Serializable``.
+    """
+    if not isinstance(obj, Serializable):
+        raise SerializationTypeError(type(obj))
+    if family and isinstance(obj, WrappedFamilySerializable):
+        payload = obj.serialize_data_to_dict()
+    else:
+        payload = obj.serialize_to_dict()
+    return obj.get_serialization_class_type_id(), _dump_canonical_json(payload)
+
+
+def _resolve_foreign(type_id: str, data: str, *, family: bool) -> "Serializable":
+    """Return the Python-defined part a foreign part ``(type_id, data)`` encodes.
+
+    The inverse of `_foreign_payload`: the class is looked up in the
+    registry only, and reads ``data`` with ``deserialize_data_from_dict``
+    for a family member and ``deserialize_from_dict`` otherwise.
+
+    Raises:
+        UnknownTypeIdError: If ``type_id`` is not registered.
+        MalformedPayloadError: If ``data`` is not JSON text.
+        DeserializationValueError: If ``data`` is not a JSON object.
+    """
+    cls = _resolve_type_id(type_id)
+    payload = _loads_json(data, context=f'foreign part "{type_id}"')
+    if not is_serialized_dict(payload):
+        raise DeserializationValueError(
+            f'The foreign part "{type_id}" holds no payload dict: {payload!r}.'
+        )
+    if family and issubclass(cls, WrappedFamilySerializable):
+        return cls.deserialize_data_from_dict(payload)
+    return cls.deserialize_from_dict(payload)
 
 
 def register_field_codec(tp: type, codec: FieldCodec) -> None:

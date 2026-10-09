@@ -2,9 +2,7 @@
 
 __all__ = ["Canonicalizable"]
 
-from typing import Protocol, runtime_checkable
-
-from fhy_core.utils import Self
+from typing import Protocol, Self, runtime_checkable
 
 
 @runtime_checkable

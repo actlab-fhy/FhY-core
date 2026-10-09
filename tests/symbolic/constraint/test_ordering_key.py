@@ -1,0 +1,342 @@
+"""Tests for `Constraint.build_ordering_key`.
+
+`ConstraintSystem` orders its members by this key and the param layer's
+constraint tuple inherits that order, so its contract -- constant on
+structural-equivalence classes, distinct across kinds and member sets,
+and supplied by every concrete subclass including third-party ones -- is
+pinned directly here rather than only observed indirectly through
+`ConstraintSystem`'s canonical order.
+"""
+
+import math
+import pickle
+from dataclasses import dataclass, field
+from enum import IntEnum
+
+import pytest
+
+from fhy_core.identifier import Identifier
+from fhy_core.symbolic.constraint import (
+    Constraint,
+    ConstraintBindings,
+    ConstraintOutcome,
+    EquationConstraint,
+    InSetConstraint,
+    NotInSetConstraint,
+    create_constraint_system,
+)
+from fhy_core.symbolic.expression import (
+    BinaryOperation,
+    Expression,
+    LiteralExpression,
+    logical_and,
+    logical_or,
+    make_binary_expression,
+)
+from fhy_core.term import compared_as_reference
+from fhy_core.utils.override import override
+
+from .conftest import HashCollidingMember, mock_identifier
+
+# =============================================================================
+# Constant on structural-equivalence classes
+# =============================================================================
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
+
+    HIGH = 3
+
+
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+@pytest.mark.parametrize(
+    ("value", "exact_value"),
+    [
+        pytest.param(_Level.HIGH, 3, id="int_subclass"),
+        pytest.param(_Measure(1.5), 1.5, id="float_subclass"),
+    ],
+)
+def test_equation_keys_a_number_subclass_literal_like_its_exact_twin(
+    value: float, exact_value: float
+) -> None:
+    """Test a literal built from a number subclass keys as the exact number.
+
+    The literal holds the exact number, so the key, which renders the
+    literal's equivalence class, cannot tell the two constructions apart.
+    """
+    x = mock_identifier("x", 0)
+
+    def build(bound: float) -> EquationConstraint:
+        return EquationConstraint(
+            make_binary_expression(BinaryOperation.LESS, x, LiteralExpression(bound))
+        )
+
+    assert build(value).build_ordering_key() == build(exact_value).build_ordering_key()
+
+
+def test_equal_keys_for_in_set_constraints_built_in_different_member_orders() -> None:
+    """Test two `InSetConstraint`s over the same members key alike regardless of order.
+
+    The members collide on hash and are given in opposite orders; both
+    constraints store them in the canonical order, and the keys agree.
+    """
+    x = mock_identifier("x", 0)
+    members = [HashCollidingMember(1), HashCollidingMember(2)]
+    left = InSetConstraint(x, list(members))
+    right = InSetConstraint(x, list(reversed(members)))
+
+    # Both store their members in canonical order.
+    assert left.values == right.values
+    assert left.build_ordering_key() == right.build_ordering_key()
+
+
+def test_equal_keys_for_equation_constraints_built_from_equivalent_expressions() -> (
+    None
+):
+    """Test two structurally equivalent `EquationConstraint`s key alike."""
+    x = mock_identifier("x", 0)
+    left = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 5))
+    right = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 5))
+
+    assert left.is_structurally_equivalent(right)
+    assert left.build_ordering_key() == right.build_ordering_key()
+
+
+def test_equal_keys_for_constraints_over_independently_built_identifiers() -> None:
+    """Test the key reads an identifier through its `id`, not object identity."""
+    x1 = mock_identifier("x", 0)
+    x2 = mock_identifier("x", 0)
+    left = InSetConstraint(x1, {1, 2})
+    right = InSetConstraint(x2, {1, 2})
+
+    assert x1 is not x2
+    assert left.build_ordering_key() == right.build_ordering_key()
+
+
+def test_equations_over_separately_produced_nans_are_equivalent_and_key_alike() -> None:
+    """Test equations over two different NaN objects agree on equivalence and key.
+
+    NaN compares unequal to itself, so an equivalence that compared the
+    stored ``float`` objects would split two equations the key puts
+    together, breaking the key's contract of being constant on
+    equivalence classes.
+    """
+    x = mock_identifier("x", 0)
+    left = EquationConstraint(
+        make_binary_expression(BinaryOperation.LESS, x, float("nan"))
+    )
+    right = EquationConstraint(
+        make_binary_expression(BinaryOperation.LESS, x, math.inf - math.inf)
+    )
+
+    assert left.is_structurally_equivalent(right)
+    assert left.build_ordering_key() == right.build_ordering_key()
+
+
+def test_equation_over_a_nan_literal_matches_its_pickle_round_trip() -> None:
+    """Test a NaN-bearing equation and its unpickled copy are equivalent."""
+    constraint = EquationConstraint(
+        make_binary_expression(
+            BinaryOperation.LESS, LiteralExpression(1.0), LiteralExpression(math.nan)
+        )
+    )
+
+    restored = pickle.loads(pickle.dumps(constraint))
+
+    assert constraint.is_structurally_equivalent(restored)
+    assert constraint.build_ordering_key() == restored.build_ordering_key()
+
+
+def test_keys_agree_for_in_set_constraints_over_negative_and_positive_zero() -> None:
+    """Test an `InSetConstraint` over -0.0 and one over 0.0 key alike."""
+    x = mock_identifier("x", 0)
+    negative_zero = InSetConstraint(x, {-0.0})
+    positive_zero = InSetConstraint(x, {0.0})
+
+    assert negative_zero.build_ordering_key() == positive_zero.build_ordering_key()
+
+
+# =============================================================================
+# Distinctness across kinds and member sets
+# =============================================================================
+
+
+def test_distinct_keys_across_kinds_for_the_same_variable() -> None:
+    """Test `InSetConstraint` and `NotInSetConstraint` over the same variable differ."""
+    x = mock_identifier("x", 0)
+    in_set = InSetConstraint(x, {1, 2})
+    not_in_set = NotInSetConstraint(x, {1, 2})
+
+    assert in_set.build_ordering_key() != not_in_set.build_ordering_key()
+
+
+def test_distinct_keys_across_different_variables() -> None:
+    """Test the same member set over two different variables keys apart."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    left = InSetConstraint(x, {1, 2})
+    right = InSetConstraint(y, {1, 2})
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
+def test_distinct_keys_across_different_member_sets() -> None:
+    """Test a strict superset member set keys apart from the subset."""
+    x = mock_identifier("x", 0)
+    left = InSetConstraint(x, {1, 2})
+    right = InSetConstraint(x, {1, 2, 3})
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
+def test_distinct_keys_for_type_strict_members() -> None:
+    """Test members differing only by type (`1` vs `True`) key apart."""
+    x = mock_identifier("x", 0)
+    left = InSetConstraint(x, [1])
+    right = InSetConstraint(x, [True])
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
+def test_distinct_keys_for_different_equation_expressions() -> None:
+    """Test two equations over different expressions key apart."""
+    x = mock_identifier("x", 0)
+    left = EquationConstraint(LiteralExpression(True))
+    right = EquationConstraint(make_binary_expression(BinaryOperation.LESS, x, 5))
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
+def test_distinct_keys_for_a_conjunction_and_a_disjunction_of_one_operand_list() -> (
+    None
+):
+    """Test ``a && b`` and ``a || b`` key apart: the key renders the connective."""
+    a = mock_identifier("a", 0)
+    b = mock_identifier("b", 1)
+    operands = (
+        make_binary_expression(BinaryOperation.LESS, a, 5),
+        make_binary_expression(BinaryOperation.LESS, b, 5),
+    )
+    left = EquationConstraint(logical_and(*operands))
+    right = EquationConstraint(logical_or(*operands))
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
+def test_distinct_keys_for_conjunctions_of_different_operand_counts() -> None:
+    """Test ``a && b`` keys apart from ``a && b && c``, and from ``a && (b && c)``."""
+    a, b, c = (
+        make_binary_expression(BinaryOperation.LESS, mock_identifier(name, index), 5)
+        for index, name in enumerate("abc")
+    )
+
+    keys = {
+        EquationConstraint(logical_and(a, b)).build_ordering_key(),
+        EquationConstraint(logical_and(a, b, c)).build_ordering_key(),
+        EquationConstraint(logical_and(a, logical_and(b, c))).build_ordering_key(),
+    }
+
+    assert len(keys) == 3
+
+
+def test_distinct_keys_for_equations_over_decimals_past_default_precision() -> None:
+    """Test `x == literal` keys apart for decimals differing in their 30th digit.
+
+    ``Decimal``'s default context rounds to 28 significant digits, so a
+    key built through that default context would collapse the two
+    equations onto the same key.
+    """
+    x = mock_identifier("x", 0)
+    left = EquationConstraint(
+        make_binary_expression(BinaryOperation.EQUAL, x, "1." + "0" * 28 + "1")
+    )
+    right = EquationConstraint(
+        make_binary_expression(BinaryOperation.EQUAL, x, "1." + "0" * 28 + "2")
+    )
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
+# =============================================================================
+# A third-party `Constraint` subclass supplies its own key
+# =============================================================================
+
+
+@dataclass(frozen=True, eq=False)
+class _ThirdPartyConstraint(Constraint):
+    """A `Constraint` subclass declared outside `fhy_core.symbolic.constraint`.
+
+    The subclassing contract requires an ordering key, so a kind this
+    package knows nothing about keys on its own fields and takes its
+    place in a system's canonical order like any built-in leaf.
+    """
+
+    variable: Identifier = field(metadata=compared_as_reference())
+
+    @override
+    def get_free_identifiers(self) -> frozenset[Identifier]:
+        return frozenset({self.variable})
+
+    @override
+    def evaluate_with_bindings(self, bindings: ConstraintBindings) -> ConstraintOutcome:
+        return ConstraintOutcome.UNDECIDED
+
+    @override
+    def convert_to_expression(self) -> Expression:
+        return LiteralExpression(True)
+
+    @override
+    def build_ordering_key(self) -> str:
+        return f"_ThirdPartyConstraint|{self.variable.id}"
+
+    @override
+    def __repr__(self) -> str:
+        return f"_ThirdPartyConstraint(marker={self.variable!r})"
+
+    @override
+    def __str__(self) -> str:
+        return "_ThirdPartyConstraint"
+
+
+def test_third_party_subclass_supplies_its_own_ordering_key() -> None:
+    """Test an out-of-package subclass keys on its own fields."""
+    x = mock_identifier("x", 0)
+    constraint = _ThirdPartyConstraint(x)
+
+    key = constraint.build_ordering_key()
+
+    assert key == f"_ThirdPartyConstraint|{x.id}"
+
+
+def test_third_party_subclass_ordering_key_distinguishes_distinct_instances() -> None:
+    """Test two third-party instances over different variables key apart."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    left = _ThirdPartyConstraint(x)
+    right = _ThirdPartyConstraint(y)
+
+    assert left.build_ordering_key() != right.build_ordering_key()
+
+
+# =============================================================================
+# `ConstraintSystem` orders its members by exactly this key
+# =============================================================================
+
+
+def test_constraint_system_member_order_matches_the_key_for_a_third_party_kind() -> (
+    None
+):
+    """Test a system with a third-party `Constraint` member still sorts by the key."""
+    x = mock_identifier("x", 0)
+    y = mock_identifier("y", 1)
+    members = (_ThirdPartyConstraint(y), InSetConstraint(x, {1, 2}))
+
+    system = create_constraint_system(*members)
+
+    assert list(system.constraints) == sorted(
+        members, key=lambda member: member.build_ordering_key()
+    )

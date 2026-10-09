@@ -1,0 +1,60 @@
+[package]
+name = "fhy-core"
+description = "Core IR building blocks for the FhY compiler: identifiers, interned tags, diagnostics, symbolic expressions, rewrite rules, a pass manager, a solver with pluggable backends, constraints, params, lattices, the IR type system, a symbol table, and a stack and a scope."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/fhy-core"
+keywords = ["compiler", "ir", "symbolic", "term-rewriting", "pass-manager"]
+categories = ["compilers", "data-structures"]
+# Ship the sources, the integration tests and their golden JSON; never the
+# Python corpus generators. Cargo.toml and Cargo.lock are always included.
+include = [
+    "/src/**/*.rs",
+    "/tests/**/*.rs",
+    "/tests/golden/*.json",
+    "/README.md",
+    "/LICENSE",
+]
+
+[lib]
+name = "fhy_core"
+
+[package.metadata.docs.rs]
+# Both optional backends, so docs.rs shows their items, each marked with
+# the feature it needs (`doc(cfg)` under `--cfg docsrs`). z3-sys builds
+# without libz3 for rustdoc, which links nothing.
+features = ["ndarray", "z3"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+libm = { workspace = true }
+ndarray = { workspace = true, optional = true }
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
+serde = { workspace = true }
+z3 = { workspace = true, optional = true }
+
+[features]
+# The `Z3Solver` backend of `fhy_core::solver`, which links libz3 through
+# the `z3` crate (see the README for how to choose the link method).
+z3 = ["dep:z3"]
+# The array backend of `expression::evaluate`.
+ndarray = ["dep:ndarray"]
+# Test-only, not stable API: `search_space::testing`, the checks that an
+# implementation of `Variable` or `Alternative` keeps their contract, for
+# the implementing crate's tests.
+testing = []
+
+[dev-dependencies]
+postcard = { workspace = true }
+proptest = { workspace = true }
+rstest = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

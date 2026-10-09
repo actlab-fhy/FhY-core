@@ -1,0 +1,585 @@
+"""Tests for bindings-aware `Param` validation of dependent constraints.
+
+A dependent constraint's scope extends beyond the owning parameter's own
+variable, so deciding it needs values for the other identifiers it
+references. `validate_value`, `is_value_valid`, `is_constraints_satisfied`,
+and `assign` all gain a keyword-only `bindings` mapping that supplies those
+values; the evaluation environment is `{self.variable: value}` merged with
+`bindings`. Without bindings a dependent constraint stays UNDECIDED, which
+these methods conservatively treat as invalid/unsatisfied, mirroring the
+existing conservative treatment of any undecided constraint.
+"""
+
+import re
+from collections.abc import Callable
+from enum import IntEnum
+from typing import Any
+
+import pytest
+
+from fhy_core.identifier import Identifier
+from fhy_core.symbolic.constraint import (
+    ConstraintBindings,
+    ConstraintError,
+    ConstraintOutcome,
+    EquationConstraint,
+)
+from fhy_core.symbolic.expression import (
+    BinaryExpression,
+    BinaryOperation,
+    IdentifierExpression,
+    LiteralExpression,
+    NonBooleanLogicalOperandError,
+    piecewise,
+)
+from fhy_core.symbolic.param import (
+    Param,
+    ParamError,
+    create_integer_param,
+    create_integer_param_between,
+)
+from fhy_core.symbolic.param.domains import (
+    are_all_constraints_satisfied,
+    evaluate_system_outcome,
+)
+
+from .conftest import mock_identifier
+
+
+@pytest.fixture
+def dependent_param() -> tuple[Param[int], Identifier, Identifier]:
+    """Provide a fresh integer param whose sole constraint is the dependent `x < y`."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(IdentifierExpression(x) < IdentifierExpression(y))
+    param = create_integer_param(name=x, constraints=[dependent])
+    return param, x, y
+
+
+# =============================================================================
+# `is_value_valid` / `is_constraints_satisfied` with bindings
+# =============================================================================
+
+
+@pytest.mark.sympy
+def test_is_value_valid_without_bindings_is_false_for_dependent_constraint(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test an unbound dependent constraint conservatively fails `is_value_valid`."""
+    param, _x, _y = dependent_param
+
+    assert not param.is_value_valid(3)
+
+
+@pytest.mark.sympy
+def test_is_value_valid_with_satisfying_binding_is_true(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test a binding that satisfies the dependent constraint validates the value."""
+    param, _x, y = dependent_param
+
+    assert param.is_value_valid(3, bindings={y: 5})
+
+
+@pytest.mark.sympy
+def test_is_value_valid_with_violating_binding_is_false(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test a binding that violates the dependent constraint invalidates the value."""
+    param, _x, y = dependent_param
+
+    assert not param.is_value_valid(3, bindings={y: 2})
+
+
+@pytest.mark.sympy
+def test_is_constraints_satisfied_uses_bindings_to_decide_dependent_constraint(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test `is_constraints_satisfied` decides a dependent constraint via bindings."""
+    param, _x, y = dependent_param
+
+    assert not param.is_constraints_satisfied(3)
+    assert param.is_constraints_satisfied(3, bindings={y: 5})
+    assert not param.is_constraints_satisfied(3, bindings={y: 2})
+
+
+@pytest.mark.sympy
+@pytest.mark.parametrize(
+    ("value", "extra_binding_value", "expect_valid"),
+    [
+        pytest.param(3, 5, True, id="satisfying-with-irrelevant-binding"),
+        pytest.param(3, 2, False, id="violating-with-irrelevant-binding"),
+    ],
+)
+def test_bindings_for_unreferenced_identifiers_are_ignored(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+    value: int,
+    extra_binding_value: int,
+    expect_valid: bool,
+) -> None:
+    """Test a binding for an identifier outside the constraint's scope is ignored.
+
+    An unrelated third identifier `z` is bound alongside `y`; the outcome
+    must depend only on the `y` binding, since `z` never appears in the
+    dependent constraint's scope.
+    """
+    param, _x, y = dependent_param
+    z = mock_identifier("z", 3)
+
+    result = param.is_value_valid(value, bindings={y: extra_binding_value, z: 999})
+
+    assert result is expect_valid
+
+
+# =============================================================================
+# `validate_value` message distinguishes undecided from violated
+# =============================================================================
+
+
+@pytest.mark.sympy
+def test_validate_value_accepts_value_when_binding_proves_satisfaction(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test `validate_value` does not raise once a binding decides the constraint."""
+    param, _x, y = dependent_param
+
+    param.validate_value(3, bindings={y: 5})
+
+
+@pytest.mark.sympy
+def test_validate_value_raises_could_not_be_verified_without_bindings(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test `validate_value` reports an undecided dependent constraint distinctly."""
+    param, _x, _y = dependent_param
+
+    with pytest.raises(ParamError, match="could not be verified"):
+        param.validate_value(3)
+
+
+@pytest.mark.sympy
+def test_validate_value_raises_violates_with_a_violating_binding(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test `validate_value` reports a binding-proven violation distinctly."""
+    param, _x, y = dependent_param
+
+    with pytest.raises(ParamError, match="violates constraint"):
+        param.validate_value(3, bindings={y: 2})
+
+
+@pytest.mark.sympy
+def test_validate_value_message_distinguishes_undecided_from_violated(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test the undecided and violated error messages do not cross-match."""
+    param, _x, y = dependent_param
+
+    with pytest.raises(ParamError, match="could not be verified") as undecided_info:
+        param.validate_value(3)
+    with pytest.raises(ParamError, match="violates constraint") as violated_info:
+        param.validate_value(3, bindings={y: 2})
+
+    assert "could not be verified" not in str(violated_info.value)
+    assert "violates constraint" not in str(undecided_info.value)
+
+
+# =============================================================================
+# Rebinding the parameter's own variable is ambiguous
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda param, x, value: param.validate_value(value, bindings={x: 5}),
+            id="validate_value",
+        ),
+        pytest.param(
+            lambda param, x, value: param.is_value_valid(value, bindings={x: 5}),
+            id="is_value_valid",
+        ),
+        pytest.param(
+            lambda param, x, value: param.is_constraints_satisfied(
+                value, bindings={x: 5}
+            ),
+            id="is_constraints_satisfied",
+        ),
+        pytest.param(
+            lambda param, x, value: param.assign(value, bindings={x: 5}),
+            id="assign",
+        ),
+    ],
+)
+def test_bindings_for_own_variable_raises_param_error(
+    call: Callable[[Param[int], Identifier, int], object],
+) -> None:
+    """Test a `bindings` entry for the parameter's own variable is rejected.
+
+    Binding the parameter's own variable through `bindings` while also
+    passing it as the positional `value` is an ambiguous call the caller
+    should never make; every bindings-aware method raises `ParamError`
+    instead of silently picking one of the two.
+    """
+    x = mock_identifier("x", 1)
+    param = create_integer_param(name=x)
+
+    with pytest.raises(ParamError, match="bindings must not include"):
+        call(param, x, 3)
+
+
+@pytest.mark.parametrize(
+    ("method_name", "value"),
+    [
+        (method, value)
+        for method in ("is_value_valid", "validate_value", "assign")
+        for value in (5, "not-an-int", 1.5)
+    ],
+    ids=[
+        f"{method}-{value_id}"
+        for method in ("is_value_valid", "validate_value", "assign")
+        for value_id in ("admissible", "inadmissible-string", "inadmissible-float")
+    ],
+)
+def test_own_variable_binding_raises_regardless_of_admissibility(
+    method_name: str, value: object
+) -> None:
+    """Test the own-variable bindings error surfaces for any value on every entry point.
+
+    A domain-inadmissible `value` must not short-circuit past the bindings
+    check on any of the three bindings-aware entry points: each raises the
+    same `ParamError` naming the parameter's own variable whether `value`
+    is admissible or not, so a caller bug neither surfaces nor vanishes
+    depending on an unrelated argument.
+    """
+    x = mock_identifier("x", 1)
+    param = create_integer_param_between(0, 10, name=x)
+    method = getattr(param, method_name)
+
+    with pytest.raises(ParamError, match=re.escape(repr(x))):
+        method(value, bindings={x: 3})
+
+
+def test_is_value_valid_with_well_formed_bindings_is_false_for_inadmissible_value() -> (
+    None
+):
+    """Test an unrelated binding still reports an inadmissible value as invalid."""
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    param = create_integer_param_between(0, 10, name=x)
+
+    assert param.is_value_valid("not-an-int", bindings={y: 3}) is False
+
+
+# =============================================================================
+# `assign` with bindings
+# =============================================================================
+
+
+@pytest.mark.sympy
+def test_assign_with_satisfying_bindings_matches_plain_assignment_value(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test `assign` with bindings yields the same value as an unconstrained assign."""
+    dependent, _x, y = dependent_param
+    independent = create_integer_param(name=mock_identifier("x", 1))
+
+    dependent_assignment = dependent.assign(3, bindings={y: 5})
+    independent_assignment = independent.assign(3)
+
+    assert dependent_assignment.value == independent_assignment.value == 3
+
+
+@pytest.mark.sympy
+def test_assign_without_bindings_raises_for_dependent_constraint(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test `assign` raises `ParamError` when the dependent constraint is undecided."""
+    param, _x, _y = dependent_param
+
+    with pytest.raises(ParamError, match="could not be verified"):
+        param.assign(3)
+
+
+@pytest.mark.sympy
+def test_assign_with_violating_binding_raises(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+) -> None:
+    """Test `assign` raises `ParamError` when a binding proves a violation."""
+    param, _x, y = dependent_param
+
+    with pytest.raises(ParamError, match="violates constraint"):
+        param.assign(3, bindings={y: 2})
+
+
+@pytest.mark.sympy
+def test_validate_value_reports_a_violation_that_a_later_constraint_proves() -> None:
+    """Test a provable violation is reported as such despite an earlier undecided one.
+
+    The constraint system lets a definite violation dominate
+    indeterminacy. `Param` must report the system's own outcome rather
+    than the first non-satisfied constraint in canonical order, or a
+    provably invalid value is presented as merely unverified and a caller
+    retrying with ever-more bindings never converges.
+    """
+    x = mock_identifier("x", 1)
+    y = mock_identifier("y", 2)
+    dependent = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.EQUAL, IdentifierExpression(x), IdentifierExpression(y)
+        )
+    )
+    violated = EquationConstraint(
+        BinaryExpression(
+            BinaryOperation.GREATER, IdentifierExpression(x), LiteralExpression(100)
+        )
+    )
+    param = create_integer_param(name=x, constraints=[dependent, violated])
+
+    assert (
+        param.constraint_system.evaluate_with_bindings({x: 5})
+        is ConstraintOutcome.VIOLATED
+    )
+    with pytest.raises(ParamError, match="violates constraint"):
+        param.validate_value(5)
+
+
+# =============================================================================
+# A number bound into a case condition is ill-typed, not undecided
+# =============================================================================
+
+
+def _create_case_guarded_param(x: Identifier, condition: Identifier) -> Param[int]:
+    """Create `x` constrained by `piecewise((condition, x), otherwise=0) >= 0`.
+
+    `condition` is foreign to the parameter, so only `bindings` supplies it.
+    """
+    guarded = piecewise(
+        (IdentifierExpression(condition), IdentifierExpression(x)),
+        otherwise=LiteralExpression(0),
+    )
+    return create_integer_param(name=x, constraints=[EquationConstraint(guarded >= 0)])
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda param, bindings: param.is_value_valid(3, bindings=bindings),
+            id="is_value_valid",
+        ),
+        pytest.param(
+            lambda param, bindings: param.is_constraints_satisfied(
+                3, bindings=bindings
+            ),
+            id="is_constraints_satisfied",
+        ),
+        pytest.param(
+            lambda param, bindings: param.validate_value(3, bindings=bindings),
+            id="validate_value",
+        ),
+        pytest.param(
+            lambda param, bindings: param.assign(3, bindings=bindings),
+            id="assign",
+        ),
+    ],
+)
+@pytest.mark.parametrize("number", [1, 1.5], ids=["int", "float"])
+def test_a_number_bound_into_a_case_condition_raises_on_every_entry_point(
+    call: Callable[[Param[int], ConstraintBindings], object], number: float
+) -> None:
+    """Test a binding that puts a number in a case condition raises the typed error.
+
+    Under those bindings the constraint is ill-typed rather than undecided.
+    Reporting the value as not valid, or as one that could not be
+    verified, would invite a caller to retry with more bindings a question
+    no binding can make meaningful.
+    """
+    x = mock_identifier("x", 1)
+    condition = mock_identifier("cond", 2)
+    param = _create_case_guarded_param(x, condition)
+
+    with pytest.raises(NonBooleanLogicalOperandError):
+        call(param, {condition: number})
+
+
+@pytest.mark.sympy
+@pytest.mark.parametrize(
+    ("condition_value", "value", "expected"),
+    [
+        pytest.param(True, 3, True, id="true-selects-a-non-negative-value"),
+        pytest.param(True, -3, False, id="true-selects-a-negative-value"),
+        pytest.param(False, -3, True, id="false-selects-the-fallback"),
+    ],
+)
+def test_a_boolean_bound_into_a_case_condition_still_decides(
+    condition_value: bool, value: int, expected: bool
+) -> None:
+    """Test a Boolean binding selects a branch, so only a number is refused."""
+    x = mock_identifier("x", 1)
+    condition = mock_identifier("cond", 2)
+    param = _create_case_guarded_param(x, condition)
+
+    assert (
+        param.is_value_valid(value, bindings={condition: condition_value}) is expected
+    )
+
+
+class _Level(IntEnum):
+    """An ``int`` subclass, which a literal holds as the ``int`` it denotes."""
+
+    HIGH = 3
+
+
+class _Measure(float):
+    """A ``float`` subclass, which a literal holds as the ``float`` it denotes."""
+
+
+_UNLIFTABLE_STRINGS = [
+    pytest.param("1e5", id="exponent_string"),
+    pytest.param("-1.5", id="signed_string"),
+    pytest.param("nan", id="nan_string"),
+]
+
+_NUMBER_SUBCLASS_VALUES = [
+    pytest.param(_Level.HIGH, id="int_subclass"),
+    pytest.param(_Measure(1.5), id="float_subclass"),
+]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda param, bindings: param.is_value_valid(1, bindings=bindings),
+            id="is_value_valid",
+        ),
+        pytest.param(
+            lambda param, bindings: param.is_constraints_satisfied(
+                1, bindings=bindings
+            ),
+            id="is_constraints_satisfied",
+        ),
+        pytest.param(
+            lambda param, bindings: param.validate_value(1, bindings=bindings),
+            id="validate_value",
+        ),
+        pytest.param(
+            lambda param, bindings: param.assign(1, bindings=bindings),
+            id="assign",
+        ),
+    ],
+)
+@pytest.mark.parametrize("value", _UNLIFTABLE_STRINGS)
+def test_param_bindings_method_refuses_a_value_no_literal_can_hold(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+    call: Callable[[Param[int], ConstraintBindings], object],
+    value: str,
+) -> None:
+    """Test such a binding raises `ConstraintError` from every bindings-aware method.
+
+    Each documents `ConstraintError` for a bound value that cannot be
+    lifted into the substitution environment, with the literal
+    constructor's own error chained as the cause.
+    """
+    param, _, y = dependent_param
+
+    with pytest.raises(ConstraintError, match=re.escape(repr(y))) as exception_info:
+        call(param, {y: value})
+
+    assert isinstance(exception_info.value.__cause__, ValueError)
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda param, x, y, value: evaluate_system_outcome(
+                param.constraint_system, {x: 1, y: value}
+            ),
+            id="evaluate_system_outcome",
+        ),
+        pytest.param(
+            lambda param, x, y, value: are_all_constraints_satisfied(
+                param.constraints, y, value
+            ),
+            id="are_all_constraints_satisfied",
+        ),
+    ],
+)
+@pytest.mark.parametrize("value", _UNLIFTABLE_STRINGS)
+def test_domain_helper_refuses_a_value_no_literal_can_hold(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+    call: Callable[[Param[int], Identifier, Identifier, Any], object],
+    value: str,
+) -> None:
+    """Test the domain helpers the parameter queries use raise it too."""
+    param, x, y = dependent_param
+
+    with pytest.raises(ConstraintError) as exception_info:
+        call(param, x, y, value)
+
+    assert isinstance(exception_info.value.__cause__, ValueError)
+
+
+@pytest.mark.sympy
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        pytest.param(
+            lambda param, bindings: param.is_value_valid(1, bindings=bindings),
+            True,
+            id="is_value_valid",
+        ),
+        pytest.param(
+            lambda param, bindings: param.is_constraints_satisfied(
+                1, bindings=bindings
+            ),
+            True,
+            id="is_constraints_satisfied",
+        ),
+        pytest.param(
+            lambda param, bindings: param.validate_value(1, bindings=bindings),
+            None,
+            id="validate_value",
+        ),
+        pytest.param(
+            lambda param, bindings: param.assign(1, bindings=bindings).value,
+            1,
+            id="assign",
+        ),
+    ],
+)
+@pytest.mark.parametrize("value", _NUMBER_SUBCLASS_VALUES)
+def test_param_bindings_method_lifts_a_number_subclass_as_the_value_it_denotes(
+    dependent_param: tuple[Param[int], Identifier, Identifier],
+    call: Callable[[Param[int], ConstraintBindings], object],
+    expected: object,
+    value: float,
+) -> None:
+    """Test such a binding decides `x < y` as the exact number it denotes.
+
+    `LiteralType` admits an `int` or `float` subclass, so every
+    bindings-aware method has to lift one; `1 < y` holds for both values.
+    """
+    param, _, y = dependent_param
+
+    assert call(param, {y: value}) == expected
+
+
+@pytest.mark.sympy
+@pytest.mark.parametrize("value", _NUMBER_SUBCLASS_VALUES)
+def test_domain_helpers_lift_a_number_subclass_as_the_value_it_denotes(
+    value: float,
+) -> None:
+    """Test the domain helpers the parameter queries use lift such a value too."""
+    x = mock_identifier("x", 1)
+    param = create_integer_param(
+        name=x, constraints=[EquationConstraint(IdentifierExpression(x) < 10)]
+    )
+
+    outcome = evaluate_system_outcome(param.constraint_system, {x: value})
+
+    assert outcome is ConstraintOutcome.SATISFIED
+    assert are_all_constraints_satisfied(param.constraints, x, value)

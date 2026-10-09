@@ -18,14 +18,22 @@ Variants:
 Combining provenances during transformations is done through
 ``Provenance.fuse``, which applies a small set of reduction rules to keep
 fusion trees compact.
-"""
 
-from fhy_core.utils.override import override
+A downstream compiler adds a provenance of its own by subclassing
+``Provenance``; the class docstring says how. A subclass must be
+immutable: a frozen dataclass is the supported way.
+
+``Position``, ``Span`` and the provenance classes are backed by the Rust
+implementation. Their arguments are type-checked at construction, and
+``FileProvenance`` stores its path as a ``pathlib.Path`` in the normal form
+``pathlib.PurePosixPath`` gives it. ``HasProvenance`` is a Python protocol.
+"""
 
 __all__ = [
     "CallSiteProvenance",
     "FileProvenance",
     "FusedProvenance",
+    "HasProvenance",
     "NamedProvenance",
     "Position",
     "Provenance",
@@ -34,9 +42,9 @@ __all__ = [
 ]
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from pathlib import Path
+from typing import Protocol, runtime_checkable
 
+from fhy_core import _rs
 from fhy_core.logger import get_logger
 from fhy_core.serialization import (
     Serializable,
@@ -45,232 +53,221 @@ from fhy_core.serialization import (
 )
 from fhy_core.traits.equality import EqualMixin
 from fhy_core.traits.frozen import FrozenMixin
-from fhy_core.utils.numeric_utils import is_strict_int
+from fhy_core.utils.override import override
 
+# The binding's `Provenance.fuse` logs its reductions through this logger.
 _LOGGER = get_logger(__name__)
 
 
 @register_serializable(type_id="position")
-@dataclass(frozen=True, slots=True, order=True)
-class Position(Serializable, FrozenMixin, EqualMixin):
-    """A 1-indexed line/column position in a source text."""
+class Position(_rs.Position, Serializable, EqualMixin):
+    """A 1-indexed line/column position in a source text.
 
-    line: int
-    column: int
+    Backed by the Rust implementation: ``fhy_core._rs.Position`` holds
+    the Rust position and implements the fields, ordering, equality,
+    hashing, ``str``, ``repr`` and payloads. This class mixes in the
+    stateless Python protocols, and is registered as a virtual subclass
+    of ``FrozenMixin``. Positions are immutable, and pickle as a call of
+    their class with their fields.
 
-    @property
-    def supports_ordering(self) -> bool:
-        """Whether this position defines a total order."""
-        return True
+    Attributes:
+        line: The 1-indexed line, a strict ``int``.
+        column: The 1-indexed column, a strict ``int``.
 
-    @property
-    def supports_partial_ordering(self) -> bool:
-        """Whether this position defines a partial order."""
-        return True
+    """
 
-    def __post_init__(self) -> None:
-        if not is_strict_int(self.line):
-            raise TypeError(
-                f'"line" must be a strict int, got {type(self.line).__name__}'
-            )
-        if not is_strict_int(self.column):
-            raise TypeError(
-                f'"column" must be a strict int, got {type(self.column).__name__}'
-            )
-        if self.line < 1:
-            raise ValueError(f'"line" must be >= 1, got {self.line}')
-        if self.column < 1:
-            raise ValueError(f'"column" must be >= 1, got {self.column}')
+    __slots__ = ()
+    __match_args__ = ("line", "column")
 
-    @override
-    def __str__(self) -> str:
-        return f"{self.line}:{self.column}"
+
+FrozenMixin.register(Position)
+Position._register_public_class()
 
 
 @register_serializable(type_id="span")
-@dataclass(frozen=True, slots=True)
-class Span(Serializable, FrozenMixin, EqualMixin):
+class Span(_rs.Span, Serializable, EqualMixin):
     """A file-agnostic byte/position range.
 
     Owned by ``FileProvenance``; does not carry a file path itself.
+    Backed by the Rust implementation: ``fhy_core._rs.Span`` holds the
+    Rust span and implements the fields, ``is_unknown``, equality,
+    hashing, ``str``, ``repr`` and payloads. This class mixes in the
+    stateless Python protocols, and is registered as a virtual subclass
+    of ``FrozenMixin``. A position must be a :class:`Position` or
+    ``None``, and raises ``TypeError`` otherwise. Spans are immutable,
+    and pickle as a call of their class with their fields.
+
+    Attributes:
+        start_offset: The byte offset the span starts at, or ``None``.
+        end_offset: The byte offset the span ends at, or ``None``.
+        start_position: The position the span starts at, or ``None``.
+        end_position: The position the span ends at, or ``None``.
+
     """
 
-    start_offset: int | None = None
-    end_offset: int | None = None
-    start_position: Position | None = None
-    end_position: Position | None = None
-
-    def __post_init__(self) -> None:
-        for offset_name, offset_value in (
-            ("start_offset", self.start_offset),
-            ("end_offset", self.end_offset),
-        ):
-            if offset_value is not None and not is_strict_int(offset_value):
-                raise TypeError(
-                    f'"{offset_name}" must be a strict int or None, got '
-                    f"{type(offset_value).__name__}"
-                )
-        if self.start_offset is not None and self.start_offset < 0:
-            raise ValueError(f'"start_offset" must be >= 0, got {self.start_offset}')
-        if self.end_offset is not None and self.end_offset < 0:
-            raise ValueError(f'"end_offset" must be >= 0, got {self.end_offset}')
-        if (
-            self.start_offset is not None
-            and self.end_offset is not None
-            and self.end_offset < self.start_offset
-        ):
-            raise ValueError(
-                '"end_offset" must be >= "start_offset", got '
-                f"{self.end_offset} < {self.start_offset}"
-            )
-        if (
-            self.start_position is not None
-            and self.end_position is not None
-            and self.end_position < self.start_position
-        ):
-            raise ValueError(
-                '"end_position" must be >= "start_position", got '
-                f"{self.end_position} < {self.start_position}"
-            )
-
-    def is_unknown(self) -> bool:
-        """Whether the span carries no offset or position information."""
-        return (
-            self.start_offset is None
-            and self.end_offset is None
-            and self.start_position is None
-            and self.end_position is None
-        )
-
-    @override
-    def __str__(self) -> str:
-        if self.is_unknown():
-            return "<unknown>"
-        if self.start_position is not None or self.end_position is not None:
-            start = str(self.start_position) if self.start_position is not None else "?"
-            end = str(self.end_position) if self.end_position is not None else "?"
-            return f"{start}-{end}"
-        start_offset = str(self.start_offset) if self.start_offset is not None else "?"
-        end_offset = str(self.end_offset) if self.end_offset is not None else "?"
-        return f"@{start_offset}-{end_offset}"
+    __slots__ = ()
+    __match_args__ = (
+        "start_offset",
+        "end_offset",
+        "start_position",
+        "end_position",
+    )
 
 
-class Provenance(WrappedFamilySerializable, FrozenMixin, EqualMixin, ABC):
-    """Origin information for a compiler object. Abstract base."""
+FrozenMixin.register(Span)
+Span._register_public_class()
+
+
+class Provenance(_rs.Provenance, WrappedFamilySerializable, EqualMixin, ABC):
+    """Origin information for a compiler object. Abstract base.
+
+    Backed by the Rust implementation: ``fhy_core._rs.Provenance`` holds
+    the Rust provenance and implements equality, hashing, ``unknown`` and
+    ``fuse``; each variant's ``_rs`` class implements its fields,
+    ``str``, ``repr`` and data payload. The classes mix in the stateless
+    Python protocols, including the ``WrappedFamilySerializable``
+    envelope, and are registered as virtual subclasses of
+    ``FrozenMixin``. Provenances are immutable, and pickle as a call of
+    their class with their fields.
+
+    A compiler defines a provenance of its own by subclassing this class,
+    for example as a frozen dataclass that implements ``__str__``,
+    registered with ``register_serializable`` and implementing
+    ``serialize_data_to_dict`` and ``deserialize_data_from_dict``. Its own
+    ``__init__`` takes the arguments, and its ``==`` and ``hash`` are its
+    own. An instance nests in each variant as itself, survives ``fuse``
+    whole, and a variant holding it compares, hashes and renders it
+    through its ``==``, ``hash`` and ``str``. It is written in the V2
+    payload as ``{"custom": {"type_id": .., "data": ..}}``, its registered
+    type id and the text of its data payload, and read back through its
+    registered class. It pickles as its class with its ``__getstate__``.
+
+    A subclass must be immutable, and a frozen dataclass is the supported
+    way: its ``==`` and ``hash`` are used while it is nested in other
+    provenances, sets and dicts, and a change to it would corrupt them.
+    ``is_frozen`` and ``assert_frozen`` answer for it honestly: it is
+    frozen exactly when its class is a frozen dataclass, and
+    ``assert_frozen`` raises ``FrozenValidationError`` otherwise.
+    """
+
+    __slots__ = ()
 
     @abstractmethod
     @override
     def __str__(self) -> str: ...
 
-    @staticmethod
-    def unknown() -> "Provenance":
-        """Return the unknown provenance sentinel."""
-        return UnknownProvenance()
 
-    @staticmethod
-    def fuse(*provenances: "Provenance", metadata: str | None = None) -> "Provenance":
-        """Return the provenance formed by fusing the given provenances."""
-        flat: list[Provenance] = []
-        pending: list[Provenance] = list(reversed(provenances))
-        unknowns_dropped = 0
-        fused_collapsed = 0
-        while pending:
-            provenance = pending.pop()
-            if isinstance(provenance, UnknownProvenance):
-                unknowns_dropped += 1
-                continue
-            if isinstance(provenance, FusedProvenance) and provenance.metadata is None:
-                fused_collapsed += 1
-                pending.extend(reversed(provenance.sources))
-                continue
-            flat.append(provenance)
-
-        if unknowns_dropped or fused_collapsed:
-            _LOGGER.debug(
-                "reduced input (inputs=%d, unknowns_dropped=%d, "
-                "fused_collapsed=%d, final_sources=%d)",
-                len(provenances),
-                unknowns_dropped,
-                fused_collapsed,
-                len(flat),
-            )
-
-        if not flat:
-            return UnknownProvenance()
-        if len(flat) == 1 and metadata is None:
-            return flat[0]
-        return FusedProvenance(sources=tuple(flat), metadata=metadata)
+# `register` takes any class, abstract or not.
+FrozenMixin.register(Provenance)  # type: ignore[type-abstract]
+Provenance._register_public_class()
 
 
 @register_serializable(type_id="provenance.unknown")
-@dataclass(frozen=True, slots=True)
-class UnknownProvenance(Provenance):
+class UnknownProvenance(_rs.UnknownProvenance, Provenance):
     """Provenance with no source information."""
 
-    @override
-    def __str__(self) -> str:
-        return "<unknown>"
+    __slots__ = ()
+    __match_args__ = ()
+
+
+UnknownProvenance._register_public_class()
 
 
 @register_serializable(type_id="provenance.file")
-@dataclass(frozen=True, slots=True)
-class FileProvenance(Provenance):
-    """Provenance pointing to a region within a source code file."""
+class FileProvenance(_rs.FileProvenance, Provenance):
+    """Provenance pointing to a region within a source code file.
 
-    file_path: Path
-    span: Span | None = None
+    ``file_path`` must be a ``str`` or an ``os.PathLike`` of a ``str``,
+    and is stored as a ``pathlib.Path`` in the normal form
+    ``pathlib.PurePosixPath`` gives it; a ``PurePath`` is read in its POSIX
+    form, so a Windows path stores ``/`` as its separator, and is kept as
+    given when already in normal form. ``span`` must be a :class:`Span` or
+    ``None``. Either raises ``TypeError`` otherwise.
 
-    @override
-    def __str__(self) -> str:
-        if self.span is None or self.span.is_unknown():
-            return str(self.file_path)
-        else:
-            return f"{self.file_path}:{self.span}"
+    Attributes:
+        file_path: The path of the file.
+        span: The region of the file, or ``None``.
+
+    """
+
+    __slots__ = ()
+    __match_args__ = ("file_path", "span")
+
+
+FileProvenance._register_public_class()
 
 
 @register_serializable(type_id="provenance.named")
-@dataclass(frozen=True, slots=True)
-class NamedProvenance(Provenance):
-    """Wraps a child provenance with a human-readable label."""
+class NamedProvenance(_rs.NamedProvenance, Provenance):
+    """Wraps a child provenance with a human-readable label.
 
-    name: str
-    child: Provenance
+    ``name`` must be a non-empty ``str`` and ``child`` a
+    :class:`Provenance`; a wrong type raises ``TypeError``.
 
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError('"name" must be non-empty')
+    Attributes:
+        name: The label.
+        child: The labelled provenance.
 
-    @override
-    def __str__(self) -> str:
-        if isinstance(self.child, UnknownProvenance):
-            return self.name
-        else:
-            return f"{self.name} ({self.child})"
+    """
+
+    __slots__ = ()
+    __match_args__ = ("name", "child")
+
+
+NamedProvenance._register_public_class()
 
 
 @register_serializable(type_id="provenance.call_site")
-@dataclass(frozen=True, slots=True)
-class CallSiteProvenance(Provenance):
-    """Provenance for a value created at a call site."""
+class CallSiteProvenance(_rs.CallSiteProvenance, Provenance):
+    """Provenance for a value created at a call site.
 
-    callee: Provenance
-    caller: Provenance
+    ``callee`` and ``caller`` must be :class:`Provenance` instances, and
+    raise ``TypeError`` otherwise.
 
-    @override
-    def __str__(self) -> str:
-        return f"{self.callee} at {self.caller}"
+    Attributes:
+        callee: The provenance of the called code.
+        caller: The provenance of the call site.
+
+    """
+
+    __slots__ = ()
+    __match_args__ = ("callee", "caller")
+
+
+CallSiteProvenance._register_public_class()
 
 
 @register_serializable(type_id="provenance.fused")
-@dataclass(frozen=True, slots=True)
-class FusedProvenance(Provenance):
-    """N provenances combined by a transformation."""
+class FusedProvenance(_rs.FusedProvenance, Provenance):
+    """N provenances combined by a transformation.
 
-    sources: tuple[Provenance, ...]
-    metadata: str | None = None
+    ``sources`` may be any iterable of :class:`Provenance` instances and
+    is stored as a tuple; ``metadata`` must be a ``str`` or ``None``.
+    Either raises ``TypeError`` otherwise.
 
-    @override
-    def __str__(self) -> str:
-        label = self.metadata if self.metadata is not None else "fused"
-        rendered_sources = ", ".join(str(source) for source in self.sources)
-        return f"{label}[{rendered_sources}]"
+    Attributes:
+        sources: The fused provenances, in order.
+        metadata: The label of the transformation, or ``None``.
+
+    """
+
+    __slots__ = ()
+    __match_args__ = ("sources", "metadata")
+
+
+FusedProvenance._register_public_class()
+
+
+@runtime_checkable
+class HasProvenance(Protocol):
+    """Protocol for objects that carry provenance information.
+
+    Provenance records an object's origin: source span, lowering steps,
+    original node, etc. The protocol lives beside :class:`Provenance`
+    rather than in :mod:`fhy_core.traits` because its signature names a
+    provenance value, which makes it vocabulary of this module rather
+    than a generic structural contract.
+    """
+
+    def get_provenance(self) -> Provenance:
+        """Return the object's provenance information."""

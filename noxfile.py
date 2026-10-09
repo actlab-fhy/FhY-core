@@ -1,15 +1,75 @@
 """Task automation for FhY Core, driven by uv-backed nox sessions."""
 
 import pathlib
+import re
+from typing import NamedTuple
 
 import nox
 
 nox.options.default_venv_backend = "uv"
 nox.options.sessions = ["lint", "type_check", "tests", "coverage"]
 
-PYTHONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+PYTHONS = ["3.11", "3.12", "3.13", "3.14"]
 ROOT = pathlib.Path(__file__).parent
-SOURCES = ["src", "tests"]
+# The golden-corpus generators are the Rust core's equivalence oracle, and the
+# benchmarks measure the package's hot paths, so both pass the same lint and
+# type gates as the package.
+SOURCES = [
+    "src",
+    "tests",
+    "benchmarks",
+    "rust/fhy-core/tests/golden",
+    # The SymPy backend's prelude, the one Python module of the binding crate.
+    "rust/fhy-core-py/src/solver/sympy",
+]
+GOLDEN_DIRECTORY = ROOT / "rust" / "fhy-core" / "tests" / "golden"
+# Where the benchmark session saves its runs (gitignored).
+BENCHMARK_DIRECTORY = ROOT / ".benchmarks"
+# The integration-test binary the expanded replays run in.
+RUST_TEST_TARGET = "it"
+# `cargo test` summary of a run that replayed one expanded corpus.
+_EXPANDED_REPLAY_PASSED = re.compile(r"^test result: ok\. 1 passed;", re.MULTILINE)
+
+
+class ExpandedGoldenCorpus(NamedTuple):
+    """How to generate and replay one generator's expanded random corpus."""
+
+    options: str
+    test_filter: str
+    variable: str
+
+
+# Expanded corpus settings for each generator under GOLDEN_DIRECTORY, keyed by
+# file name: the generator options (space-separated), the filter selecting the
+# ignored test in RUST_TEST_TARGET that replays the corpus, and the variable
+# that names the corpus file for that test.
+EXPANDED_GOLDEN_CORPORA = {
+    "generate_interned_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 2000 --max-ops 60 --keys a,b,c,d,e",
+        test_filter="interned::equivalence::",
+        variable="FHY_INTERNED_CORPUS",
+    ),
+    "generate_serialization_cases.py": ExpandedGoldenCorpus(
+        options="--seed 7 --random-count 2000 --max-ops 40",
+        test_filter="serialization_golden::",
+        variable="FHY_SERIALIZATION_CORPUS",
+    ),
+}
+
+
+# The cosmic-ray config of the mutation session; only the mutated module
+# varies. The timeout leaves about four times the suite's serial run time,
+# since cosmic-ray scores a mutant whose tests overrun it as killed.
+_MUTATION_CONFIG = """\
+[cosmic-ray]
+module-path = "{module_path}"
+timeout = 120.0
+excluded-modules = []
+test-command = "pytest -x --no-header -q -o addopts='' -m 'not slow' tests"
+
+[cosmic-ray.distributor]
+name = "local"
+"""
 
 
 def _sync(session: nox.Session, *groups: str) -> None:
@@ -47,6 +107,29 @@ def tests(session: nox.Session) -> None:
         *session.posargs,
         env={"COVERAGE_PROCESS_START": str(ROOT / "pyproject.toml")},
     )
+
+
+@nox.session
+def tests_minimal(session: nox.Session) -> None:
+    """Run the suite without the optional packages: sympy, z3-solver and NumPy.
+
+    The tests that reach a solver backend carry the `sympy` or `z3` marker,
+    and those that evaluate with NumPy the `numpy` marker; they are skipped
+    here. An unmarked test that reaches a missing backend fails with
+    `SolverBackendUnavailableError`, and one that evaluates with NumPy with
+    the NumPy evaluator's `ImportError`, so a wrong mark cannot hide.
+    """
+    _sync(session, "test-minimal")
+    session.run(
+        "python",
+        "-c",
+        "import importlib.util, sys; "
+        "installed = [name for name in ('sympy', 'z3', 'numpy') "
+        "if importlib.util.find_spec(name)]; "
+        "sys.exit(f'optional packages installed: {installed}' "
+        "if installed else 0)",
+    )
+    session.run("pytest", "-m", "slow or not slow", *session.posargs)
 
 
 @nox.session
@@ -88,16 +171,150 @@ def coverage(session: nox.Session) -> None:
 
 @nox.session
 def property(session: nox.Session) -> None:
-    """Run hypothesis-based property tests (opt-in)."""
+    """Run hypothesis-based property tests under the thorough profile.
+
+    This is the CI release gate (opt-in locally); it forces
+    ``HYPOTHESIS_PROFILE=thorough`` regardless of the caller's environment.
+    """
     _sync(session, "property")
-    # Exit 5 == no tests collected; tolerate it until property tests are added.
-    session.run("pytest", "-m", "property", *session.posargs, success_codes=[0, 5])
+    # No success_codes override: exit 5 (nothing collected) must fail, so a
+    # marker typo or a collection error cannot pass as a clean run.
+    session.run(
+        "pytest",
+        "-m",
+        "property",
+        *session.posargs,
+        env={"HYPOTHESIS_PROFILE": "thorough"},
+    )
+
+
+@nox.session(python=PYTHONS)
+def benchmark(session: nox.Session) -> None:
+    """Run the pytest-benchmark benchmarks under ``benchmarks/``.
+
+    Opt-in: neither a default session nor a CI job. Every run is saved under
+    ``.benchmarks/storage/``, so passing ``--benchmark-compare`` compares a
+    run with the previous one, and the run's results are also written to
+    ``.benchmarks/<python>.json`` for ``pytest-benchmark compare``.
+    """
+    _sync(session, "bench", "test")
+    session.run(
+        "pytest",
+        "benchmarks",
+        "--benchmark-only",
+        # pytest-benchmark disables itself under pytest-xdist, which the
+        # configured addopts turn on with `-n auto`.
+        "-n",
+        "0",
+        "--benchmark-autosave",
+        f"--benchmark-storage={BENCHMARK_DIRECTORY / 'storage'}",
+        f"--benchmark-json={BENCHMARK_DIRECTORY / f'{session.python}.json'}",
+        *session.posargs,
+    )
+
+
+@nox.session
+def golden_expanded(session: nox.Session) -> None:
+    """Replay expanded random golden corpora through the Rust equivalence tests.
+
+    The committed corpora under ``rust/fhy-core/tests/golden/`` are small enough to
+    review; each generator can also write a much larger random corpus, which
+    its equivalence test replays in an ignored test that reads the corpus
+    path from an environment variable. The session writes every expanded
+    corpus from its Python oracle into a temporary directory and runs
+    the matching ignored test on it. It needs ``cargo`` on ``PATH`` and fails
+    if a generator has no expanded settings in ``EXPANDED_GOLDEN_CORPORA``.
+    """
+    generators = sorted(GOLDEN_DIRECTORY.glob("generate_*.py"))
+    unconfigured = [
+        generator.name
+        for generator in generators
+        if generator.name not in EXPANDED_GOLDEN_CORPORA
+    ]
+    if unconfigured:
+        session.error(
+            f"no expanded corpus settings for {', '.join(unconfigured)}; "
+            "add them to EXPANDED_GOLDEN_CORPORA in noxfile.py"
+        )
+    _sync(session)
+    # Absolute: `cargo test -p fhy-core` runs its test binaries with the
+    # fhy-core crate directory as the working directory, not the repository
+    # root nox itself runs from, so a relative corpus path would miss.
+    output_directory = pathlib.Path(session.create_tmp()).resolve()
+    for generator in generators:
+        corpus = EXPANDED_GOLDEN_CORPORA[generator.name]
+        corpus_path = output_directory / (
+            generator.stem.removeprefix("generate_") + ".json"
+        )
+        # Silent: the oracles log a warning per ignored re-registration. Nox
+        # still prints the captured output if the generator fails.
+        session.run(
+            "python",
+            str(generator),
+            *corpus.options.split(),
+            "--output",
+            str(corpus_path),
+            silent=True,
+        )
+        output = session.run(
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "fhy-core",
+            "--test",
+            RUST_TEST_TARGET,
+            "--",
+            "--ignored",
+            corpus.test_filter,
+            env={corpus.variable: str(corpus_path)},
+            external=True,
+            silent=True,
+        )
+        # `cargo test` also succeeds when no test matches, so an expanded
+        # test that lost its `#[ignore]` would pass without a replay.
+        if not isinstance(output, str) or not _EXPANDED_REPLAY_PASSED.search(output):
+            session.error(
+                f"{corpus.test_filter} did not replay the expanded corpus in "
+                f"exactly one ignored test:\n{output}"
+            )
+        session.log(f"{corpus.test_filter}: the expanded corpus replayed")
 
 
 @nox.session
 def mutation(session: nox.Session) -> None:
-    """Run cosmic-ray mutation testing (opt-in)."""
+    """Run cosmic-ray mutation testing for one module (opt-in).
+
+    `nox -s mutation -- symbolic.param.core` mutates
+    `src/fhy_core/symbolic/param/core.py`.
+    """
+    if len(session.posargs) != 1:
+        session.error("name one module under fhy_core, e.g. symbolic.param.core")
+    module = session.posargs[0].removeprefix("fhy_core.")
+    source = pathlib.Path("src", "fhy_core", *module.split(".")).with_suffix(".py")
+    if not (ROOT / source).is_file():
+        session.error(f"no module fhy_core.{module} at {source}")
     _sync(session, "mutation")
-    session.run("cosmic-ray", "init", "cosmic-ray.toml", "cosmic-ray.sqlite")
-    session.run("cosmic-ray", "exec", "cosmic-ray.toml", "cosmic-ray.sqlite")
-    session.run("cr-report", "cosmic-ray.sqlite")
+    tmp = pathlib.Path(session.create_tmp()).resolve()
+    config = tmp / "cosmic-ray.toml"
+    config.write_text(
+        _MUTATION_CONFIG.format(module_path=source.as_posix()), encoding="utf-8"
+    )
+    # Every mutant has to see the same Hypothesis draws, and none may replay a
+    # counterexample saved while testing another, so the run uses the
+    # derandomized, database-free `mutation` profile from tests/conftest.py.
+    session.env["HYPOTHESIS_PROFILE"] = "mutation"
+    # Cosmic-ray scores a mutant whose test run overruns the config's timeout as
+    # killed, so stop before mutating anything if the unmutated suite fails or
+    # does not finish within that timeout.
+    session.run("cosmic-ray", "baseline", str(config))
+    database = tmp / "session.sqlite"
+    database.unlink(missing_ok=True)
+    session.run("cosmic-ray", "init", str(config), str(database))
+    session.run("cr-filter-pragma", str(database))
+    session.run("cosmic-ray", "exec", str(config), str(database))
+    report = ROOT / "mutation-report.html"
+    with report.open("w") as report_file:
+        session.run("cr-html", str(database), stdout=report_file, stderr=None)
+    session.run("cr-report", str(database))
+    session.log(f"Report: {report}")

@@ -1,4 +1,20 @@
-"""Pass manager and analysis manager infrastructure."""
+"""Pass pipelines, fixpoint groups, analyses and the records of a run.
+
+Backed by the Rust implementation (``fhy_core._rs``), with the Rust core's
+semantics:
+
+- A `PassManager` run feeds each item the previous item's output, and
+  caches analysis results per IR node for the length of the run: a pass's
+  output gains the results its input had for the analyses the pass
+  preserves, unless it has its own. Only a frozen ``Frozen`` IR is cached.
+- A run verifies its input and every output a pass reports as changed,
+  blaming the pass, with the verification passes registered for the IR's
+  type, unless ``set_verifier`` sets another verifier or turns it off.
+- A failure raises with the records of the work completed before it.
+- `AnalysisManager` is the view of a run's analyses that
+  ``CompilerPass.get_analysis_manager()`` returns during a hook; it cannot
+  be constructed, and expires when the hook returns.
+"""
 
 from fhy_core.utils.override import override
 
@@ -15,25 +31,21 @@ __all__ = [
 
 import inspect
 import logging
-import threading
 import time
-import weakref
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from collections.abc import Iterable
 from threading import Lock
-from typing import Any, ClassVar, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Self, TypeVar
 
-from fhy_core.diagnostic import Diagnostic
+from fhy_core import _rs
 from fhy_core.identifier import Identifier
 from fhy_core.logger import get_logger
-from fhy_core.traits import Frozen, FrozenMixin, HasIdentifier, PartialEqualMixin
+from fhy_core.traits import FrozenMixin, PartialEqualMixin
 
-from .core import (
-    CompilerPass,
-    PassExecutionError,
-    PassResult,
-    PreservedAnalyses,
-)
+from .core import CompilerPass, PassExecutionError
+
+if TYPE_CHECKING:
+    from .validation import ValidationManager
 
 _LOGGER = get_logger(__name__)
 
@@ -41,11 +53,13 @@ _IRType = TypeVar("_IRType")
 _AnalysisResultT = TypeVar("_AnalysisResultT")
 
 
-class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
+class Analysis(_rs.AnalysisBase, ABC, Generic[_IRType, _AnalysisResultT]):
     """Base class for reusable analyses cached by the pass manager.
 
-    Subclasses must support no-argument construction: the analysis manager
-    instantiates analyses internally via ``analysis_type()``. Optional
+    Backed by the Rust implementation: ``fhy_core._rs.AnalysisBase``. A
+    pipeline run caches an analysis's result per IR node under
+    `get_analysis_name`. Subclasses must support no-argument construction,
+    since the cache instantiates analyses with ``analysis_type()``. Optional
     keyword arguments with defaults are fine; required positional arguments
     are rejected at class-creation time with ``TypeError``.
     """
@@ -73,7 +87,7 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
                 raise TypeError(
                     f'Analysis subclass "{cls.__qualname__}" requires a no-arg '
                     f'constructor; parameter "{parameter.name}" has no default. '
-                    f"AnalysisManager instantiates analyses with no arguments."
+                    f"The analysis cache instantiates analyses with no arguments."
                 )
 
     @classmethod
@@ -102,361 +116,170 @@ class Analysis(ABC, Generic[_IRType, _AnalysisResultT]):
         """
 
 
-class AnalysisManager(Generic[_IRType]):
-    """Caches analysis results and applies preservation/invalidation rules.
+AnalysisManager = _rs.AnalysisManager
+"""The analyses of one pass run, as one hook sees them.
 
-    Thread-safe: all public methods may be called concurrently from multiple
-    threads, and the finalizer-driven cache eviction triggered by garbage
-    collection of cached IRs is also lock-guarded. Internal helper methods
-    are intended to be called only while the lock is already held; they do
-    not re-acquire it.
+``CompilerPass.get_analysis_manager()`` returns one during a hook of a pass;
+``get(analysis_type, ir)`` returns an analysis result as the pass's
+``get_analysis`` does. It has no constructor, and raises ``RuntimeError``
+once its hook returned.
+"""
 
-    Cache identity uses ``id(ir)``. Cyclic-GC delays can cause spurious
-    cache misses if a Python id is reused before the original IR's finalizer
-    fires, but they cannot produce corrupted results: the second IR simply
-    fails to register a finalizer and runs uncached.
+
+class PassRunRecord(_rs.PassRunRecord, PartialEqualMixin):
+    """Execution record for one pass run.
+
+    Backed by the Rust implementation: ``fhy_core._rs.PassRunRecord``.
+    Records are immutable, compare, hash and print as frozen dataclasses
+    do, and pickle as a call of their class.
+
+    Attributes:
+        pass_name: The name of the pass that ran.
+        changed: Whether the run changed the IR.
+        diagnostics: The run's diagnostics, in emission order.
+        preserved_analyses: The analyses the run left valid.
+        skipped: Whether the pass skipped the run.
+
     """
 
-    _cache: dict[int, dict[Identifier, Any]]
-    _finalizers: dict[int, Any]
-    _lock: threading.RLock
-
-    def __init__(self) -> None:
-        self._cache = {}
-        self._finalizers = {}
-        self._lock = threading.RLock()
-
-    def get(
-        self, analysis_type: type[Analysis[_IRType, _AnalysisResultT]], ir: _IRType
-    ) -> _AnalysisResultT:
-        """Get analysis results for IR, computing and caching when necessary.
-
-        Args:
-            analysis_type: The type of analysis to retrieve.
-            ir: The IR to analyze.
-
-        Returns:
-            The analysis result for IR.
-
-        """
-        analysis_name = analysis_type.get_analysis_name()
-        with self._lock:
-            if not self._is_cacheable_ir(ir):
-                _LOGGER.debug(
-                    "uncacheable IR id=%d, analysis=%s; computing uncached",
-                    id(ir),
-                    analysis_name,
-                )
-                self._drop_cached_ir(id(ir))
-                return analysis_type().run(ir)
-
-            ir_id = id(ir)
-            bucket = self._cache.get(ir_id)
-            if bucket is None:
-                if not self._register_finalizer(ir, ir_id):
-                    _LOGGER.debug(
-                        "finalizer registration failed for IR id=%d, analysis=%s; "
-                        "computing uncached",
-                        ir_id,
-                        analysis_name,
-                    )
-                    return analysis_type().run(ir)
-                bucket = {}
-                self._cache[ir_id] = bucket
-            if analysis_name in bucket:
-                _LOGGER.debug(
-                    "cache hit for IR id=%d, analysis=%s", ir_id, analysis_name
-                )
-                return cast(_AnalysisResultT, bucket[analysis_name])
-            _LOGGER.debug(
-                "cache miss for IR id=%d, analysis=%s; computing",
-                ir_id,
-                analysis_name,
-            )
-            result = analysis_type().run(ir)
-            bucket[analysis_name] = result
-            return result
-
-    def clear(self, ir: _IRType) -> None:
-        """Clear all cached analyses for IR.
-
-        Args:
-            ir: The IR to clear analyses for.
-
-        """
-        with self._lock:
-            self._drop_cached_ir(id(ir))
-
-    def invalidate(self, ir: _IRType, preserved: PreservedAnalyses) -> None:
-        """Invalidate non-preserved analyses for IR.
-
-        Args:
-            ir: The IR to invalidate analyses for.
-            preserved: The analyses to preserve.
-
-        """
-        with self._lock:
-            if not self._is_cacheable_ir(ir):
-                self._drop_cached_ir(id(ir))
-                return
-
-            ir_id = id(ir)
-            bucket = self._cache.get(ir_id)
-            if bucket is None:
-                return
-            if preserved.preserve_all:
-                return
-            analyses_to_drop = [
-                analysis_name
-                for analysis_name in bucket
-                if not preserved.is_preserved(analysis_name)
-            ]
-            if analyses_to_drop and _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "IR id=%d dropping=%s preserving=%s",
-                    ir_id,
-                    [str(name) for name in analyses_to_drop],
-                    [str(name) for name in bucket if name not in analyses_to_drop],
-                )
-            for analysis_name in analyses_to_drop:
-                del bucket[analysis_name]
-            if not bucket:
-                self._drop_cached_ir(ir_id)
-
-    # Sequential guard clauses over preservation cases; early returns read clearest.
-    def transfer(  # noqa: PLR0911
-        self,
-        from_ir: _IRType,
-        to_ir: _IRType,
-        preserved: PreservedAnalyses,
-    ) -> None:
-        """Transfer preserved analysis results across an IR replacement.
-
-        Args:
-            from_ir: The original IR being replaced.
-            to_ir: The new IR replacing from_ir.
-            preserved: The analyses to preserve across the replacement.
-
-        """
-        with self._lock:
-            from_cacheable = self._is_cacheable_ir(from_ir)
-            to_cacheable = self._is_cacheable_ir(to_ir)
-            if not from_cacheable and not to_cacheable:
-                return
-            if not from_cacheable:
-                self._drop_cached_ir(id(to_ir))
-                return
-
-            from_id = id(from_ir)
-            to_id = id(to_ir)
-            if from_id == to_id:
-                self.invalidate(from_ir, preserved)
-                return
-
-            from_bucket = self._cache.pop(from_id, {})
-            self._drop_finalizer(from_id)
-            self._drop_cached_ir(to_id)
-            if not from_bucket:
-                return
-            if not to_cacheable:
-                return
-
-            if preserved.preserve_all:
-                if not self._register_finalizer(to_ir, to_id):
-                    return
-                self._cache[to_id] = dict(from_bucket)
-                return
-
-            kept = {
-                analysis_name: result
-                for analysis_name, result in from_bucket.items()
-                if preserved.is_preserved(analysis_name)
-            }
-            if kept:
-                if not self._register_finalizer(to_ir, to_id):
-                    return
-                self._cache[to_id] = kept
-
-    @staticmethod
-    def _is_cacheable_ir(ir: object) -> bool:
-        return isinstance(ir, Frozen) and ir.is_frozen
-
-    @staticmethod
-    def _evict_cached_ir(
-        manager_ref: "weakref.ReferenceType[AnalysisManager[Any]]", ir_id: int
-    ) -> None:
-        manager = manager_ref()
-        if manager is None:
-            return
-        with manager._lock:
-            had_bucket = ir_id in manager._cache
-            manager._cache.pop(ir_id, None)
-            manager._finalizers.pop(ir_id, None)
-        if had_bucket:
-            _LOGGER.debug("GC evicted cached analyses for IR id=%d", ir_id)
-
-    def _register_finalizer(self, ir: object, ir_id: int) -> bool:
-        if ir_id in self._finalizers:
-            return True
-        try:
-            self._finalizers[ir_id] = weakref.finalize(
-                ir, AnalysisManager._evict_cached_ir, weakref.ref(self), ir_id
-            )
-        except TypeError:
-            return False
-        return True
-
-    def _drop_finalizer(self, ir_id: int) -> None:
-        finalizer = self._finalizers.pop(ir_id, None)
-        if finalizer is not None and finalizer.alive:
-            finalizer.detach()
-
-    def _drop_cached_ir(self, ir_id: int) -> None:
-        self._cache.pop(ir_id, None)
-        self._drop_finalizer(ir_id)
+    __slots__ = ()
+    __match_args__ = ("pass_name", "changed", "diagnostics", "preserved_analyses")
 
 
-@dataclass(frozen=True)
-class PassRunRecord(FrozenMixin, PartialEqualMixin):
-    """Execution record for one pass run."""
-
-    pass_name: str
-    changed: bool
-    diagnostics: tuple[Diagnostic, ...]
-    preserved_analyses: PreservedAnalyses
+FrozenMixin.register(PassRunRecord)
+PassRunRecord._register_public_class()
 
 
-@dataclass(frozen=True)
-class FixpointIterationRecord(FrozenMixin, PartialEqualMixin):
-    """Execution record for one fixpoint iteration."""
+class FixpointIterationRecord(_rs.FixpointIterationRecord, PartialEqualMixin):
+    """Execution record for one fixpoint iteration.
 
-    iteration: int
-    changed: bool
-    pass_runs: tuple[PassRunRecord, ...]
+    Attributes:
+        iteration: The iteration's 1-based number.
+        changed: Whether any pass changed the IR in the iteration.
+        pass_runs: The records of the iteration's pass runs.
 
+    """
 
-@dataclass(frozen=True)
-class FixpointGroupRecord(FrozenMixin, PartialEqualMixin):
-    """Execution record for a fixpoint group."""
-
-    group_name: Identifier
-    iteration_records: tuple[FixpointIterationRecord, ...]
-    converged: bool
-
-    @property
-    def iterations(self) -> int:
-        """Return the number of iterations executed."""
-        return len(self.iteration_records)
+    __slots__ = ()
+    __match_args__ = ("iteration", "changed", "pass_runs")
 
 
-@dataclass(frozen=True)
-class PassManagerResult(FrozenMixin, PartialEqualMixin, Generic[_IRType]):
-    """Overall pass manager execution result."""
-
-    output: _IRType
-    records: tuple[PassRunRecord | FixpointGroupRecord, ...]
+FrozenMixin.register(FixpointIterationRecord)
+FixpointIterationRecord._register_public_class()
 
 
-class FixpointPassGroup(HasIdentifier, Generic[_IRType]):
-    """A repeatedly executed pass sequence until fixpoint or iteration budget."""
+class FixpointGroupRecord(_rs.FixpointGroupRecord, PartialEqualMixin):
+    """Execution record for a fixpoint group.
 
-    _passes: list[CompilerPass[_IRType, _IRType]]
-    _name: Identifier
-    _max_iterations: int
-    _fail_on_non_convergence: bool
+    Attributes:
+        group_name: The group's name.
+        iteration_records: The records of the iterations run; after a
+            failure inside the group, the last lists only the pass runs
+            that completed.
+        converged: Whether an iteration changed nothing.
+        iterations: The number of iterations run.
 
-    def __init__(
-        self,
-        name: Identifier,
-        *,
-        max_iterations: int = 10,
-        fail_on_non_convergence: bool = True,
-    ) -> None:
-        if max_iterations < 1:
-            raise ValueError('"max_iterations" must be >= 1.')
-        self._name = name
-        self._max_iterations = max_iterations
-        self._fail_on_non_convergence = fail_on_non_convergence
-        self._passes = []
+    """
+
+    __slots__ = ()
+    __match_args__ = ("group_name", "iteration_records", "converged")
+
+
+FrozenMixin.register(FixpointGroupRecord)
+FixpointGroupRecord._register_public_class()
+
+
+class PassManagerResult(_rs.PassManagerResult, PartialEqualMixin, Generic[_IRType]):
+    """Overall pass manager execution result.
+
+    Attributes:
+        output: The final IR.
+        records: One record per pipeline item.
+
+    ``pass_runs()`` returns the record of every pass run, with each group's
+    in place of the group, and ``run_count()`` the number of runs that were
+    not skipped.
+    """
+
+    __slots__ = ()
+    __match_args__ = ("output", "records")
+
+    if TYPE_CHECKING:
+        # The stub cannot make `_rs.PassManagerResult` generic in the IR type.
+        def __new__(
+            cls,
+            output: _IRType,
+            records: Iterable[PassRunRecord | FixpointGroupRecord],
+        ) -> Self:
+            """Return the result of a run."""
+            ...
+
+        @property
+        @override
+        def output(self) -> _IRType:
+            """The final IR."""
+            ...
+
+
+FrozenMixin.register(PassManagerResult)
+PassManagerResult._register_public_class()
+
+
+class FixpointPassGroup(_rs.FixpointPassGroup, Generic[_IRType]):
+    """A pass sequence repeated until an iteration changes nothing.
+
+    Backed by the Rust implementation: ``fhy_core._rs.FixpointPassGroup``.
+    ``FixpointPassGroup(name, *, max_iterations=10,
+    fail_on_non_convergence=True)``; ``max_iterations`` below 1 raises
+    ``ValueError``. A pipeline reads the group's passes when it runs, so a
+    pass added after the group was added to a pipeline runs too.
+    """
+
+    __slots__ = ()
+
+    if TYPE_CHECKING:
+
+        @override
+        def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
+            """Append a pass to the group."""
+            ...
+
+        @property
+        @override
+        def passes(self) -> tuple[CompilerPass[_IRType, _IRType], ...]:
+            """The group's passes, in order."""
+            ...
+
+
+class PassManager(_rs.PassManager, Generic[_IRType]):
+    """Ordered pass pipeline over one IR type.
+
+    Backed by the Rust implementation: ``fhy_core._rs.PassManager``. Each
+    run builds the Rust pipeline from the current passes and groups, with
+    its own analysis cache. It logs INFO lines when it starts and finishes,
+    and DEBUG lines per item.
+    """
+
+    __slots__ = ()
+
+    if TYPE_CHECKING:
+
+        @override
+        def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
+            """Append one pass to the pipeline."""
+            ...
+
+        @override
+        def add_fixpoint_group(self, group: FixpointPassGroup[_IRType]) -> None:
+            """Append one fixpoint group to the pipeline."""
+            ...
+
+        @override
+        def set_verifier(self, verifier: "ValidationManager[_IRType] | None") -> None:
+            """Verify every run's IR with ``verifier``, or verify nothing."""
+            ...
 
     @override
-    def get_identifier(self) -> Identifier:
-        return self._name
-
-    @property
-    def name(self) -> Identifier:
-        """Return the name of the fixpoint group."""
-        return self._name
-
-    @property
-    def max_iterations(self) -> int:
-        """Return the maximum number of fixpoint iterations."""
-        return self._max_iterations
-
-    @property
-    def fail_on_non_convergence(self) -> bool:
-        """Whether to fail if the group does not converge."""
-        return self._fail_on_non_convergence
-
-    @property
-    def passes(self) -> tuple[CompilerPass[_IRType, _IRType], ...]:
-        """Return the passes in the fixpoint group."""
-        return tuple(self._passes)
-
-    def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
-        """Append a pass to the fixpoint group.
-
-        Args:
-            compiler_pass: The pass to add.
-
-        """
-        self._passes.append(compiler_pass)
-
-
-class PassManager(HasIdentifier, Generic[_IRType]):
-    """Ordered pass pipeline manager with analysis preservation/invalidation."""
-
-    _items: list[CompilerPass[_IRType, _IRType] | FixpointPassGroup[_IRType]]
-    _analysis_manager: AnalysisManager[_IRType]
-    _identifier: Identifier
-
-    def __init__(self, name: Identifier | None = None) -> None:
-        self._identifier = name if name is not None else Identifier("pipeline")
-        self._items = []
-        self._analysis_manager = AnalysisManager()
-
-    @override
-    def get_identifier(self) -> Identifier:
-        return self._identifier
-
-    @property
-    def name(self) -> Identifier:
-        """Return the name of the pass manager."""
-        return self._identifier
-
-    @property
-    def analysis_manager(self) -> AnalysisManager[_IRType]:
-        """Return the analysis manager backing the pipeline."""
-        return self._analysis_manager
-
-    def add_pass(self, compiler_pass: CompilerPass[_IRType, _IRType]) -> None:
-        """Append one pass to the pipeline.
-
-        Args:
-            compiler_pass: The pass to add.
-
-        """
-        self._items.append(compiler_pass)
-
-    def add_fixpoint_group(self, group: FixpointPassGroup[_IRType]) -> None:
-        """Append one fixpoint group to the pipeline.
-
-        Args:
-            group: The fixpoint group to add.
-
-        """
-        self._items.append(group)
-
     def run(self, ir: _IRType) -> PassManagerResult[_IRType]:
         """Run the pass pipeline over the IR.
 
@@ -468,159 +291,78 @@ class PassManager(HasIdentifier, Generic[_IRType]):
             records.
 
         Raises:
-            PassExecutionError: If any pass raises an error during execution, or if
-                a fixpoint group fails to converge within its iteration budget.
+            PassValidationError: If a validation hook fails, or the verifier
+                rejects the input or a changed output.
+            PassExecutionError: If any other hook fails, or if a fixpoint group
+                fails to converge within its iteration budget.
 
         """
-        current = ir
-        records: list[PassRunRecord | FixpointGroupRecord] = []
-
-        t0 = time.perf_counter()
+        start = time.perf_counter()
         _LOGGER.info(
             "%s starting (items=%d, input id=%d)",
-            self._identifier,
-            len(self._items),
+            self.name,
+            self._item_count(),
             id(ir),
         )
-
-        for item in self._items:
-            if isinstance(item, FixpointPassGroup):
-                current, record = self._run_fixpoint_group(item, current)
-                records.append(record)
-                _LOGGER.debug(
-                    "fixpoint group %s finished (converged=%s, iterations=%d)",
-                    record.group_name,
-                    record.converged,
-                    record.iterations,
-                )
-                continue
-
-            result = self._execute_bound(item, current)
-            run_record = self._make_pass_run_record(item, result)
-            self.analysis_manager.transfer(
-                current, result.output, result.preserved_analyses
-            )
-            current = result.output
-            records.append(run_record)
-            _LOGGER.debug(
-                "pass %s finished "
-                "(changed=%s, diagnostics=%d, preserve_all=%s, preserved=%d)",
-                run_record.pass_name,
-                run_record.changed,
-                len(run_record.diagnostics),
-                run_record.preserved_analyses.preserve_all,
-                len(run_record.preserved_analyses.analysis_names),
-            )
-
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        try:
+            result: PassManagerResult[_IRType] = super().run(ir)
+        except PassExecutionError as error:
+            if error.pass_name is None:
+                _LOGGER.error("%s (elapsed=%.2fms); raising", error, _elapsed_ms(start))
+            raise
+        if _LOGGER.isEnabledFor(logging.INFO):
+            _log_records(result.records)
         _LOGGER.info(
             "%s finished (output id=%d, elapsed=%.2fms)",
-            self._identifier,
-            id(current),
-            elapsed_ms,
+            self.name,
+            id(result.output),
+            _elapsed_ms(start),
         )
-        return PassManagerResult(output=current, records=tuple(records))
+        return result
 
-    def _run_fixpoint_group(
-        self, group: FixpointPassGroup[_IRType], ir: _IRType
-    ) -> tuple[_IRType, FixpointGroupRecord]:
-        current = ir
-        iteration_records: list[FixpointIterationRecord] = []
-        converged = False
 
-        t0 = time.perf_counter()
-        _LOGGER.info(
-            "%s starting (max_iterations=%d, passes=%d)",
-            group.name,
-            group.max_iterations,
-            len(group.passes),
+def _elapsed_ms(start: float) -> float:
+    """Return the milliseconds since ``start``, a ``perf_counter`` reading."""
+    return (time.perf_counter() - start) * 1000.0
+
+
+def _log_pass_run(record: PassRunRecord) -> None:
+    """Log the DEBUG line of one pass run's record."""
+    _LOGGER.debug(
+        "pass %s finished "
+        "(changed=%s, skipped=%s, diagnostics=%d, preserve_all=%s, preserved=%d)",
+        record.pass_name,
+        record.changed,
+        record.skipped,
+        len(record.diagnostics),
+        record.preserved_analyses.preserve_all,
+        len(record.preserved_analyses.analysis_names),
+    )
+
+
+def _log_fixpoint_group(record: FixpointGroupRecord) -> None:
+    """Log one fixpoint group's record: its iterations at DEBUG, its end at INFO."""
+    for iteration in record.iteration_records:
+        for pass_run in iteration.pass_runs:
+            _log_pass_run(pass_run)
+        _LOGGER.debug(
+            "%s iteration %d (changed_any=%s)",
+            record.group_name,
+            iteration.iteration,
+            iteration.changed,
         )
+    _LOGGER.info(
+        "%s finished (converged=%s, iterations=%d)",
+        record.group_name,
+        record.converged,
+        record.iterations,
+    )
 
-        for iteration in range(1, group.max_iterations + 1):
-            changed_any = False
-            pass_runs: list[PassRunRecord] = []
-            for compiler_pass in group.passes:
-                result = self._execute_bound(compiler_pass, current)
-                pass_run = self._make_pass_run_record(compiler_pass, result)
-                self.analysis_manager.transfer(
-                    current, result.output, result.preserved_analyses
-                )
-                current = result.output
-                pass_runs.append(pass_run)
-                changed_any = changed_any or result.changed
 
-            iteration_records.append(
-                FixpointIterationRecord(
-                    iteration,
-                    changed_any,
-                    tuple(pass_runs),
-                )
-            )
-            _LOGGER.debug(
-                "%s iteration %d (changed_any=%s)",
-                group.name,
-                iteration,
-                changed_any,
-            )
-            if not changed_any:
-                converged = True
-                break
-
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-        if not converged and group.fail_on_non_convergence:
-            message = (
-                f'Fixpoint group "{group.name}" did not converge in '
-                f"{group.max_iterations} iterations."
-            )
-            _LOGGER.error(
-                "%s did not converge in %d iterations (elapsed=%.2fms); raising",
-                group.name,
-                group.max_iterations,
-                elapsed_ms,
-            )
-            raise PassExecutionError(message)
-
-        _LOGGER.info(
-            "%s finished (converged=%s, iterations=%d, elapsed=%.2fms)",
-            group.name,
-            converged,
-            len(iteration_records),
-            elapsed_ms,
-        )
-        return current, FixpointGroupRecord(
-            group_name=group.name,
-            iteration_records=tuple(iteration_records),
-            converged=converged,
-        )
-
-    def _execute_bound(
-        self,
-        compiler_pass: CompilerPass[_IRType, _IRType],
-        ir: _IRType,
-    ) -> PassResult[_IRType]:
-        """Execute ``compiler_pass`` with ``self.analysis_manager`` bound.
-
-        The analysis manager is attached to the pass for the duration of the
-        execution so that ``CompilerPass.get_analysis`` sees a cache, and is
-        restored to its previous binding afterward (usually unbound).
-        """
-        previous = compiler_pass.get_analysis_manager()
-        compiler_pass.bind_analysis_manager(self._analysis_manager)
-        try:
-            return compiler_pass.execute(ir)
-        finally:
-            if previous is None:
-                compiler_pass.unbind_analysis_manager()
-            else:
-                compiler_pass.bind_analysis_manager(previous)
-
-    @staticmethod
-    def _make_pass_run_record(
-        compiler_pass: CompilerPass[_IRType, _IRType], result: PassResult[_IRType]
-    ) -> PassRunRecord:
-        return PassRunRecord(
-            pass_name=compiler_pass.get_pass_name(),
-            changed=result.changed,
-            diagnostics=result.diagnostics,
-            preserved_analyses=result.preserved_analyses,
-        )
+def _log_records(records: Iterable[PassRunRecord | FixpointGroupRecord]) -> None:
+    """Log the lines of a run's records, in pipeline order."""
+    for record in records:
+        if isinstance(record, FixpointGroupRecord):
+            _log_fixpoint_group(record)
+        else:
+            _log_pass_run(record)

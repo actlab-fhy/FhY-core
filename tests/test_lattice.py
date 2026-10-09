@@ -18,27 +18,27 @@ def empty_lattice() -> Lattice[Any]:
 
 @pytest.fixture()
 def singleton_lattice() -> Lattice[int]:
-    """Uses the Lattice class internals to create a lattice with one element.
+    """Return a lattice with one element, built through the public API.
 
     lattice: ({1}, <=)
 
     """
     lattice = Lattice[int]()
-    lattice._poset.add_element(1)
+    lattice.add_element(1)
     return lattice
 
 
 @pytest.fixture()
 def two_element_lattice() -> Lattice[int]:
-    """Uses the Lattice class internals to create a lattice with two elements.
+    """Return a lattice with two ordered elements, built through the public API.
 
     lattice: ({1, 2}, <=)
 
     """
     lattice = Lattice[int]()
-    lattice._poset.add_element(1)
-    lattice._poset.add_element(2)
-    lattice._poset.add_order(1, 2)
+    lattice.add_element(1)
+    lattice.add_element(2)
+    lattice.add_order(1, 2)
     return lattice
 
 
@@ -128,14 +128,19 @@ def test_two_element_lattice_get_least_upper_bound(
     assert two_element_lattice.get_least_upper_bound(1, 2) == 2
 
 
-def test_empty_lattice_meet(empty_lattice: Lattice[Any]) -> None:
-    """Test that the meet of an empty lattice is None."""
-    assert empty_lattice.get_meet(1, 1) is None
+def test_empty_lattice_meet_refuses_a_non_member(empty_lattice: Lattice[Any]) -> None:
+    """Test that the meet of a non-member of an empty lattice raises.
+
+    An empty lattice refuses a non-member as any lattice does.
+    """
+    with pytest.raises(ValueError, match="not a member"):
+        empty_lattice.get_meet(1, 1)
 
 
-def test_empty_lattice_join(empty_lattice: Lattice[Any]) -> None:
-    """Test that the join of an empty lattice is None."""
-    assert empty_lattice.get_join(1, 1) is None
+def test_empty_lattice_join_refuses_a_non_member(empty_lattice: Lattice[Any]) -> None:
+    """Test that the join of a non-member of an empty lattice raises."""
+    with pytest.raises(ValueError, match="not a member"):
+        empty_lattice.get_join(1, 1)
 
 
 def test_add_order_to_lattice() -> None:

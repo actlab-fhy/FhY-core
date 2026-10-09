@@ -1,0 +1,628 @@
+"""Tests for real-valued parameters (new composition API)."""
+
+import math
+import re
+from functools import partial
+from typing import Any
+
+import pytest
+
+from fhy_core.serialization import DeserializationValueError
+from fhy_core.symbolic.constraint import ConstraintOutcome, EquationConstraint
+from fhy_core.symbolic.expression import get_native_constant_identifier
+from fhy_core.symbolic.param import (
+    Param,
+    ParamError,
+    create_integer_param,
+    create_integer_param_between,
+    create_ordinal_param,
+    create_real_param,
+    create_real_param_between,
+    create_real_param_with_lower_bound,
+    create_real_param_with_upper_bound,
+)
+
+from .conftest import assert_all_satisfied, assert_none_satisfied, mock_identifier
+
+# =============================================================================
+# Admissibility
+# =============================================================================
+
+
+def test_real_param_assign_rejects_non_numeric_value(
+    default_real_param: Param[str | float],
+) -> None:
+    """Test real param `assign` raises `ParamError` for a non-numeric value."""
+    with pytest.raises(ParamError):
+        default_real_param.assign([])  # type: ignore[arg-type]  # test: invalid input
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        pytest.param(1.5, True, id="float-admitted"),
+        pytest.param("1.5", True, id="numeric-string-admitted"),
+        pytest.param("5", True, id="integer-grammar-string-admitted"),
+        pytest.param(".5", True, id="leading-point-string-admitted"),
+        pytest.param(
+            "1" * 400 + ".5", True, id="exact-decimal-beyond-float-range-admitted"
+        ),
+        pytest.param(True, False, id="bool-true-rejected"),
+        pytest.param(False, False, id="bool-false-rejected"),
+        pytest.param("not a number", False, id="non-numeric-string-rejected"),
+        pytest.param([], False, id="list-rejected"),
+        pytest.param(None, False, id="none-rejected"),
+    ],
+)
+def test_real_param_admissibility_matrix(value: Any, expected: bool) -> None:
+    """Test real param `is_value_admissible` admits finite literals only.
+
+    ``bool`` is a subtype of ``int`` but real-valued semantics treat booleans
+    as non-numeric to avoid silent ``True``/``False`` admission. A string is
+    judged by the literal grammar rather than by ``float()``, so an exact
+    decimal too wide for a float is still admitted.
+    """
+    param = create_real_param()
+
+    result = param.is_value_admissible(value)
+
+    assert result is expected
+
+
+# Values ``float()`` parses but no finite literal can hold: constraint
+# evaluation lifts a candidate into a `LiteralExpression`, which refuses
+# each of the strings, and a non-finite float has no real value to compare.
+_NON_LITERAL_REAL_VALUES = [
+    pytest.param(float("nan"), id="nan-float"),
+    pytest.param(float("inf"), id="positive-infinity-float"),
+    pytest.param(float("-inf"), id="negative-infinity-float"),
+    pytest.param("nan", id="nan-string"),
+    pytest.param("inf", id="infinity-string"),
+    pytest.param("-inf", id="negative-infinity-string"),
+    pytest.param("1e400", id="overflowing-exponent-string"),
+    pytest.param("1e5", id="exponent-string"),
+    pytest.param("-1.5", id="minus-signed-string"),
+    pytest.param("+1.5", id="plus-signed-string"),
+    pytest.param(" 1.5", id="whitespace-padded-string"),
+    pytest.param("1_0", id="digit-grouped-string"),
+]
+
+
+@pytest.mark.parametrize("value", _NON_LITERAL_REAL_VALUES)
+def test_real_param_rejects_a_value_no_finite_literal_can_hold(value: Any) -> None:
+    """Test a value `float()` parses but no finite literal holds is inadmissible."""
+    assert create_real_param().is_value_admissible(value) is False
+
+
+@pytest.mark.parametrize("value", _NON_LITERAL_REAL_VALUES)
+def test_real_param_is_value_valid_reports_false_for_a_non_literal_value(
+    value: Any,
+) -> None:
+    """Test `is_value_valid` answers `False` for a non-literal value, never raising.
+
+    Admitting these values let the validator reach constraint evaluation,
+    where against `x >= 0.0` NaN raised `TypeError`, a string outside the
+    literal grammar raised `ValueError`, and positive infinity was
+    reported valid. Unconstrained, every one was reported valid.
+    """
+    bounded = create_real_param_with_lower_bound(0.0)
+    unconstrained = create_real_param()
+
+    assert bounded.is_value_valid(value) is False
+    assert unconstrained.is_value_valid(value) is False
+
+
+@pytest.mark.parametrize("value", _NON_LITERAL_REAL_VALUES)
+def test_real_param_assign_reports_a_non_literal_value_as_inadmissible(
+    value: Any,
+) -> None:
+    """Test `assign` raises the inadmissibility `ParamError` for a non-literal value."""
+    param = create_real_param_with_lower_bound(0.0)
+
+    with pytest.raises(ParamError, match="not admissible"):
+        param.assign(value)
+
+
+@pytest.mark.sympy
+def test_real_param_validates_an_exact_decimal_beyond_float_range() -> None:
+    """Test an admitted exact decimal too wide for a float is checked exactly.
+
+    `float()` of this string is infinite, yet as a literal it is a finite
+    exact decimal, so it satisfies `x >= 0.0` and violates `x <= 0.0`.
+    """
+    wide_decimal = "1" * 400 + ".5"
+
+    assert create_real_param_with_lower_bound(0.0).is_value_valid(wide_decimal)
+    assert not create_real_param_with_upper_bound(0.0).is_value_valid(wide_decimal)
+
+
+def test_real_param_str_uses_R_for_param_set() -> None:
+    """Test `str` of a real param denotes the param set with ``R``."""
+    assert "R" in str(create_real_param())
+
+
+# =============================================================================
+# Non-finite bound feasibility
+# =============================================================================
+
+
+def test_real_param_with_infinite_upper_bound_reports_undecided_feasibility() -> None:
+    """Test an infinite upper bound reports UNDECIDED feasibility instead of raising."""
+    param = create_real_param_with_upper_bound(math.inf)
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+def test_real_param_between_infinite_bound_reports_undecided_feasibility() -> None:
+    """Test an infinite upper bound in `create_real_param_between` reports UNDECIDED."""
+    param = create_real_param_between(0.0, math.inf)
+
+    assert param.check_feasibility() is ConstraintOutcome.UNDECIDED
+
+
+@pytest.mark.sympy
+def test_real_param_with_infinite_upper_bound_still_validates_a_finite_value() -> None:
+    """Test `is_value_valid` stays decided against an infinite bound."""
+    param = create_real_param_with_upper_bound(math.inf)
+
+    assert param.is_value_valid(1.0) is True
+
+
+# =============================================================================
+# Constraint addition
+# =============================================================================
+
+
+@pytest.mark.sympy
+def test_real_param_add_constraint_combines_with_existing_constraints(
+    default_real_param: Param[str | float],
+) -> None:
+    """Test sequential `add_constraint` calls produce a combined feasibility set."""
+    param = default_real_param.add_constraint(
+        EquationConstraint(default_real_param.variable_expression * 3.14 < 20.0)
+    )
+    param = param.add_constraint(EquationConstraint(param.variable_expression >= 1.0))
+
+    assert_all_satisfied(param, [2.0])
+    assert_none_satisfied(param, [0.5, 7.0])
+
+
+# =============================================================================
+# Lower / upper bound and `between` constructors
+# =============================================================================
+
+
+@pytest.mark.sympy
+@pytest.mark.parametrize(
+    "factory, ops, pass_values, fail_values",
+    [
+        pytest.param(
+            partial(create_real_param),
+            [("add_lower_bound_constraint", (1.0,), {"is_inclusive": True})],
+            [1.0, 2.0],
+            [0.5],
+            id="lower-mutating-inclusive",
+        ),
+        pytest.param(
+            partial(create_real_param),
+            [("add_lower_bound_constraint", (1.0,), {"is_inclusive": False})],
+            [1.5, 2.0],
+            [1.0, 0.5],
+            id="lower-mutating-exclusive",
+        ),
+        pytest.param(
+            partial(create_real_param_with_lower_bound, 1.0, is_inclusive=True),
+            [],
+            [1.0, 2.0],
+            [0.5],
+            id="lower-constructor-inclusive",
+        ),
+        pytest.param(
+            partial(create_real_param_with_lower_bound, 1.0, is_inclusive=False),
+            [],
+            [1.5, 2.0],
+            [1.0, 0.5],
+            id="lower-constructor-exclusive",
+        ),
+        pytest.param(
+            partial(create_real_param),
+            [("add_upper_bound_constraint", (2.0,), {"is_inclusive": True})],
+            [2.0, 1.0],
+            [2.5],
+            id="upper-mutating-inclusive",
+        ),
+        pytest.param(
+            partial(create_real_param),
+            [("add_upper_bound_constraint", (2.0,), {"is_inclusive": False})],
+            [1.0, 1.5],
+            [2.0, 2.5],
+            id="upper-mutating-exclusive",
+        ),
+        pytest.param(
+            partial(create_real_param_with_upper_bound, 2.0, is_inclusive=True),
+            [],
+            [2.0, 1.0],
+            [2.5],
+            id="upper-constructor-inclusive",
+        ),
+        pytest.param(
+            partial(create_real_param_with_upper_bound, 2.0, is_inclusive=False),
+            [],
+            [1.0, 1.5],
+            [2.0, 2.5],
+            id="upper-constructor-exclusive",
+        ),
+        pytest.param(
+            partial(create_real_param),
+            [
+                ("add_lower_bound_constraint", (1.0,), {"is_inclusive": True}),
+                ("add_upper_bound_constraint", (2.0,), {"is_inclusive": True}),
+            ],
+            [1.0, 1.5, 2.0],
+            [0.5, 2.5],
+            id="between-mutating-inclusive",
+        ),
+        pytest.param(
+            partial(create_real_param),
+            [
+                ("add_lower_bound_constraint", (1.0,), {"is_inclusive": False}),
+                ("add_upper_bound_constraint", (2.0,), {"is_inclusive": False}),
+            ],
+            [1.5],
+            [1.0, 2.0, 0.5, 2.5],
+            id="between-mutating-exclusive",
+        ),
+        pytest.param(
+            partial(
+                create_real_param_between,
+                1.0,
+                2.0,
+                is_lower_inclusive=True,
+                is_upper_inclusive=True,
+            ),
+            [],
+            [1.0, 1.5, 2.0],
+            [0.5, 2.5],
+            id="between-constructor-inclusive",
+        ),
+        pytest.param(
+            partial(
+                create_real_param_between,
+                1.0,
+                2.0,
+                is_lower_inclusive=False,
+                is_upper_inclusive=False,
+            ),
+            [],
+            [1.5],
+            [1.0, 2.0, 0.5, 2.5],
+            id="between-constructor-exclusive",
+        ),
+        pytest.param(
+            partial(create_real_param),
+            [
+                ("add_lower_bound_constraint", ("1.0",), {"is_inclusive": True}),
+                ("add_upper_bound_constraint", ("2.0",), {"is_inclusive": True}),
+            ],
+            [1.0, 1.5, 2.0],
+            [0.5, 2.5],
+            id="between-mutating-string-bounds",
+        ),
+    ],
+)
+def test_real_param_bounded_construction_admits_expected_values(
+    factory: Any,
+    ops: list[tuple[str, tuple[Any, ...], dict[str, Any]]],
+    pass_values: list[Any],
+    fail_values: list[Any],
+) -> None:
+    """Test bounded real param constructions admit and reject the expected values."""
+    param = factory()
+    for name, args, kwargs in ops:
+        param = getattr(param, name)(*args, **kwargs)
+
+    assert_all_satisfied(param, pass_values)
+    assert_none_satisfied(param, fail_values)
+
+
+@pytest.mark.parametrize(
+    "factory, ops",
+    [
+        pytest.param(
+            partial(create_real_param),
+            [("add_lower_bound_constraint", ("invalid",))],
+            id="lower-mutating-invalid",
+        ),
+        pytest.param(
+            partial(create_real_param),
+            [("add_upper_bound_constraint", ("invalid",))],
+            id="upper-mutating-invalid",
+        ),
+        pytest.param(
+            partial(create_real_param_with_upper_bound, "invalid"),
+            [],
+            id="upper-constructor-invalid",
+        ),
+        pytest.param(
+            partial(create_real_param_with_lower_bound, "invalid"),
+            [],
+            id="lower-constructor-invalid",
+        ),
+    ],
+)
+def test_real_param_bounded_construction_with_invalid_string_bounds_raises(
+    factory: Any,
+    ops: list[tuple[str, tuple[Any, ...]]],
+) -> None:
+    """Test bounded real param constructions reject unparseable string bounds.
+
+    The string ``"invalid"`` reaches the expression layer's
+    ``LiteralExpression`` validator and raises a plain ``ValueError`` rather
+    than ``ParamError`` -- the failure is in expression construction, not in
+    param-domain validation.
+    """
+    with pytest.raises(ValueError, match="invalid literal text"):
+        param = factory()
+        for name, args in ops:
+            param = getattr(param, name)(*args)
+
+
+def test_real_param_between_with_reversed_bounds_raises() -> None:
+    """Test `create_real_param_between` raises `ParamError` when ``lower > upper``."""
+    with pytest.raises(ParamError):
+        create_real_param_between(2.0, 1.0)
+
+
+# =============================================================================
+# Default-inclusivity invariant (kills `True -> False` flips on default args)
+# =============================================================================
+
+
+@pytest.mark.sympy
+@pytest.mark.parametrize(
+    "factory, boundary_value",
+    [
+        pytest.param(
+            partial(create_real_param_with_lower_bound, 0.0), 0.0, id="with-lower-bound"
+        ),
+        pytest.param(
+            partial(create_real_param_with_upper_bound, 1.0), 1.0, id="with-upper-bound"
+        ),
+        pytest.param(
+            lambda: create_real_param().add_lower_bound_constraint(0.0),
+            0.0,
+            id="add-lower-bound-constraint",
+        ),
+        pytest.param(
+            lambda: create_real_param().add_upper_bound_constraint(1.0),
+            1.0,
+            id="add-upper-bound-constraint",
+        ),
+        pytest.param(
+            partial(create_real_param_between, 0.0, 1.0),
+            0.0,
+            id="between-lower-endpoint",
+        ),
+        pytest.param(
+            partial(create_real_param_between, 0.0, 1.0),
+            1.0,
+            id="between-upper-endpoint",
+        ),
+    ],
+)
+def test_real_param_default_bound_inclusivity_admits_endpoint(
+    factory: Any, boundary_value: float
+) -> None:
+    """Test each real param bound builder defaults to inclusive (admits endpoint)."""
+    assert factory().is_value_valid(boundary_value)
+
+
+# =============================================================================
+# Equal-bounds and reversed-bounds invariants for `between`
+# =============================================================================
+
+
+@pytest.mark.sympy
+def test_real_param_between_equal_bounds_with_both_inclusive_is_singleton() -> None:
+    """Test `create_real_param_between(x, x)` admits only ``x`` (both inclusive)."""
+    param = create_real_param_between(5.0, 5.0)
+
+    assert param.is_value_valid(5.0)
+    assert not param.is_value_valid(4.999)
+    assert not param.is_value_valid(5.001)
+
+
+@pytest.mark.parametrize(
+    "is_lower_inclusive, is_upper_inclusive",
+    [
+        pytest.param(False, True, id="exclusive-inclusive"),
+        pytest.param(True, False, id="inclusive-exclusive"),
+        pytest.param(False, False, id="exclusive-exclusive"),
+    ],
+)
+# The upper bound is a runtime ``float("5.0")`` so the two bounds are equal but
+# not identity-equal, exercising value-equality (``==``) rather than identity
+# (``is``) on the bounds-equal check.
+def test_real_param_between_equal_bounds_with_any_exclusive_raises(
+    is_lower_inclusive: bool, is_upper_inclusive: bool
+) -> None:
+    """Test `create_real_param_between(x, x)` raises when either bound is exclusive"""
+    with pytest.raises(ParamError):
+        create_real_param_between(
+            5.0,
+            float("5.0"),
+            is_lower_inclusive=is_lower_inclusive,
+            is_upper_inclusive=is_upper_inclusive,
+        )
+
+
+# =============================================================================
+# Exact bound ordering for `between`
+# =============================================================================
+
+_WIDE_DIGITS = "1" * 400
+"""Integer digits that make a decimal too wide for a finite ``float``."""
+
+_UNORDERED_BOUNDS_MESSAGE = "lower bound must be less than or equal to upper bound"
+
+
+# Every pair below collapses to one ``float`` when both bounds are rounded
+# to binary, so only an exact comparison tells the bounds apart.
+@pytest.mark.z3
+@pytest.mark.parametrize(
+    "lower_bound, upper_bound",
+    [
+        pytest.param("0.1", "0.10000000000000000001", id="decimals-finer-than-a-float"),
+        pytest.param(
+            f"{_WIDE_DIGITS}.5", f"{_WIDE_DIGITS}.6", id="decimals-beyond-float-range"
+        ),
+        pytest.param("0.1", 0.1, id="decimal-below-its-nearest-float"),
+        pytest.param(0.1, "0.10000000000000001", id="float-below-a-decimal"),
+        pytest.param(
+            f"{_WIDE_DIGITS}.5", math.inf, id="decimal-beyond-float-range-below-inf"
+        ),
+    ],
+)
+def test_real_param_between_accepts_exclusive_bounds_ordered_only_exactly(
+    lower_bound: float | str, upper_bound: float | str
+) -> None:
+    """Test exclusive bounds ordered by exact value build a non-empty param."""
+    param = create_real_param_between(
+        lower_bound, upper_bound, is_lower_inclusive=False, is_upper_inclusive=False
+    )
+
+    assert not param.is_empty()
+
+
+@pytest.mark.parametrize(
+    "lower_bound, upper_bound",
+    [
+        pytest.param("0.10000000000000000001", "0.1", id="decimals-finer-than-a-float"),
+        pytest.param(
+            f"{_WIDE_DIGITS}.6", f"{_WIDE_DIGITS}.5", id="decimals-beyond-float-range"
+        ),
+        pytest.param(0.1, "0.1", id="float-above-its-nearest-decimal"),
+        pytest.param(
+            math.inf, f"{_WIDE_DIGITS}.5", id="inf-above-decimal-beyond-float-range"
+        ),
+    ],
+)
+def test_real_param_between_rejects_bounds_reversed_only_exactly(
+    lower_bound: float | str, upper_bound: float | str
+) -> None:
+    """Test inclusive bounds reversed by exact value raise `ParamError`."""
+    with pytest.raises(ParamError, match=re.escape(_UNORDERED_BOUNDS_MESSAGE)):
+        create_real_param_between(lower_bound, upper_bound)
+
+
+@pytest.mark.parametrize(
+    "lower_bound, upper_bound",
+    [
+        pytest.param("1.50", "1.5", id="decimals-with-trailing-zero"),
+        pytest.param("0.5", 0.5, id="decimal-and-its-exact-float"),
+        pytest.param("5", 5.0, id="integer-text-and-its-float"),
+    ],
+)
+def test_real_param_between_rejects_exactly_equal_bounds_with_an_exclusive_side(
+    lower_bound: float | str, upper_bound: float | str
+) -> None:
+    """Test bounds spelled differently but exactly equal raise when one is exclusive"""
+    with pytest.raises(ParamError, match=re.escape(_UNORDERED_BOUNDS_MESSAGE)):
+        create_real_param_between(lower_bound, upper_bound, is_upper_inclusive=False)
+
+
+@pytest.mark.parametrize(
+    "lower_bound, upper_bound",
+    [
+        pytest.param("invalid", 1.0, id="invalid-lower"),
+        pytest.param(0.0, "1e400", id="exponent-upper"),
+        pytest.param("-1.5", 1.0, id="signed-lower"),
+    ],
+)
+def test_real_param_between_rejects_a_string_bound_outside_the_literal_grammar(
+    lower_bound: float | str, upper_bound: float | str
+) -> None:
+    """Test a string bound the literal grammar refuses raises that literal's error."""
+    with pytest.raises(ValueError, match="invalid literal text"):
+        create_real_param_between(lower_bound, upper_bound)
+
+
+# =============================================================================
+# Structural equivalence vs integer param
+# =============================================================================
+
+
+def test_real_param_is_not_structurally_equivalent_to_int_param() -> None:
+    """Test a real param is not equivalent to an otherwise matching integer param."""
+    shared_name = mock_identifier("x", 1)
+    shared_name_copy = mock_identifier("x", 1)
+    real = create_real_param(name=shared_name)
+    integer = create_integer_param(name=shared_name_copy)
+
+    assert not real.is_structurally_equivalent(integer)
+
+
+# =============================================================================
+# Serialization
+# =============================================================================
+
+
+@pytest.mark.sympy
+def test_real_param_serialization_round_trip_preserves_constraints() -> None:
+    """Test real param round-trips through dict serialization with its constraints."""
+    param = create_real_param()
+    param = param.add_constraint(EquationConstraint(param.variable_expression > 0))
+    param = param.add_constraint(EquationConstraint(param.variable_expression < 10))
+
+    dictionary = param.serialize_to_dict()
+    restored: Param[float] = Param.deserialize_from_dict(dictionary)
+
+    assert_all_satisfied(restored, [1.0, 5.0, 9.0])
+    assert_none_satisfied(restored, [0.0, 10.0])
+
+
+# =============================================================================
+# Native constant variable
+# =============================================================================
+
+
+def test_create_real_param_named_by_native_constant_raises_param_error() -> None:
+    """Test naming a real param after a native constant's identifier raises."""
+    pi = get_native_constant_identifier("pi")
+
+    with pytest.raises(ParamError, match="native constant"):
+        create_real_param(name=pi)
+
+
+def test_create_ordinal_param_named_by_native_constant_raises_param_error() -> None:
+    """Test naming an ordinal param after a native constant's identifier raises."""
+    pi = get_native_constant_identifier("pi")
+
+    with pytest.raises(ParamError, match="native constant"):
+        create_ordinal_param([1, 2], name=pi)
+
+
+def test_integer_param_between_named_by_native_constant_raises_param_error() -> None:
+    """Test naming an integer param after a native constant's identifier raises."""
+    pi = get_native_constant_identifier("pi")
+
+    with pytest.raises(ParamError, match="native constant"):
+        create_integer_param_between(0, 3, name=pi)
+
+
+def test_real_param_with_pi_name_hint_decides_normally() -> None:
+    """Test an identifier merely hinted "pi" is an ordinary variable, not a constant."""
+    param = create_real_param(name=mock_identifier("pi", 0))
+
+    assert param.check_feasibility() is ConstraintOutcome.SATISFIED
+    assert param.is_value_valid(1.0)
+
+
+def test_deserializing_param_named_by_native_constant_raises() -> None:
+    """Test deserializing a param named by a native constant's identifier fails."""
+    pi = get_native_constant_identifier("pi")
+    payload = create_real_param(name=mock_identifier("x", 1000)).serialize_to_dict()
+    payload["variable"] = pi.serialize_to_dict()
+
+    with pytest.raises(DeserializationValueError, match="native constant"):
+        Param.deserialize_from_dict(payload)

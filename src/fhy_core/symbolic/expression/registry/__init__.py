@@ -1,0 +1,75 @@
+"""Process-wide registry of expression-IR entries.
+
+The registry holds three kinds of entries:
+
+- :class:`RegisteredFunction`: a pure function whose body is an
+  expression in the IR. Inlining substitutes the parameter identifiers
+  with the call's argument expressions.
+- :class:`NativeFunction`: a pure function whose body is a Python
+  callable. The evaluator folds literal-argument calls; the inliner
+  passes them through.
+- :class:`NativeConstant`: a named literal value that owns one
+  canonical :class:`Identifier`. The evaluator substitutes identifier
+  references that carry that identifier.
+
+All three kinds expose declared sorts that drive the call-site type
+checker, decoupling type inference from body inspection.
+
+Registration records an entry; it does not type-check it. Checking a
+registered function's body against its declared result sort is an
+explicit call into the type-checking layer above, which keeps the IR
+type system out of this package's dependencies.
+
+The built-in functions and constants are the Rust core's catalogue: their
+names are reserved, and every lookup resolves them first, through entry
+objects built once at import. The user entries live in the Rust core's
+owned ``FunctionRegistry``, which the extension keeps for this
+process-wide API; the Boolean screen and the inliner read it without
+calling Python.
+
+The registry is process-wide. Tests that need isolation should take a
+snapshot with :func:`get_registered_entries` and restore it with
+:func:`fhy_core.testing_patches.set_function_registry_state`, as the
+``function_registry_snapshot`` fixture in ``tests/conftest.py`` does.
+"""
+
+__all__ = [
+    "CallTargetResolver",
+    "EntryLookupError",
+    "EntryRegistrationError",
+    "NativeConstant",
+    "NativeFunction",
+    "RegisteredEntry",
+    "RegisteredFunction",
+    "get_native_constant_identifier",
+    "get_registered_entries",
+    "get_registered_entry",
+    "is_entry_registered",
+    "register_function",
+    "register_native_constant",
+    "register_native_function",
+    "try_get_native_constant_for_identifier",
+    "try_get_registered_result_sort",
+]
+
+from ..errors import EntryLookupError, EntryRegistrationError
+from .api import (
+    register_function,
+    register_native_constant,
+    register_native_function,
+    try_get_registered_result_sort,
+)
+from .entries import (
+    CallTargetResolver,
+    NativeConstant,
+    NativeFunction,
+    RegisteredEntry,
+    RegisteredFunction,
+)
+from .storage import (
+    get_native_constant_identifier,
+    get_registered_entries,
+    get_registered_entry,
+    is_entry_registered,
+    try_get_native_constant_for_identifier,
+)

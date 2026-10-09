@@ -1,33 +1,194 @@
 """Testing utilitiy functions."""
 
+import gc
+import os
+import weakref
+from collections.abc import Callable, Iterator, Sequence
 from importlib.util import find_spec
 from typing import Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.serialization import Serializable, register_serializable
+from fhy_core.symbolic.expression import registry as _registry
+from fhy_core.testing_patches import set_function_registry_state
 from fhy_core.utils.override import override
 
+from .v1 import writing_v1
+
 __all__ = [
+    "MockIdentifierAliasError",
     "SerializableEqualHashable",
+    "is_cycle_collected",
     "mock_identifier",
+    "run_counter_operations",
 ]
+
+# Hypothesis settings profiles. `dev` is the local inner loop; `thorough` is
+# the release gate that `nox -s property` selects through HYPOTHESIS_PROFILE;
+# `mutation` is what `nox -s mutation` selects: the dev example count,
+# derandomized and without an example database, so every mutant runs the same
+# draws and none replays a counterexample saved while testing another.
+# Every profile runs without a deadline: under xdist, scheduler contention
+# rather than test cost is what trips one. `hypothesis` is an optional test
+# dependency (the `property` group), so the registration is guarded the same
+# way the z3 skip below is.
+if find_spec("hypothesis") is not None:
+    from hypothesis import settings as _hypothesis_settings
+
+    _hypothesis_settings.register_profile("dev", max_examples=25, deadline=None)
+    _hypothesis_settings.register_profile(
+        "thorough",
+        max_examples=400,
+        deadline=None,
+        derandomize=True,
+        database=None,
+        print_blob=True,
+    )
+    _hypothesis_settings.register_profile(
+        "mutation", max_examples=25, deadline=None, derandomize=True, database=None
+    )
+    _hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))
+
+
+# The markers of the tests that reach an optional package, a solver backend
+# or NumPy, with the module each imports and the package that provides it.
+# A marked test is skipped when the package is not installed: that is the
+# documented configuration the `tests_minimal` session runs, where an
+# unmarked test reaching a missing backend fails with
+# `SolverBackendUnavailableError`, and one evaluating with NumPy with the
+# NumPy evaluator's `ImportError`.
+_OPTIONAL_BACKEND_MARKERS = {
+    "z3": ("z3", "z3-solver"),
+    "sympy": ("sympy", "sympy"),
+    "numpy": ("numpy", "numpy"),
+}
 
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    if find_spec("z3") is None:
-        skip_z3 = pytest.mark.skip(reason="z3-solver not installed")
+    for marker, (module, package) in _OPTIONAL_BACKEND_MARKERS.items():
+        if find_spec(module) is not None:
+            continue
+        skip = pytest.mark.skip(reason=f"{package} not installed")
         for item in items:
-            if "z3" in item.keywords:
-                item.add_marker(skip_z3)
+            if marker in item.keywords:
+                item.add_marker(skip)
+
+
+@pytest.fixture()
+def v1_wire() -> Iterator[None]:
+    """Write, and read, the deprecated V1 wire format in the test.
+
+    For the tests that pin V1 payloads, which stay until V1 is removed;
+    the deprecation warnings are silenced.
+    """
+    with writing_v1():
+        yield
+
+
+@pytest.fixture()
+def function_registry_snapshot() -> Iterator[None]:
+    """Snapshot the process-wide function registry around the test.
+
+    Captures the registry's contents before the test runs, then restores
+    them after the test completes. Tests that mutate the registry
+    request this fixture explicitly. The built-ins (``max``, ``pi``) are
+    the core's catalogue, no registry state, so restoring leaves them in
+    place, and a user constant keeps its identifier when the snapshot
+    holds its entry.
+    """
+    snapshot = dict(_registry.get_registered_entries())
+    try:
+        yield
+    finally:
+        set_function_registry_state(snapshot)
+
+
+def is_cycle_collected(build: Callable[[], object]) -> bool:
+    """Return whether the cycle `build` makes is freed by `gc.collect()`.
+
+    `build` returns the object a weak reference watches; the cycle is
+    otherwise unreachable once `build` returns.
+    """
+    watched = weakref.ref(build())
+    gc.collect()
+    return watched() is None
+
+
+def run_counter_operations(
+    operations: Sequence[int | None],
+    allocate: Callable[[], int],
+    advance_past: Callable[[int], None],
+) -> list[int]:
+    """Run allocations and advances on an identifier id counter.
+
+    The counter first allocates an anchor id. ``None`` allocates; an integer
+    advances the counter past the id that far past the anchor. After the
+    operations the counter allocates once more, so every sequence ends by
+    observing where it left the counter.
+
+    Args:
+        operations: The allocations and advance offsets, in order.
+        allocate: The counter's allocation.
+        advance_past: The counter's advance past an id.
+
+    Returns:
+        Every id allocated after the anchor, minus the anchor.
+
+    """
+    base = allocate()
+    relative_ids = []
+    for advance_offset in operations:
+        if advance_offset is None:
+            relative_ids.append(allocate() - base)
+        else:
+            advance_past(base + advance_offset)
+    relative_ids.append(allocate() - base)
+    return relative_ids
+
+
+class MockIdentifierAliasError(Exception):
+    """Raised when a mock identifier would alias a registered native constant."""
+
+
+def _get_native_constant_names_by_identifier_id() -> dict[int, str]:
+    """Return each registered native constant's name, keyed by its identifier's id."""
+    return {
+        _registry.get_native_constant_identifier(name).id: name
+        for name, entry in _registry.get_registered_entries().items()
+        if isinstance(entry, _registry.NativeConstant)
+    }
+
+
+def _compare_mock_identifier_by_id(self: Mock, other: object) -> bool:
+    """Return whether ``other`` carries the mock identifier's ``id``."""
+    return bool(self.id == getattr(other, "id", object()))
+
+
+def _hash_mock_identifier_by_id(self: Mock) -> int:
+    """Return the hash of the mock identifier's ``id``."""
+    return hash(self.id)
+
+
+def _render_mock_identifier(self: Mock) -> str:
+    """Return ``<name_hint>::<id>``, the form ``Identifier.__repr__`` takes."""
+    return f"{self.name_hint}::{self.id}"
 
 
 def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     """Create a mock identifier.
+
+    The mock compares and hashes by ``id`` alone, as the real
+    :class:`Identifier` does. A native constant is recognized by its
+    canonical identifier, so a mock holding that identifier's id would be
+    the constant to every registry lookup, and a test using it as a
+    variable would silently ask about the constant. Such an id is refused.
+    The check reads the registry when the mock is made, so it cannot see a
+    constant registered afterwards.
 
     Args:
         name_hint: Variable name.
@@ -36,20 +197,38 @@ def mock_identifier(name_hint: str, identifier_id: int) -> Identifier:
     Returns:
         Mock identifier.
 
+    Raises:
+        MockIdentifierAliasError: If ``identifier_id`` is the id of a
+            currently registered native constant's canonical identifier.
+
     """
+    constant_name = _get_native_constant_names_by_identifier_id().get(identifier_id)
+    if constant_name is not None:
+        raise MockIdentifierAliasError(
+            f"mock_identifier({name_hint!r}, {identifier_id}) would alias the "
+            f"native constant {constant_name!r}: a mock compares by id, so every "
+            "registry lookup would treat it as that constant. Choose an id no "
+            "registered native constant holds."
+        )
     identifier = Mock(spec=Identifier)
     identifier._name_hint = name_hint
     identifier._id = identifier_id
     identifier.name_hint = name_hint
     identifier.id = identifier_id
-    # Configure dunder methods via MagicMock's side_effect rather than direct
-    # function assignment so mock-library internals own the dunder wiring.
-    identifier.__eq__ = MagicMock(  # type: ignore[method-assign]
-        side_effect=lambda other: identifier.id == getattr(other, "id", object())
-    )
-    identifier.__hash__ = MagicMock(  # type: ignore[method-assign]
-        side_effect=lambda: hash(identifier.id)
-    )
+    # The dunders are plain functions taking `self` rather than MagicMocks:
+    # a MagicMock records every call it receives, and the identifier pools
+    # the property tests share across a worker are compared and hashed so
+    # often that the growing history makes each deepcopy of an expression
+    # slower than the last.
+    identifier.__eq__ = _compare_mock_identifier_by_id  # type: ignore[method-assign,assignment]
+    identifier.__hash__ = _hash_mock_identifier_by_id  # type: ignore[method-assign,assignment]
+    # `repr()` must be deterministic and content-based, matching the shape of
+    # the real `Identifier.__repr__` ("<name_hint>::<id>"), rather than
+    # Mock's default address-based form. Code under test canonicalizes by
+    # `repr` (e.g. `ConstraintSystem` sorts its members this way), so two
+    # independently constructed mocks for the same logical identifier must
+    # render identically.
+    identifier.__repr__ = _render_mock_identifier  # type: ignore[method-assign,assignment]
     identifier.serialize_to_dict = lambda: {
         "id": identifier.id,
         "name_hint": identifier.name_hint,

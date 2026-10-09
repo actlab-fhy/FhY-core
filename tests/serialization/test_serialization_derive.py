@@ -8,11 +8,14 @@ be derived.
 """
 
 import enum
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import IntEnum, StrEnum
 from pathlib import Path, PureWindowsPath
 from typing import Any, cast
 
 import pytest
+from immutabledict import immutabledict
 
 from fhy_core.serialization import (
     DeserializationDictStructureError,
@@ -31,7 +34,6 @@ from fhy_core.serialization import (
     register_serializable,
 )
 from fhy_core.traits.frozen import FrozenMixin
-from fhy_core.utils import IntEnum, StrEnum
 from fhy_core.utils.override import override
 
 # ============================================================================
@@ -174,7 +176,7 @@ def test_derive_false_without_methods_raises_at_instantiation() -> None:
 
 
 def test_derive_false_with_manual_methods_works() -> None:
-    """Test ``derive=False`` with hand-written methods behaves as before."""
+    """Test ``derive=False`` with hand-written methods round-trips through them."""
 
     @register_serializable(type_id="_test_derive_optout_manual")
     @dataclass(frozen=True)
@@ -307,7 +309,7 @@ def test_construct_from_fields_override_is_honored() -> None:
 
         @classmethod
         @override
-        def construct_from_fields(cls, fields: dict[str, Any]) -> "_Constructed":
+        def construct_from_fields(cls, fields: Mapping[str, Any]) -> "_Constructed":
             return cls(fields["x"] + 100)
 
     assert _Constructed.deserialize_from_dict({"x": 5}).x == 105
@@ -316,6 +318,11 @@ def test_construct_from_fields_override_is_honored() -> None:
 def test_construct_from_fields_builds_from_decoded_fields() -> None:
     """Test the default hook reconstructs directly from a well-formed field map."""
     assert _Point.construct_from_fields({"x": 2, "y": 8}) == _Point(2, 8)
+
+
+def test_construct_from_fields_accepts_an_immutabledict() -> None:
+    """Test the default hook accepts an `immutabledict` field mapping."""
+    assert _Point.construct_from_fields(immutabledict({"x": 2, "y": 8})) == _Point(2, 8)
 
 
 @pytest.mark.parametrize(
@@ -425,6 +432,7 @@ def test_register_field_codec_teaches_inference_a_new_leaf() -> None:
 # ============================================================================
 
 
+@pytest.mark.usefixtures("v1_wire")
 def test_wrapped_family_member_derives_data_methods() -> None:
     """Test a wrapped-family member derives its data serialization."""
 

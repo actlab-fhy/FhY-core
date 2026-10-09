@@ -1,0 +1,612 @@
+"""Tests of downstream Rust kinds of `Variable` and `Alternative`.
+
+`rust/example-aggregate` registers two kinds from its `#[pymodule]`:
+`TiledVariable` (`example.tiled_variable`), a variable with index symbols
+compared by its Rust hooks, and `AxisAlternative`
+(`example.axis_alternative`), an alternative binding its axes. Each test
+runs in a fresh interpreter whose native module is the aggregate, and
+checks that the binding reads, compares, writes and decodes the kinds as it
+does its own classes, and that the registry refuses a second registration.
+"""
+
+import pathlib
+import textwrap
+
+import pytest
+
+from tests.native_modules import run_python
+from tests.test_composed_extension import site  # noqa: F401  # the fixture
+
+pytestmark = [pytest.mark.slow, pytest.mark.subprocess]
+
+_PRELUDE = """
+import fhy_core
+import _fhy_example_aggregate as aggregate
+from fhy_core import _rs
+from fhy_core.identifier import Identifier
+from fhy_core.search_space import (
+    Alternative,
+    Choice,
+    Configuration,
+    Space,
+    Variable,
+)
+from fhy_core.symbolic.param import create_categorical_param
+
+
+def realized_space(free_symbol=None):
+    axis = Identifier("i")
+    tiled = aggregate.TiledVariable(
+        create_categorical_param(frozenset({4, 8})),
+        (free_symbol or axis,),
+        Identifier("tile"),
+    )
+    realized = aggregate.AxisAlternative((axis,), (tiled,), Identifier("realized"))
+    plain = Alternative(name=Identifier("plain"))
+    choice = Choice((realized, plain), name=Identifier("layout"))
+    space = Space(choices=(choice,), name=Identifier("program"))
+    return space, choice, realized, tiled
+"""
+
+
+def _run(site: pathlib.Path, program: str) -> list[str]:  # noqa: F811
+    """Run the prelude and `program` in a fresh interpreter; return its lines."""
+    completed = run_python(_PRELUDE + textwrap.dedent(program), python_path=[site])
+    assert completed.returncode == 0, completed.stderr
+    return completed.stdout.split()
+
+
+def test_kinds_are_virtual_subclasses_of_the_public_classes(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test each registered class counts as a `Variable` or `Alternative`."""
+    output = _run(
+        site,
+        """
+        print(issubclass(aggregate.TiledVariable, Variable))
+        print(issubclass(aggregate.AxisAlternative, Alternative))
+        print(issubclass(aggregate.Tagger, Variable))
+        """,
+    )
+
+    assert output == ["True", "True", "False"]
+
+
+def test_kinds_are_read_into_containers(site: pathlib.Path) -> None:  # noqa: F811
+    """Test a space holds the kinds, and returns the objects it was given."""
+    output = _run(
+        site,
+        """
+        space, choice, realized, tiled = realized_space()
+        print(space.choices[0].alternatives[0] is realized)
+        found = space.decision(tiled.name)
+        same_symbols = found.index_symbols == tiled.index_symbols
+        print(type(found).__name__, found.kind, same_symbols)
+        print(",".join(decision.name.name_hint for decision in space.decisions))
+        """,
+    )
+
+    assert output == [
+        "True",
+        "TiledVariable",
+        "example.tiled_variable",
+        "True",
+        "layout,tile",
+    ]
+
+
+def test_kinds_compare_through_their_rust_hooks(site: pathlib.Path) -> None:  # noqa: F811
+    """Test relabeled spaces of the kinds correspond, and a free symbol does not."""
+    output = _run(
+        site,
+        """
+        left, *_ = realized_space()
+        right, *_ = realized_space()
+        stray, *_ = realized_space(Identifier("stray"))
+        print(left.is_alpha_equivalent(right), right.is_alpha_equivalent(left))
+        print(left.is_structurally_equivalent(right))
+        print(left.is_alpha_equivalent(stray))
+        """,
+    )
+
+    assert output == ["True", "True", "False", "False"]
+
+
+def test_kinds_round_trip_through_their_type_ids(site: pathlib.Path) -> None:  # noqa: F811
+    """Test a space of the kinds writes their foreign parts and decodes them."""
+    output = _run(
+        site,
+        """
+        space, choice, realized, tiled = realized_space()
+        text = space.to_json()
+        print('"example.axis_alternative"' in text)
+        decoded = Space.from_json(text)
+        print(decoded.to_json() == text, decoded.is_structurally_equivalent(space))
+        (decoded_realized, _) = decoded.choices[0].alternatives
+        print(type(decoded_realized).__name__, decoded_realized.axes == realized.axes)
+        (decoded_tiled,) = decoded_realized.variables
+        print(type(decoded_tiled).__name__, decoded_tiled.kind)
+        print(decoded_tiled.name == tiled.name)
+        print(decoded_tiled.index_symbols == tiled.index_symbols)
+        """,
+    )
+
+    assert output == [
+        "True",
+        "True",
+        "True",
+        "AxisAlternative",
+        "True",
+        "TiledVariable",
+        "example.tiled_variable",
+        "True",
+        "True",
+    ]
+
+
+def test_a_foreign_kind_decodes_as_a_variable(site: pathlib.Path) -> None:  # noqa: F811
+    """Test `Variable.deserialize_from_dict` decodes a registered kind's part."""
+    output = _run(
+        site,
+        """
+        space, choice, realized, tiled = realized_space()
+        holder = Alternative(variables=(tiled,), name=Identifier("holder"))
+        (payload,) = holder.serialize_to_dict()["plain"]["variables"]
+        print(sorted(payload), payload["foreign"]["type_id"])
+        decoded = Variable.deserialize_from_dict(payload)
+        print(type(decoded).__name__, isinstance(decoded, Variable))
+        print(decoded.index_symbols == tiled.index_symbols)
+        """,
+    )
+
+    assert output == [
+        "['foreign']",
+        "example.tiled_variable",
+        "TiledVariable",
+        "True",
+        "True",
+    ]
+
+
+_FOREIGN_PARTS = """
+from fhy_core.serialization import Serializable, register_serializable
+
+
+@register_serializable(type_id="tests.composed.rank")
+class Rank(Serializable):
+    def __init__(self, value):
+        self.value = value
+
+    def __eq__(self, other):
+        return isinstance(other, Rank) and self.value == other.value
+
+    def __hash__(self):
+        return hash(self.value)
+
+    def serialize_to_dict(self):
+        return {"value": self.value}
+
+    @classmethod
+    def deserialize_from_dict(cls, data):
+        return cls(data["value"])
+
+
+@register_serializable(type_id="tests.composed.held_variable")
+class HeldVariable(Variable):
+    def __init__(self, *, box=None, **fields):
+        super().__init__(**fields)
+        self.box = box
+
+    @classmethod
+    def deserialize_data_from_dict(cls, data):
+        base = Variable.deserialize_data_from_dict(data)
+        return cls(param=base.param, name=base.name, notes=base.notes)
+
+
+def ranked_param():
+    return create_categorical_param(frozenset({Rank(1), Rank(2)}))
+"""
+
+
+def test_a_kind_holding_foreign_parts_round_trips(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test a kind's resolver decodes the foreign parts its own parts hold.
+
+    An `AxisAlternative` holding a variable whose param has opaque values,
+    and one holding a Python subclass's variable, decode through the
+    binding's resolver and the context the space is decoded under.
+    """
+    output = _run(
+        site,
+        _FOREIGN_PARTS
+        + textwrap.dedent(
+            """
+        def round_trip(variable):
+            realized = aggregate.AxisAlternative(
+                (Identifier("i"),), (variable,), Identifier("realized")
+            )
+            choice = Choice((realized,), name=Identifier("layout"))
+            space = Space(choices=(choice,), name=Identifier("program"))
+            text = space.to_json()
+            decoded = Space.from_json(text)
+            (decoded_realized,) = decoded.choices[0].alternatives
+            (decoded_variable,) = decoded_realized.variables
+            print(decoded.to_json() == text, type(decoded_variable).__name__)
+            print(decoded.is_structurally_equivalent(space))
+
+        round_trip(Variable(param=ranked_param(), name=Identifier("ranked")))
+        round_trip(
+            HeldVariable(
+                param=create_categorical_param(frozenset({1, 2})),
+                name=Identifier("held"),
+            )
+        )
+        """
+        ),
+    )
+
+    assert output == [
+        "True",
+        "Variable",
+        "True",
+        "True",
+        "HeldVariable",
+        "True",
+    ]
+
+
+def test_configuration_chooses_a_kind(site: pathlib.Path) -> None:  # noqa: F811
+    """Test a configuration's alternative is the kind's object, its key shared."""
+    output = _run(
+        site,
+        """
+        keys = []
+        for _ in range(2):
+            space, choice, realized, tiled = realized_space()
+            entries = {choice.name: realized.name, tiled.name: 8}
+            configuration = Configuration(space, entries)
+            keys.append(configuration.key())
+        print(configuration.alternative(choice.name) is realized)
+        print(configuration.is_complete(), keys[0] == keys[1])
+        """,
+    )
+
+    assert output == ["True", "True", "True"]
+
+
+def test_registry_refusal_messages(site: pathlib.Path) -> None:  # noqa: F811
+    """Test the registry's refusals say why."""
+    completed = run_python(
+        _PRELUDE
+        + textwrap.dedent(
+            """
+            import types
+
+            variable = aggregate.KindRegistrar.register_variable
+            alternative = aggregate.KindRegistrar.register_alternative
+            tiled_class = aggregate.TiledVariable
+            bare = types.ModuleType("bare")
+
+            class Other:
+                pass
+
+            for attempt in (
+                lambda: variable(_rs, "example.tiled_variable", Other),
+                lambda: variable(_rs, "example.other", tiled_class),
+                lambda: variable(_rs, "search_space.variable", Other),
+                lambda: alternative(_rs, "search_space.alternative", Other),
+                lambda: variable(bare, "example.bare", Other),
+            ):
+                try:
+                    attempt()
+                except (ValueError, RuntimeError) as error:
+                    print(error)
+            """
+        ),
+        python_path=[site],
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        'the Variable kind "example.tiled_variable" cannot be registered: '
+        "it is registered already",
+        'the Variable kind "example.other" cannot be registered: '
+        "the class TiledVariable is registered for a kind already",
+        'the Variable kind "search_space.variable" cannot be registered: '
+        "it is the plain variable's kind",
+        'the Alternative kind "search_space.alternative" cannot be registered: '
+        "it is the plain alternative's kind",
+        "the module bare holds no fhy_core binding: register fhy_core's classes "
+        "into it first",
+    ]
+
+
+def test_a_kind_registered_after_import_is_a_virtual_subclass(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test a kind registered once the public class exists subclasses it at once."""
+    output = _run(
+        site,
+        """
+        class Late:
+            pass
+
+        aggregate.KindRegistrar.register_variable(_rs, "example.late", Late)
+        print(issubclass(Late, Variable))
+        """,
+    )
+
+    assert output == ["True"]
+
+
+def test_a_kind_is_refused_a_serializable_class_s_type_id(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test a kind cannot take a type id a Python class is registered under.
+
+    Decoding tries a kind before the Python registry, so a class whose type
+    id a kind took would write payloads it cannot read back. A refused
+    registration leaves the registry unchanged.
+    """
+    completed = run_python(
+        _PRELUDE
+        + textwrap.dedent(
+            """
+            from fhy_core.serialization import register_serializable
+
+            variable = aggregate.KindRegistrar.register_variable
+            alternative = aggregate.KindRegistrar.register_alternative
+
+            @register_serializable(type_id="example.python_first")
+            class PythonFirst(Variable):
+                pass
+
+            class Other:
+                pass
+
+            for attempt in (
+                lambda: variable(_rs, "example.python_first", Other),
+                lambda: alternative(_rs, "example.python_first", Other),
+                lambda: alternative(_rs, "search_space.space", Other),
+                lambda: variable(_rs, "search_space.variable", Other),
+            ):
+                try:
+                    attempt()
+                except ValueError as error:
+                    print(error)
+            print(_rs.get_search_space_kind_class("example.python_first"))
+            variable(_rs, "example.free", Other)
+            print(_rs.get_search_space_kind_class("example.free") is Other)
+            """
+        ),
+        python_path=[site],
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        'the Variable kind "example.python_first" cannot be registered: '
+        "it is the type id of the serializable class PythonFirst",
+        'the Alternative kind "example.python_first" cannot be registered: '
+        "it is the type id of the serializable class PythonFirst",
+        'the Alternative kind "search_space.space" cannot be registered: '
+        "it is the type id of the serializable class Space",
+        'the Variable kind "search_space.variable" cannot be registered: '
+        "it is the plain variable's kind",
+        "None",
+        "True",
+    ]
+
+
+def test_a_serializable_class_is_refused_a_kind_s_type_id(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test `register_serializable` refuses a type id a kind is registered under.
+
+    The refusal is a `SerializationError` worded as a duplicate
+    registration, and leaves both the class and the registry untouched; a
+    kind's own payloads still decode.
+    """
+    completed = run_python(
+        _PRELUDE
+        + textwrap.dedent(
+            """
+            from fhy_core import serialization
+            from fhy_core.serialization import SerializationError, register_serializable
+
+            class Clash(Variable):
+                pass
+
+            class AliasClash(Alternative):
+                pass
+
+            for attempt in (
+                lambda: register_serializable(type_id="example.tiled_variable")(Clash),
+                lambda: register_serializable(
+                    AliasClash, type_id="example.axis_alternative", alias=True
+                ),
+            ):
+                try:
+                    attempt()
+                except SerializationError as error:
+                    print(error)
+            print("_SERIALIZATION_CLASS_TYPE_ID" in Clash.__dict__)
+            print("example.tiled_variable" in serialization._TYPE_REGISTRY)
+            print("example.axis_alternative" in serialization._TYPE_REGISTRY)
+            space, _, _, tiled = realized_space()
+            decoded = Space.from_json(space.to_json())
+            print(type(decoded.choices[0].alternatives[0].variables[0]).__name__)
+            """
+        ),
+        python_path=[site],
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.splitlines() == [
+        'Duplicate registration for type_id "example.tiled_variable": '
+        "<class 'fhy_example_aggregate.TiledVariable'> already registered as a "
+        "Rust search-space kind; refusing to override.",
+        'Duplicate registration for type_id "example.axis_alternative": '
+        "<class 'fhy_example_aggregate.AxisAlternative'> already registered as a "
+        "Rust search-space kind; refusing to override.",
+        "False",
+        "False",
+        "False",
+        "TiledVariable",
+    ]
+
+
+def test_a_registered_oracle_answers_a_recorder_and_counts_its_steps(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test `CountingOracle` answers coordinate 0 to three steps and counts them."""
+    output = _run(
+        site,
+        """
+        from fhy_core.search_space import ChoiceDomain, Recorder
+
+        oracle = aggregate.CountingOracle()
+        recorder = Recorder(oracle)
+        subject = Identifier("subject")
+        for _ in range(3):
+            recorder.decide_dynamic(
+                "moga.cir.option", subject, ChoiceDomain(("a", "b", "c"))
+            )
+        print(recorder.trace.coordinates)
+        print(oracle.count)
+        """,
+    )
+
+    assert output == ["(0,", "0,", "0)", "3"]
+
+
+def test_a_registered_oracle_samples_a_space_through_its_lease(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test `Space.sample` runs a registered oracle and the oracle counts the steps."""
+    output = _run(
+        site,
+        """
+        oracle = aggregate.CountingOracle()
+        realized_space_, *_ = realized_space()
+        configuration, trace = realized_space_.sample(oracle)
+        print(configuration.is_complete(), oracle.count == len(trace))
+        print(set(trace.coordinates))
+        """,
+    )
+
+    assert output == ["True", "True", "{0}"]
+
+
+def test_oracle_registry_refusals(site: pathlib.Path) -> None:  # noqa: F811
+    """Test a kind or a class registered twice is a `ValueError`."""
+    output = _run(
+        site,
+        """
+        register = aggregate.OracleRegistrar.register_oracle
+
+        class Other:
+            pass
+
+        for attempt in (
+            lambda: register(_rs, "example.counting_oracle", Other),
+            lambda: register(_rs, "example.other_counting", aggregate.CountingOracle),
+        ):
+            try:
+                attempt()
+            except ValueError as error:
+                print(type(error).__name__)
+        """,
+    )
+
+    assert output == ["ValueError", "ValueError"]
+
+
+def test_cycles_through_the_kinds_are_collected(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test cycles through a kind's Python parts are freed by `gc.collect()`.
+
+    An `AxisAlternative` holding a Python subclass's variable that points
+    back at it, and a `TiledVariable` over a param whose opaque value
+    points back at it.
+    """
+    output = _run(
+        site,
+        _FOREIGN_PARTS
+        + textwrap.dedent(
+            """
+        import gc
+        import weakref
+
+        def collects(build):
+            watched = weakref.ref(build())
+            gc.collect()
+            return watched() is None
+
+        def through_an_axis_alternative():
+            box = []
+            variable = HeldVariable(
+                box=box,
+                param=create_categorical_param(frozenset({1, 2})),
+                name=Identifier("held"),
+            )
+            box.append(
+                aggregate.AxisAlternative(
+                    (Identifier("i"),), (variable,), Identifier("realized")
+                )
+            )
+            return variable
+
+        def through_a_tiled_variable():
+            value = Rank(1)
+            value.owner = aggregate.TiledVariable(
+                create_categorical_param(frozenset({value, Rank(2)})),
+                (Identifier("i"),),
+                Identifier("tile"),
+            )
+            return value
+
+        print(collects(through_an_axis_alternative))
+        print(collects(through_a_tiled_variable))
+        """
+        ),
+    )
+
+    assert output == ["True", "True"]
+
+
+_AGGREGATE_NOT_TRACKED = {
+    "Tagger": "holds no Python object",
+    "KindRegistrar": "holds no Python object",
+    "OracleRegistrar": "holds no Python object",
+    "CountingOracle": "holds only its count, no Python object",
+}
+"""The aggregate's classes that do not take part in GC, each with the reason."""
+
+
+def test_every_aggregate_class_that_holds_objects_takes_part_in_gc(
+    site: pathlib.Path,  # noqa: F811
+) -> None:
+    """Test each class of the aggregate that holds Python objects has
+    `Py_TPFLAGS_HAVE_GC`, as `tests/test_gc_cycles.py` tests `fhy_core`'s."""
+    output = _run(
+        site,
+        f"""
+        not_tracked = {sorted(_AGGREGATE_NOT_TRACKED)!r}
+        classes = {{
+            name: value
+            for name, value in vars(aggregate).items()
+            if isinstance(value, type)
+            and value.__module__ == "fhy_example_aggregate"
+        }}
+        print(set(not_tracked) <= classes.keys())
+        print(sorted(
+            name
+            for name, cls in classes.items()
+            if name not in not_tracked and not cls.__flags__ & (1 << 14)
+        ))
+        """,
+    )
+
+    assert output == ["True", "[]"]
