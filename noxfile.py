@@ -57,6 +57,21 @@ EXPANDED_GOLDEN_CORPORA = {
 }
 
 
+# The cosmic-ray config of the mutation session; only the mutated module
+# varies. The timeout leaves about four times the suite's serial run time,
+# since cosmic-ray scores a mutant whose tests overrun it as killed.
+_MUTATION_CONFIG = """\
+[cosmic-ray]
+module-path = "{module_path}"
+timeout = 120.0
+excluded-modules = []
+test-command = "pytest -x --no-header -q -o addopts='' -m 'not slow' tests"
+
+[cosmic-ray.distributor]
+name = "local"
+"""
+
+
 def _sync(session: nox.Session, *groups: str) -> None:
     """Install the project and the named dependency groups into the session env."""
     args = ["uv", "sync", "--no-default-groups"]
@@ -270,16 +285,21 @@ def golden_expanded(session: nox.Session) -> None:
 def mutation(session: nox.Session) -> None:
     """Run cosmic-ray mutation testing for one module (opt-in).
 
-    `nox -s mutation -- lattice`.
+    `nox -s mutation -- symbolic.param.core` mutates
+    `src/fhy_core/symbolic/param/core.py`.
     """
-    module = session.posargs[0] if session.posargs else "lattice"
-    config = ROOT / "cosmic-ray" / f"{module}.toml"
-    if not config.is_file():
-        available = ", ".join(
-            sorted(path.stem for path in config.parent.glob("*.toml"))
-        )
-        session.error(f"no mutation config for {module!r}; available: {available}")
+    if len(session.posargs) != 1:
+        session.error("name one module under fhy_core, e.g. symbolic.param.core")
+    module = session.posargs[0].removeprefix("fhy_core.")
+    source = pathlib.Path("src", "fhy_core", *module.split(".")).with_suffix(".py")
+    if not (ROOT / source).is_file():
+        session.error(f"no module fhy_core.{module} at {source}")
     _sync(session, "mutation")
+    tmp = pathlib.Path(session.create_tmp()).resolve()
+    config = tmp / "cosmic-ray.toml"
+    config.write_text(
+        _MUTATION_CONFIG.format(module_path=source.as_posix()), encoding="utf-8"
+    )
     # Every mutant has to see the same Hypothesis draws, and none may replay a
     # counterexample saved while testing another, so the run uses the
     # derandomized, database-free `mutation` profile from tests/conftest.py.
@@ -288,7 +308,7 @@ def mutation(session: nox.Session) -> None:
     # killed, so stop before mutating anything if the unmutated suite fails or
     # does not finish within that timeout.
     session.run("cosmic-ray", "baseline", str(config))
-    database = ROOT / "session.sqlite"
+    database = tmp / "session.sqlite"
     database.unlink(missing_ok=True)
     session.run("cosmic-ray", "init", str(config), str(database))
     session.run("cr-filter-pragma", str(database))
