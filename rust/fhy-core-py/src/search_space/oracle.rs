@@ -1,6 +1,6 @@
 //! The oracles of `fhy_core.search_space`: `PendingStep`, the step an
-//! oracle is asked; `RandomOracle`, `ReplayOracle` and `ExhaustiveOracle`,
-//! the core's oracles; the adapter through which a Python oracle answers
+//! oracle is asked; `RandomOracle`, `ReplayOracle`, `GuidedOracle` and
+//! `ExhaustiveOracle`, the core's oracles; the adapter through which a Python oracle answers
 //! the core; and the reading of an oracle argument.
 //!
 //! An oracle argument is read, in order, as one of the core's oracle
@@ -10,6 +10,7 @@
 //! class's state is locked while it answers: asking it again from inside
 //! its own run (from a hook it calls) is `RuntimeError`.
 
+use std::cell::RefCell;
 use std::fmt;
 use std::sync::{Mutex, MutexGuard, TryLockError};
 
@@ -21,8 +22,8 @@ use pyo3::pyclass::{PyTraverseError, PyVisit};
 use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::{
-    Configuration, Coordinate, DecisionKind, ExhaustiveOracle, PendingStep, ReplayOracle, Rng,
-    SearchOracle, StepDomain, TraceError,
+    Configuration, Coordinate, DecisionKind, ExhaustiveOracle, GuidedOracle, PendingStep,
+    ReplayOracle, Rng, SearchOracle, StepDomain, TraceError,
 };
 
 use crate::constraint::read_bound_value;
@@ -69,6 +70,18 @@ pub(super) struct StepFrame {
     pub(super) subject: Option<Py<PyAny>>,
     /// The domain object of a dynamic step.
     pub(super) domain: Option<Py<PyAny>>,
+}
+
+impl StepFrame {
+    /// Return a frame holding the same objects.
+    fn clone_ref(&self, py: Python<'_>) -> Self {
+        let copy = |object: &Option<Py<PyAny>>| object.as_ref().map(|object| object.clone_ref(py));
+        Self {
+            space: self.space.as_ref().map(|space| space.clone_ref(py)),
+            subject: copy(&self.subject),
+            domain: copy(&self.domain),
+        }
+    }
 }
 
 /// A step as a Python oracle is asked it: an owned snapshot, so its
@@ -189,6 +202,31 @@ impl PyPendingStep {
             },
             |error| boxed_error_to_py(py, error, ORACLE_FAILED),
         )
+    }
+
+    /// Return the objects the snapshot shows, as a frame for the snapshots
+    /// of the same step an oracle it is passed on to takes: the space of
+    /// its configuration, and its subject and domain.
+    ///
+    /// # Errors
+    ///
+    /// Raises what reading the configuration's space raises.
+    fn frame(&self, py: Python<'_>) -> PyResult<StepFrame> {
+        let space = match &self.configuration {
+            Some(configuration) => Some(
+                configuration
+                    .bind(py)
+                    .getattr(intern!(py, "space"))?
+                    .cast_into::<PySpace>()?
+                    .unbind(),
+            ),
+            None => None,
+        };
+        Ok(StepFrame {
+            space,
+            subject: Some(self.subject.clone_ref(py)),
+            domain: Some(self.domain.clone_ref(py)),
+        })
     }
 
     /// Return the coordinate `oracle` answers the step with, as a Python
@@ -410,6 +448,170 @@ impl PyRandomOracle {
     }
 }
 
+/// The fallback of a `GuidedOracle` object's core oracle: the fallback
+/// object and the objects its snapshots show, lent for the call in
+/// progress by [`LentGuidedOracle`] and read anew at each step it answers.
+///
+/// It holds the objects only during a call, so the oracle keeps no strong
+/// reference the cycle collector does not see: between calls the
+/// `GuidedOracle` object's `__traverse__` visits the fallback it holds
+/// itself.
+#[derive(Default)]
+struct CallFallback {
+    /// The fallback object and the snapshot objects of the call in
+    /// progress, or `None` between calls.
+    ///
+    /// A cell, since the core oracle owns its fallback and lends it only by
+    /// shared reference, while the call must be put in and taken out under
+    /// the oracle's lock. No borrow can overlap another: [`read`](Self::read)
+    /// borrows only to copy the objects out, never across a call into
+    /// Python, and the call is replaced only by [`LentGuidedOracle`], which
+    /// holds the oracle's lock, which a re-entrant call cannot take.
+    call: RefCell<Option<(Py<PyAny>, StepFrame)>>,
+}
+
+impl CallFallback {
+    /// Return the fallback object and a copy of the snapshot objects of the
+    /// call in progress.
+    fn read(&self, py: Python<'_>) -> PyResult<(Py<PyAny>, StepFrame)> {
+        let call = self.call.borrow();
+        let (object, frame) = call.as_ref().ok_or_else(|| {
+            PyRuntimeError::new_err("the GuidedOracle's fallback was asked outside a call")
+        })?;
+        Ok((object.clone_ref(py), frame.clone_ref(py)))
+    }
+}
+
+impl SearchOracle for CallFallback {
+    fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
+        let answer = Python::attach(|py| {
+            let (object, frame) = self.read(py)?;
+            with_oracle(object.bind(py), frame, |oracle| Ok(oracle.decide(step)))
+        });
+        match answer {
+            Ok(answer) => answer,
+            Err(error) => Err(Box::new(error)),
+        }
+    }
+}
+
+/// The core's guided oracle: a recorded `Trace` answers each step where
+/// it fits and is admissible, and the oracle `fallback` answers the rest.
+///
+/// The fallback is read as an oracle argument at each step it answers.
+///
+/// One oracle guides one run: the dynamic steps it takes are used up, so a
+/// second run with it gets no dynamic guidance. Build a new one, from the
+/// same guide, for each run.
+#[pyclass(frozen, module = "fhy_core._rs", name = "GuidedOracle")]
+pub(crate) struct PyGuidedOracle {
+    /// The guiding `Trace`.
+    guide: Py<PyAny>,
+    /// The fallback oracle.
+    fallback: Py<PyAny>,
+    /// The core oracle: the guide's answers not yet taken.
+    state: Mutex<GuidedOracle<CallFallback>>,
+}
+
+impl PyGuidedOracle {
+    /// Run `run` with the core oracle, its fallback asking the fallback
+    /// object with snapshots showing the objects of `frame`.
+    ///
+    /// # Errors
+    ///
+    /// Raises `RuntimeError` while the oracle answers a step, and what
+    /// `run` raises.
+    fn with_oracle<T>(
+        &self,
+        py: Python<'_>,
+        frame: StepFrame,
+        run: impl FnOnce(&mut dyn SearchOracle) -> PyResult<T>,
+    ) -> PyResult<T> {
+        let state = lock_state(&self.state, "GuidedOracle")?;
+        let mut lent = LentGuidedOracle::lend(state, self.fallback.clone_ref(py), frame);
+        run(&mut *lent.state)
+    }
+}
+
+/// The core oracle of a `GuidedOracle` object, locked, with the fallback
+/// object and the snapshot objects of one call lent to its fallback until
+/// it is dropped, on unwind included.
+struct LentGuidedOracle<'a> {
+    state: MutexGuard<'a, GuidedOracle<CallFallback>>,
+}
+
+impl<'a> LentGuidedOracle<'a> {
+    /// Return the locked oracle `state` with `fallback` and `frame` lent to
+    /// its fallback.
+    fn lend(
+        state: MutexGuard<'a, GuidedOracle<CallFallback>>,
+        fallback: Py<PyAny>,
+        frame: StepFrame,
+    ) -> Self {
+        state.fallback().call.replace(Some((fallback, frame)));
+        Self { state }
+    }
+}
+
+impl Drop for LentGuidedOracle<'_> {
+    /// Take the call's objects back, before the lock is released.
+    fn drop(&mut self) {
+        self.state.fallback().call.replace(None);
+    }
+}
+
+#[pymethods]
+impl PyGuidedOracle {
+    /// Return the oracle guided by the `Trace` `guide` that asks the oracle
+    /// `fallback` what the guide does not answer.
+    ///
+    /// Raises `TypeError` for a `guide` that is no `Trace`.
+    #[new]
+    fn new(guide: &Bound<'_, PyAny>, fallback: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let core = read_trace(guide, "GuidedOracle")?;
+        Ok(Self {
+            guide: guide.clone().unbind(),
+            fallback: fallback.clone().unbind(),
+            state: Mutex::new(GuidedOracle::new(&core, CallFallback::default())),
+        })
+    }
+
+    /// The guiding `Trace`.
+    #[getter]
+    fn guide(&self, py: Python<'_>) -> Py<PyAny> {
+        self.guide.clone_ref(py)
+    }
+
+    /// The fallback oracle.
+    #[getter]
+    fn fallback(&self, py: Python<'_>) -> Py<PyAny> {
+        self.fallback.clone_ref(py)
+    }
+
+    /// Return the answer to the `PendingStep` `step`: the guide's where it
+    /// fits and is admissible, else the fallback's.
+    ///
+    /// Raises `TypeError` for a `step` that is no `PendingStep`, and what
+    /// the fallback raises.
+    fn decide<'py>(&self, step: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        let py = step.py();
+        let step = step.cast::<PyPendingStep>()?.get();
+        let frame = step.frame(py)?;
+        let answer = self.with_oracle(py, frame, |oracle| step.answer(py, oracle))?;
+        Ok(answer.into_bound(py))
+    }
+
+    /// Visit the Python objects the oracle keeps, for the cycle collector.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "PyO3 hands `__traverse__` its visitor by value"
+    )]
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.guide)?;
+        visit.call(&self.fallback)
+    }
+}
+
 /// The core's replay oracle.
 #[pyclass(frozen, module = "fhy_core._rs", name = "ReplayOracle")]
 pub(crate) struct PyReplayOracle {
@@ -594,6 +796,9 @@ pub(crate) fn with_oracle<T>(
     }
     if let Ok(replay) = object.cast::<PyReplayOracle>() {
         return replay.get().with_oracle(|oracle| run(oracle));
+    }
+    if let Ok(guided) = object.cast::<PyGuidedOracle>() {
+        return guided.get().with_oracle(py, frame, run);
     }
     if let Ok(exhaustive) = object.cast::<PyExhaustiveOracle>() {
         let mut oracle = lock_state(&exhaustive.get().oracle, "ExhaustiveOracle")?;

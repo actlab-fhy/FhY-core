@@ -69,7 +69,12 @@
 //!
 //! 1. Every getter answers the same for the value's whole life.
 //! 2. `kind()` is unique to the implementing type, stable across releases
-//!    and processes, and the type id its `to_foreign` writes.
+//!    and processes, and the type id its `to_foreign` writes. Several kinds
+//!    that share their code are one generic type over a marker per kind,
+//!    `Knob<K: KnobKind>` with `K::KIND` its kind, so each kind is its own
+//!    type and a downcast to `Knob<ArrayTile>` finds only array tiles; one
+//!    type that answers several kinds by a field breaks the downcasts the
+//!    `is_extension_*` hooks make.
 //! 3. An alternative's `bound_identifiers` are distinct, the same on every
 //!    call, and as many for two values that should correspond.
 //! 4. The `is_extension_*` hooks are equivalence relations; the structural
@@ -99,22 +104,28 @@
 //! the run's [`Configuration`].
 //!
 //! [`RandomOracle`] draws, [`ReplayOracle`] answers a recorded trace back
-//! and refuses a run that leaves its path, and [`ExhaustiveOracle`] takes
-//! every path of a stream once over successive runs. Over a space alone,
-//! [`Space::sample`], [`Space::sample_uniform`], [`Space::replay`],
-//! [`Space::enumerate`], [`Space::cardinality`] and [`Space::mutate`] do
-//! the rest. Every random draw takes its numbers from an [`Rng`] the caller
+//! and refuses a run that leaves its path, [`GuidedOracle`] answers a
+//! recorded trace back where it fits and asks another oracle where it does
+//! not, and [`ExhaustiveOracle`] takes every path of a stream once over
+//! successive runs. Over a space alone, [`Space::sample`],
+//! [`Space::sample_uniform`], [`Space::complete`], [`Space::replay`],
+//! [`Space::enumerate`], [`Space::cardinality`], [`Space::mutate`] and
+//! [`Space::crossover`] do the rest. Every random draw takes its numbers from an [`Rng`] the caller
 //! passes, whose stream is the same in every release and on every
 //! platform.
 //!
 //! # Measuring
 //!
-//! A [`Measurer`] measures a realization of a configuration and returns a
-//! [`Measurement`]: the configuration's key, its [`MeasurementStatus`]
+//! A [`Measurer`] measures a realization of a configuration, or of one run
+//! of a stream, and returns a [`Measurement`]: the [`MeasurementKey`] of
+//! what it measured (a [`ConfigurationKey`], or a run's [`TraceKey`],
+//! which tells runs differing in their dynamic steps apart), its
+//! [`MeasurementStatus`]
 //! and, when it succeeded, a finite value per [`Objective`], whose
 //! [`Direction`] says which way is better. [`Objective::compare`] orders
-//! two values of one objective, and [`Measurement::dominates`] compares
-//! two measurements over the same objectives.
+//! two values of one objective, [`Measurement::dominates`] compares
+//! two measurements over the same objectives, and [`non_dominated`] keeps
+//! the measurements no other one dominates.
 //!
 //! # Examples
 //!
@@ -173,6 +184,7 @@
 
 mod alternative;
 mod choice;
+mod chunked;
 mod configuration;
 mod counting;
 mod domain;
@@ -201,13 +213,17 @@ pub use domain::{
 };
 pub use error::{
     ConfigurationError, ConfigurationErrors, EmptyKind, EquivalenceError, MeasurementError,
-    ReplayError, SpaceError, StepDomainError, TraceError,
+    RegistryError, ReplayError, SpaceError, StepDomainError, TraceError,
 };
 pub use exploration::{Cardinality, Enumeration};
-pub use measurement::{Direction, Measurement, MeasurementStatus, Measurer, Objective};
-pub use oracle::{ExhaustiveOracle, PendingStep, RandomOracle, ReplayOracle, SearchOracle};
+pub use measurement::{
+    Direction, Measurement, MeasurementKey, MeasurementStatus, Measurer, Objective, non_dominated,
+};
+pub use oracle::{
+    ExhaustiveOracle, GuidedOracle, PendingStep, RandomOracle, ReplayOracle, SearchOracle,
+};
 pub use recorder::{Recorded, Recorder};
 pub use rng::Rng;
 pub use space::{Condition, Decision, Forbidden, Space};
-pub use trace::{Trace, TraceStep};
+pub use trace::{Trace, TraceKey, TraceStep};
 pub use variable::{PlainVariable, Variable};

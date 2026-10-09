@@ -5,13 +5,13 @@ use std::borrow::Cow;
 use crate::expression::builtins::BuiltinFunction;
 use num_traits::Signed;
 
-use crate::expression::{BinaryOperation, Expression, Rational};
+use crate::expression::{BinaryOperation, Expression, Rational, build_zero, compute_arithmetic};
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
 use super::exact::{
-    build_number_expression, build_zero, compute_arithmetic, pick_larger, pick_smaller,
-    read_boolean, read_builtin_call, read_numbers, take_absolute, take_sign,
+    build_number_expression, pick_larger, pick_smaller, read_boolean, read_builtin_call,
+    read_numbers, take_absolute, take_sign,
 };
 
 /// Rewrites a call of a composed built-in function of exact numbers or

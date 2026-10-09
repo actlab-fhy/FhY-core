@@ -414,9 +414,14 @@ function is handed the binding's resolver of the payload, as a
 `&dyn SearchSpaceResolver`, and the `ParamContext` it is decoded under, and
 builds the parts its own part holds (a param, variables, choices) with
 both, so a Python subclass's variable or an opaque value inside it decodes
-too. A class that keeps a Python-defined part reads it inside
-`util::gc::collect_slots`, keeps the `Slots` and the objects it was given,
-and visits them from its `__traverse__`, as `rust/example-aggregate` does.
+too. The function has the shape of the core's
+`fhy_core::search_space::wire::VariableResolverFn` (or
+`AlternativeResolverFn`), so the one function a crate writes also serves
+a pure-Rust program, which composes the crates' functions in a
+`ResolverRegistry` and decodes with its `resolver`. A class that keeps a
+Python-defined part reads it inside `util::gc::collect_slots`, keeps the
+`Slots` and the objects it was given, and visits them from its
+`__traverse__`, as `rust/example-aggregate` does.
 Its `util` module is the public surface for writing a Rust-backed class the
 way `fhy_core`'s are written, which `fhy_core`'s own classes use and a
 downstream `-py` crate builds on:
@@ -736,8 +741,9 @@ affected types document this; decoding is not ordered to prevent it.
 
 A type with an open variant, one that holds a part another implementation
 defines (a `Type` or `DataType` extension, a custom constraint or domain,
-an opaque value), holds it in a `fhy_core::foreign::Part`, and serializes
-that part as a `fhy_core::foreign::Foreign`: the type id its
+an opaque value, a custom provenance), holds it in a
+`fhy_core::foreign::Part`, and serializes that part as a
+`fhy_core::foreign::Foreign`: the type id its
 implementation registered under and its own payload as text, from the
 `to_foreign` of the `ForeignPart` supertrait, whose default refuses. Its module's
 `wire` submodule defines the shape once, as a plain data type that derives
@@ -789,7 +795,11 @@ a part's payload and holds no resolver of its own.
   call into Python. The third is `fhy_core.symbol_table`: the core table
   asks a frame Python defines, a `SymbolTableFrame` subclass, its own
   `is_structurally_equivalent` and `serialize_to_dict` once per such frame
-  it holds, and reads its `name` once when it is added.
+  it holds, and reads its `name` once when it is added. The fourth is
+  `fhy_core.provenance`: an instance of a `Provenance` subclass Python
+  defines reaches the core as a `Provenance::Custom`, which asks the
+  instance its `==`, `hash`, `str` and serialized form once per such
+  provenance the core compares, hashes, renders or writes.
 - Keep no fallback. The package requires the extension: importing
   `fhy_core` raises `ImportError` when `fhy_core._rs` is missing, fails to
   import, or does not match the package version (`fhy_core._extension`).
@@ -842,7 +852,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.identifier` | `fhy_core::identifier` |
 | `fhy_core.traits.interned` | `fhy_core::interned` |
 | `fhy_core.diagnostic` | `fhy_core::diagnostic` |
-| `fhy_core.provenance` | `fhy_core::provenance` |
+| `fhy_core.provenance` | `fhy_core::provenance`; a `Provenance` subclass Python defines is a `Provenance::Custom` there |
 | `fhy_core.op_attribute` | `fhy_core::op_attribute` |
 | `fhy_core.value_domain` | `fhy_core::value_domain` |
 | `fhy_core.symbolic.symbol_type` | `fhy_core::expression` (`SymbolType`) |
@@ -852,6 +862,7 @@ the one place that maps Python paths to Rust ones:
 | `fhy_core.symbolic.expression.passes.evaluate`, `passes.numpy`, `passes.native_lowering` | `fhy_core::expression::evaluate` |
 | `fhy_core.symbolic.expression.pattern` (`core`, `rewrite`) | `fhy_core::expression::pattern`; the rule-applier pass is in `fhy_core::expression::passes` |
 | `fhy_core.symbolic.expression.passes` | `fhy_core::expression::passes` |
+| `fhy_core.symbolic.expression.passes.affine` | `fhy_core::expression` (`AffineForm`, `Expression::affine_form`, `Rational`) |
 | `fhy_core.pass_infrastructure` | `fhy_core::pass`; tree traversal is in `fhy_core::tree` |
 | `fhy_core.symbolic.solver`, `symbolic.expression.passes.z3` (the lowering) | `fhy_core::solver` |
 | `fhy_core.symbolic.expression.passes.sympy` (the lowering, simplification and lifting) | the binding (`fhy-core-py`'s `solver::sympy`), a `fhy_core::solver::Simplifier` |

@@ -95,6 +95,12 @@ pub enum SpaceError {
         /// The implementation's error.
         source: BoxError,
     },
+    /// A space edit names a decision that is not one of the space's
+    /// top-level decisions.
+    NotTopLevelDecision {
+        /// The name.
+        name: Identifier,
+    },
     /// A custom constraint's scope or key failed.
     Constraint(ConstraintError),
 }
@@ -149,6 +155,9 @@ impl fmt::Display for SpaceError {
                 f,
                 "the bound identifiers of the alternative {alternative:?} failed"
             ),
+            Self::NotTopLevelDecision { name } => {
+                write!(f, "{name:?} is not a top-level decision of the space")
+            }
             Self::Constraint(_) => f.write_str("a custom constraint failed"),
         }
     }
@@ -761,3 +770,38 @@ impl fmt::Display for MeasurementError {
 }
 
 impl Error for MeasurementError {}
+
+/// Why a [`ResolverRegistry`](super::wire::ResolverRegistry) refuses a
+/// registration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RegistryError {
+    /// A type id is registered twice in one family of parts.
+    RepeatedTypeId {
+        /// The type id.
+        type_id: String,
+    },
+    /// A variable or an alternative kind is this module's own,
+    /// [`PlainVariable::KIND`](super::PlainVariable::KIND) or
+    /// [`PlainAlternative::KIND`](super::PlainAlternative::KIND), which the
+    /// wire form tags `plain` and never resolves.
+    ReservedTypeId {
+        /// The type id.
+        type_id: String,
+    },
+}
+
+impl fmt::Display for RegistryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RepeatedTypeId { type_id } => {
+                write!(f, "the type id {type_id:?} is registered twice")
+            }
+            Self::ReservedTypeId { type_id } => {
+                write!(f, "the type id {type_id:?} is the search space's own")
+            }
+        }
+    }
+}
+
+impl Error for RegistryError {}

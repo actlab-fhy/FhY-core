@@ -5,22 +5,30 @@
 //! names a file: a [`FileProvenance`] pairs a path with an optional span.
 //!
 //! A [`Provenance`] records the origin of a compiler object: unknown, a file
-//! region, a named wrapper around a child provenance, a call site, or a
-//! fusion of several provenances. A transformation that combines several
+//! region, a named wrapper around a child provenance, a call site, a
+//! fusion of several provenances, or a [`CustomProvenance`] another crate
+//! defines. A transformation that combines several
 //! objects combines their provenances with [`Provenance::fuse`], or with
 //! [`Provenance::fuse_labelled`] to name the transformation.
 //!
 //! These types serialize through plain serde derives, in any serde format,
 //! with the shapes documented on each type. Decoding checks the same
-//! invariants as the constructors.
+//! invariants as the constructors. A custom provenance serializes as a
+//! [`Foreign`] part; [`wire::ProvenanceData`] reads a provenance holding
+//! one and builds it with a resolver, while [`Provenance`]'s own
+//! `Deserialize` refuses it.
+
+pub mod wire;
 
 use std::fmt;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+
+use crate::foreign::{Foreign, ForeignPart, NoForeign, Part, Resolve, impl_part, is_same_part};
 
 /// A 1-indexed line and column in a source text.
 ///
@@ -363,11 +371,15 @@ impl TryFrom<SpanData> for Span {
 /// every provenance encodes as a map, and the other variants such as
 /// `{"file": {"file_path": .., "span": ..}}`,
 /// `{"named": {"name": .., "child": ..}}`, `{"call_site": {"callee": ..,
-/// "caller": ..}}` and `{"fused": {"sources": [..], "label": ..}}`.
-/// Decoding normalizes a file path and refuses an empty name.
+/// "caller": ..}}`, `{"fused": {"sources": [..], "label": ..}}` and
+/// `{"custom": {"type_id": .., "data": ..}}`, a custom provenance's
+/// [`to_foreign`](ForeignPart::to_foreign), which fails the serialization
+/// when the part has no wire form. Decoding normalizes a file path and
+/// refuses an empty name; this type's `Deserialize` refuses a custom
+/// provenance, at any depth, which [`wire::ProvenanceData`] reads.
 #[expect(
     clippy::exhaustive_enums,
-    reason = "richer origins compose these variants, and consumers match all of them"
+    reason = "the custom variant holds every origin another crate defines, and consumers match all of them"
 )]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Provenance {
@@ -381,6 +393,8 @@ pub enum Provenance {
     CallSite(CallSiteProvenance),
     /// Several provenances combined by a transformation.
     Fused(FusedProvenance),
+    /// An origin another crate defines.
+    Custom(Part<dyn CustomProvenance>),
 }
 
 /// The empty fields of the unknown provenance's encoding.
@@ -397,6 +411,7 @@ enum ProvenanceRef<'a> {
     Named(&'a NamedProvenance),
     CallSite(&'a CallSiteProvenance),
     Fused(&'a FusedProvenance),
+    Custom(Foreign),
 }
 
 /// A provenance as it is read.
@@ -408,6 +423,7 @@ enum ProvenanceWire {
     Named(NamedProvenance),
     CallSite(CallSiteProvenance),
     Fused(FusedProvenance),
+    Custom(Foreign),
 }
 
 /// Serializes the shape of the [type documentation](Provenance).
@@ -419,6 +435,12 @@ impl Serialize for Provenance {
             Self::Named(named) => ProvenanceRef::Named(named),
             Self::CallSite(call_site) => ProvenanceRef::CallSite(call_site),
             Self::Fused(fused) => ProvenanceRef::Fused(fused),
+            Self::Custom(custom) => ProvenanceRef::Custom(
+                custom
+                    .get()
+                    .to_foreign()
+                    .map_err(serde::ser::Error::custom)?,
+            ),
         }
         .serialize(serializer)
     }
@@ -433,6 +455,11 @@ impl<'de> Deserialize<'de> for Provenance {
             ProvenanceWire::Named(named) => Self::Named(named),
             ProvenanceWire::CallSite(call_site) => Self::CallSite(call_site),
             ProvenanceWire::Fused(fused) => Self::Fused(fused),
+            ProvenanceWire::Custom(foreign) => Self::Custom(
+                NoForeign
+                    .resolve(&foreign)
+                    .map_err(serde::de::Error::custom)?,
+            ),
         })
     }
 }
@@ -539,8 +566,8 @@ fn flatten_fusion_inputs(provenances: impl IntoIterator<Item = Provenance>) -> V
 }
 
 /// Render a human-readable description: `<unknown>`, the file variant's
-/// path and span, `name` or `name (child)`, `callee at caller`, or
-/// `label[source, ...]`.
+/// path and span, `name` or `name (child)`, `callee at caller`,
+/// `label[source, ...]`, or a custom provenance's own `Display`.
 impl fmt::Display for Provenance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -570,6 +597,7 @@ impl fmt::Display for Provenance {
                 }
                 f.write_str("]")
             }
+            Self::Custom(custom) => fmt::Display::fmt(custom.get(), f),
         }
     }
 }
@@ -801,6 +829,82 @@ impl FusedProvenance {
         self.label.as_deref()
     }
 }
+
+/// An origin another crate defines, held by [`Provenance::Custom`].
+///
+/// An implementation keeps this contract:
+///
+/// 1. Every method answers the same for the value's whole life.
+/// 2. Its `Display` is one line describing the origin, such as
+///    `edge<e3>`.
+/// 3. [`eq_part`](Self::eq_part) is an equivalence relation that compares
+///    type-strictly and agrees with [`hash_part`](Self::hash_part).
+/// 4. [`to_foreign`](ForeignPart::to_foreign) writes the type id it is
+///    registered under, which the resolver given to
+///    [`ProvenanceData::build`](wire::ProvenanceData::build) turns back into
+///    an equal value.
+///
+/// # Examples
+///
+/// ```
+/// use std::borrow::Cow;
+/// use std::fmt;
+/// use std::hash::Hasher;
+///
+/// use fhy_core::foreign::{Foreign, ForeignError, ForeignPart, Part};
+/// use fhy_core::provenance::{CustomProvenance, Provenance};
+///
+/// #[derive(Debug, PartialEq)]
+/// struct EdgePropagation(String);
+///
+/// impl fmt::Display for EdgePropagation {
+///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+///         write!(f, "edge<{}>", self.0)
+///     }
+/// }
+///
+/// impl ForeignPart for EdgePropagation {
+///     fn type_name(&self) -> Cow<'_, str> {
+///         Cow::Borrowed("EdgePropagation")
+///     }
+///
+///     fn to_foreign(&self) -> Result<Foreign, ForeignError> {
+///         Ok(Foreign::new("pkg.edge_propagation", self.0.clone()))
+///     }
+/// }
+///
+/// impl CustomProvenance for EdgePropagation {
+///     fn eq_part(&self, other: &dyn CustomProvenance) -> bool {
+///         other.as_any().downcast_ref::<Self>() == Some(self)
+///     }
+///
+///     fn hash_part(&self, state: &mut dyn Hasher) {
+///         state.write(self.0.as_bytes());
+///     }
+/// }
+///
+/// let provenance = Provenance::Custom(Part::new(EdgePropagation("e3".to_owned())));
+/// assert_eq!(provenance.to_string(), "edge<e3>");
+/// ```
+pub trait CustomProvenance: ForeignPart + fmt::Display {
+    /// Return whether `other` is an equal provenance, for `==` on a
+    /// [`Part<dyn CustomProvenance>`](Part) and so on a [`Provenance`].
+    ///
+    /// It must be an equivalence relation, symmetric included, and agree
+    /// with [`hash_part`](Self::hash_part). The default is identity: the
+    /// same provenance.
+    fn eq_part(&self, other: &dyn CustomProvenance) -> bool {
+        is_same_part(self, other)
+    }
+
+    /// Feed the provenance's hash to `state`, consistently with
+    /// [`eq_part`](Self::eq_part). The default feeds nothing.
+    fn hash_part(&self, state: &mut dyn Hasher) {
+        let _ = state;
+    }
+}
+
+impl_part!(CustomProvenance);
 
 /// Types that carry the provenance of the object they represent.
 pub trait HasProvenance {

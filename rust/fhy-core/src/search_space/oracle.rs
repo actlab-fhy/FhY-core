@@ -1,8 +1,10 @@
 //! [`SearchOracle`]: what answers the steps of a run, the
 //! [`PendingStep`] it is asked, and the oracles this module ships:
-//! [`RandomOracle`], [`ReplayOracle`] and [`ExhaustiveOracle`].
+//! [`RandomOracle`], [`ReplayOracle`], [`GuidedOracle`] and
+//! [`ExhaustiveOracle`].
 
 use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU64;
@@ -72,6 +74,10 @@ pub struct PendingStep<'a> {
     /// A static step's decision and its canonical position.
     decision: Option<(Decision<'a>, usize)>,
     configuration: Option<&'a Configuration>,
+    /// For a run that keeps fixed values it has not reached, the run's
+    /// configuration together with them: a coordinate is admissible only
+    /// when this configuration with its value is accepted too.
+    lookahead: Option<&'a Configuration>,
     context: &'a ParamContext<'a>,
     /// The last coordinate [`admits`](Self::admits) accepted, with the
     /// configuration it extended the run's to, so the recorder that asked
@@ -100,6 +106,7 @@ impl<'a> PendingStep<'a> {
             position,
             decision: None,
             configuration: None,
+            lookahead: None,
             context,
             admitted: RefCell::new(None),
         }
@@ -133,9 +140,18 @@ impl<'a> PendingStep<'a> {
             position,
             decision: Some((decision, canonical)),
             configuration: Some(configuration),
+            lookahead: None,
             context,
             admitted: RefCell::new(None),
         })
+    }
+
+    /// Return the step admitting a coordinate only when `lookahead`, the
+    /// run's configuration with the fixed values it has not reached, with
+    /// its value is accepted too.
+    pub(super) fn with_lookahead(mut self, lookahead: &'a Configuration) -> Self {
+        self.lookahead = Some(lookahead);
+        self
     }
 
     /// Return what the step is about.
@@ -203,6 +219,13 @@ impl<'a> PendingStep<'a> {
         let Some(value) = self.domain.value_at(coordinate) else {
             return Ok(false);
         };
+        if let Some(lookahead) = self.lookahead {
+            let is_admissible =
+                try_extend(lookahead, self.subject, value.clone(), self.context)?.is_some();
+            if !is_admissible {
+                return Ok(false);
+            }
+        }
         let extended = try_extend(configuration, self.subject, value, self.context)?;
         let is_admissible = extended.is_some();
         if let Some(extended) = extended {
@@ -443,6 +466,119 @@ impl SearchOracle for ReplayOracle {
         let coordinate = self.answer(step)?;
         self.position += 1;
         Ok(coordinate)
+    }
+}
+
+/// Answers each step with a guiding trace's answer where it fits the step
+/// and is admissible, and asks a fallback oracle otherwise: a replay that
+/// repairs a run leaving the guide's path instead of refusing it.
+///
+/// A static step takes the guide's static step at its decision's canonical
+/// position, if the guide has one over an equal domain signature whose
+/// coordinate is [admissible](PendingStep::admits). A dynamic step of a
+/// kind takes the guide's next dynamic step of that kind not yet taken, in
+/// the order the guide asked them, if its signature is equal and its
+/// coordinate in the domain; that guide step is taken either way, so the
+/// later steps of the kind stay aligned. Every other step, and every step
+/// whose guide answer does not fit, goes to the fallback, whose error stops
+/// the run as it would stop it unguided.
+///
+/// One oracle guides one run: the dynamic steps it takes are used up and
+/// never given back, so a second run with the same oracle gets no dynamic
+/// guidance. Build a new one, from the same guide, for each run.
+///
+/// Guiding by canonical position makes a trace of one space guide a run
+/// over an alpha-equivalent one, whose names differ; to carry values over
+/// to an [edited](super::Space::with_decisions) space, whose positions may
+/// differ, build a configuration from the old one's entries and
+/// [complete](super::Space::complete) it.
+#[derive(Debug, Clone)]
+pub struct GuidedOracle<O> {
+    /// The guide's static steps, by canonical position.
+    statics: HashMap<usize, (DomainSignature, Coordinate)>,
+    /// The guide's dynamic steps not yet taken, per kind, in the order
+    /// asked.
+    dynamics: HashMap<DecisionKind, VecDeque<(DomainSignature, Coordinate)>>,
+    fallback: O,
+}
+
+impl<O: SearchOracle> GuidedOracle<O> {
+    /// Return the oracle guided by `guide` that asks `fallback` what the
+    /// guide does not answer.
+    #[must_use]
+    pub fn new(guide: &Trace, fallback: O) -> Self {
+        let mut statics = HashMap::new();
+        let mut dynamics: HashMap<DecisionKind, VecDeque<(DomainSignature, Coordinate)>> =
+            HashMap::new();
+        for step in guide.steps() {
+            let answer = (step.signature().clone(), step.coordinate().clone());
+            match step.decision() {
+                Some(position) => {
+                    statics.entry(position).or_insert(answer);
+                }
+                None => dynamics
+                    .entry(step.kind().clone())
+                    .or_default()
+                    .push_back(answer),
+            }
+        }
+        Self {
+            statics,
+            dynamics,
+            fallback,
+        }
+    }
+
+    /// Return the fallback oracle.
+    #[must_use]
+    pub fn fallback(&self) -> &O {
+        &self.fallback
+    }
+
+    /// Return the fallback oracle, consuming the guided one.
+    #[must_use]
+    pub fn into_fallback(self) -> O {
+        self.fallback
+    }
+
+    /// Return the guide's answer to the static step `step` over the
+    /// decision at canonical `position`: its step at that position, if
+    /// its signature is the step's and its coordinate admissible.
+    ///
+    /// # Errors
+    ///
+    /// Returns what [`PendingStep::admits`] returns.
+    fn answer_static(
+        &self,
+        position: usize,
+        step: &PendingStep<'_>,
+    ) -> Result<Option<Coordinate>, TraceError> {
+        let Some((signature, coordinate)) = self.statics.get(&position) else {
+            return Ok(None);
+        };
+        let fits = *signature == step.signature() && step.admits(coordinate)?;
+        Ok(fits.then(|| coordinate.clone()))
+    }
+
+    /// Take the guide's next step of the dynamic step `step`'s kind, and
+    /// return its answer if its signature is the step's and its coordinate
+    /// in the domain.
+    fn answer_dynamic(&mut self, step: &PendingStep<'_>) -> Option<Coordinate> {
+        let (signature, coordinate) = self.dynamics.get_mut(step.kind())?.pop_front()?;
+        (signature == step.signature() && step.domain().contains(&coordinate)).then_some(coordinate)
+    }
+}
+
+impl<O: SearchOracle> SearchOracle for GuidedOracle<O> {
+    fn decide(&mut self, step: &PendingStep<'_>) -> Result<Coordinate, BoxError> {
+        let answer = match step.decision_position() {
+            Some(position) => self.answer_static(position, step)?,
+            None => self.answer_dynamic(step),
+        };
+        match answer {
+            Some(coordinate) => Ok(coordinate),
+            None => self.fallback.decide(step),
+        }
     }
 }
 

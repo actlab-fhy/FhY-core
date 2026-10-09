@@ -27,10 +27,9 @@ use fhy_core::search_space::{
 };
 use fhy_core::solver::Solver;
 use proptest::prelude::*;
-use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
 
 use crate::support::constraint::{int, member_set};
+use crate::support::guard::{GUARD_CASES, draw_guard_cases};
 use crate::support::hashing::hash_of;
 use crate::support::search_space::{compare_alpha_both_ways, ground_solver, system};
 use crate::support::serde::check_serde_round_trip;
@@ -1128,26 +1127,6 @@ fn set_first_member(model: &mut Model, position: usize, member: Member, rivals: 
 // Non-vacuity guards
 // ---------------------------------------------------------------------------
 
-/// The cases each guard draws.
-const GUARD_CASES: usize = 256;
-
-/// Return `GUARD_CASES` values of `strategy`, drawn by a runner with a
-/// fixed seed, so a guard's count is the same on every run.
-fn draw_cases<S: Strategy>(strategy: &S) -> Vec<S::Value> {
-    let mut runner = TestRunner::new_with_rng(
-        Config::default(),
-        TestRng::deterministic_rng(RngAlgorithm::ChaCha),
-    );
-    (0..GUARD_CASES)
-        .map(|_| {
-            strategy
-                .new_tree(&mut runner)
-                .expect("the strategy draws")
-                .current()
-        })
-        .collect()
-}
-
 /// Return whether `model` holds a variable at some depth.
 fn has_variable(model: &Model) -> bool {
     model
@@ -1169,7 +1148,7 @@ fn is_repaired_configuration_accepted(model: &Model, raw: &[Option<u8>]) -> bool
 
 #[test]
 fn most_generated_models_hold_a_variable() {
-    let models = draw_cases(&generate_model());
+    let models = draw_guard_cases(&generate_model());
 
     let count = models.iter().filter(|model| has_variable(model)).count();
 
@@ -1182,7 +1161,7 @@ fn most_generated_models_hold_a_variable() {
 
 #[test]
 fn most_perturbations_apply() {
-    let drawn = draw_cases(&(generate_model(), generate_perturbation()));
+    let drawn = draw_guard_cases(&(generate_model(), generate_perturbation()));
 
     let count = drawn
         .iter()
@@ -1198,7 +1177,7 @@ fn most_perturbations_apply() {
 
 #[test]
 fn many_repaired_configurations_are_accepted() {
-    let drawn = draw_cases(&(generate_model(), generate_raw_assignment()));
+    let drawn = draw_guard_cases(&(generate_model(), generate_raw_assignment()));
 
     let count = drawn
         .iter()
@@ -1214,7 +1193,7 @@ fn many_repaired_configurations_are_accepted() {
 
 #[test]
 fn many_repaired_configuration_pairs_are_both_accepted() {
-    let drawn = draw_cases(&(
+    let drawn = draw_guard_cases(&(
         generate_model(),
         generate_raw_assignment(),
         generate_raw_assignment(),
@@ -1237,7 +1216,7 @@ fn many_repaired_configuration_pairs_are_both_accepted() {
 
 #[test]
 fn many_model_pairs_are_structurally_equivalent() {
-    let drawn = draw_cases(&generate_model_pair());
+    let drawn = draw_guard_cases(&generate_model_pair());
 
     let count = drawn
         .iter()

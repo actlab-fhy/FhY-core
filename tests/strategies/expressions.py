@@ -71,6 +71,7 @@ __all__ = [
     "NUMERIC_DIVISION_OPERATIONS",
     "NUMERIC_GATE_OPERATIONS",
     "SYMPY_STABLE_CALL_FUNCTIONS",
+    "build_affine_expression_strategy",
     "build_any_sort_expression_strategy",
     "build_boolean_environment_strategy",
     "build_boolean_expression_strategy",
@@ -760,6 +761,70 @@ def build_sympy_stable_expression_strategy(
         _build_sympy_stable_numeric_strategy(identifiers, max_leaves),
         _build_sympy_stable_boolean_strategy(identifiers, max_leaves),
     )
+
+
+def build_affine_expression_strategy(
+    identifiers: Sequence[Identifier], max_leaves: int = 8
+) -> st.SearchStrategy[Expression]:
+    """Return a strategy for integer trees that are affine in ``identifiers``.
+
+    Every tree is a sum of multiples of the pool's identifiers plus a
+    constant, by construction: leaves are small integer literals and pool
+    identifiers, and the nodes are negation, unary plus, ``+``, ``-``, a
+    product with a literal on either side (zero included, so a term can
+    vanish), and true division by a non-zero literal (so a coefficient can
+    be a fraction). A pool identifier may appear many times in one tree, so
+    terms cancel and merge.
+
+    Args:
+        identifiers: Non-empty pool identifiers may be drawn from as leaves.
+        max_leaves: Most literal and identifier leaves the tree may hold.
+
+    Returns:
+        A strategy drawing an :class:`Expression` affine in ``identifiers``.
+
+    """
+    scale = st.integers(-4, 4).map(LiteralExpression)
+    leaves = st.one_of(
+        st.integers(-9, 9).map(LiteralExpression),
+        _build_identifier_leaf_strategy(identifiers),
+    )
+
+    def extend(
+        children: st.SearchStrategy[Expression],
+    ) -> st.SearchStrategy[Expression]:
+        return st.one_of(
+            st.builds(make_unary_expression, st.just(UnaryOperation.NEGATE), children),
+            st.builds(
+                make_unary_expression, st.just(UnaryOperation.POSITIVE), children
+            ),
+            st.builds(
+                make_binary_expression,
+                st.sampled_from((BinaryOperation.ADD, BinaryOperation.SUBTRACT)),
+                children,
+                children,
+            ),
+            st.builds(
+                make_binary_expression,
+                st.just(BinaryOperation.MULTIPLY),
+                scale,
+                children,
+            ),
+            st.builds(
+                make_binary_expression,
+                st.just(BinaryOperation.MULTIPLY),
+                children,
+                scale,
+            ),
+            st.builds(
+                make_binary_expression,
+                st.just(BinaryOperation.DIVIDE),
+                children,
+                _build_nonzero_divisor_strategy(),
+            ),
+        )
+
+    return st.recursive(leaves, extend, max_leaves=max_leaves)
 
 
 def build_integer_environment_strategy(

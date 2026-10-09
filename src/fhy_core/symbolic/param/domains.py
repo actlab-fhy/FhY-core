@@ -572,9 +572,10 @@ class CategoricalDomain(_rs.CategoricalDomain, WrappedFamilySerializable):
     """Finite, unordered set of admissible category values.
 
     Categories are stored as a strict-unique tuple in the constraint
-    members' canonical order: by kind (``bool``, ``Identifier``, ``int``,
-    ``str``, then other ``Serializable`` values), then by value, identifiers
-    by id. Native ``frozenset`` storage
+    members' canonical order: by kind (``bool``, ``frozenset``,
+    ``Identifier``, ``int``, ``str``, ``tuple``, then other ``Serializable``
+    values), then by value, identifiers by id, tuples and frozen sets
+    element by element. Native ``frozenset`` storage
     would collapse values that compare ``==`` but are distinct kinds
     (``True`` and ``1``).
     """

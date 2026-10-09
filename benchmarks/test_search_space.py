@@ -4,7 +4,8 @@ They measure ``fhy_core.search_space``, which the Rust core backs, through
 the public API only, on the shape MOGA-VM's audit baseline measured: one
 choice of eight alternatives, each holding four variables over the
 categories ``{1, 2, 3, 4}``. The before numbers are MOGA-VM's Python core
-on fhy_core 0.2.0.
+on fhy_core 0.2.0. The candidate-table rows measure a larger shape, 200
+choices of four alternatives, each holding four variables.
 
 The rows skip while the Python API is absent.
 """
@@ -15,7 +16,11 @@ import pytest
 
 from fhy_core.identifier import Identifier
 from fhy_core.symbolic.constraint import InSetConstraint
-from fhy_core.symbolic.param import create_categorical_param
+from fhy_core.symbolic.param import (
+    create_categorical_param,
+    create_integer_param_between,
+    create_permutation_param,
+)
 
 from .conftest import Benchmark
 
@@ -406,3 +411,100 @@ def test_measurement_serialize_to_dict(benchmark: Benchmark) -> None:
     key, values = _measurement_parts()
     measurement = search_space.Measurement.ok(key, values)
     benchmark(measurement.serialize_to_dict)
+
+
+# ---------------------------------------------------------------------------
+# Candidate tables
+# ---------------------------------------------------------------------------
+
+# The shape of MOGA-VM's candidate tables: top-level choices, each among a
+# few alternatives that hold the same kinds of knobs.
+_TABLE_ENTRY_COUNT = 200
+_TABLE_OPTION_COUNT = 4
+_TABLE_LOOP_ORDER = ("m", "n", "k")
+_TABLE_TILE_RANGE = (1, 64)
+
+
+def _build_table_space(tag: str) -> Any:
+    """Return 200 choices of 4 alternatives, each holding 4 variables.
+
+    The variables of an alternative are a categorical of integers, a
+    permutation of a loop order, a categorical of identifiers and a bounded
+    integer, so every kind of step a candidate table draws is present. The
+    space has 3 400 decisions, of which a configuration assigns 1 000.
+    """
+
+    def build_alternative(entry: int, option: int) -> Any:
+        prefix = f"{tag}_{entry}_{option}"
+        variables = (
+            search_space.Variable(
+                name=Identifier(f"{prefix}_unroll"),
+                param=create_categorical_param(frozenset({1, 2, 4, 8})),
+            ),
+            search_space.Variable(
+                name=Identifier(f"{prefix}_order"),
+                param=create_permutation_param(_TABLE_LOOP_ORDER),
+            ),
+            search_space.Variable(
+                name=Identifier(f"{prefix}_buffer"),
+                param=create_categorical_param(
+                    tuple(Identifier(f"{prefix}_buffer_{index}") for index in range(3))
+                ),
+            ),
+            search_space.Variable(
+                name=Identifier(f"{prefix}_tile"),
+                param=create_integer_param_between(*_TABLE_TILE_RANGE),
+            ),
+        )
+        return search_space.Alternative(
+            name=Identifier(f"{prefix}_option"), variables=variables
+        )
+
+    return search_space.Space(
+        name=Identifier(f"{tag}_space"),
+        choices=tuple(
+            search_space.Choice(
+                name=Identifier(f"{tag}_entry_{entry}"),
+                alternatives=tuple(
+                    build_alternative(entry, option)
+                    for option in range(_TABLE_OPTION_COUNT)
+                ),
+            )
+            for entry in range(_TABLE_ENTRY_COUNT)
+        ),
+    )
+
+
+def test_table_space_mutate(benchmark: Benchmark) -> None:
+    """Benchmark mutating one configuration of the 200-entry table space."""
+    space = _build_table_space("table_mutated")
+    configuration, _ = space.sample(search_space.RandomOracle(seed=0))
+    rng = search_space.Rng(0)
+    benchmark(space.mutate, configuration, rng)
+
+
+def test_table_space_configuration_built_one_entry_at_a_time(
+    benchmark: Benchmark,
+) -> None:
+    """Benchmark assigning a table's entries one by one, in decision order."""
+    space = _build_table_space("table_built")
+    sampled, _ = space.sample(search_space.RandomOracle(seed=0))
+    values = dict(sampled.entries)
+    ordered = [(name, values[name]) for name in space.decision_order if name in values]
+
+    def build() -> Any:
+        configuration = search_space.Configuration(space)
+        for name, value in ordered:
+            configuration = configuration.with_entry(name, value)
+        return configuration
+
+    benchmark.pedantic(build, rounds=3)
+
+
+def test_table_space_crossover(benchmark: Benchmark) -> None:
+    """Benchmark crossing two configurations of the 200-entry table space."""
+    space = _build_table_space("table_crossed")
+    first, _ = space.sample(search_space.RandomOracle(seed=0))
+    second, _ = space.sample(search_space.RandomOracle(seed=1))
+    rng = search_space.Rng(0)
+    benchmark(space.crossover, first, second, rng)

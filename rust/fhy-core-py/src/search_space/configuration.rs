@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{CompareOp, PyTraverseError, PyVisit};
-use pyo3::types::{PyBool, PyDict, PyMapping, PyTuple, PyType};
+use pyo3::types::{PyDict, PyMapping, PyTuple, PyType};
 
 use fhy_core::constraint::Value;
 use fhy_core::identifier::Identifier;
@@ -17,7 +17,7 @@ use crate::constraint::{read_bound_value, value_to_python};
 use crate::convert::param::run_with_context;
 use crate::identifier::restore_identifier;
 use crate::term::read_renaming;
-use crate::util::dataclass::hash_value;
+use crate::util::dataclass::{answer_equality, hash_value};
 use crate::util::exceptions::DESERIALIZATION_VALUE_ERROR;
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::util::gc::{Slots, collect_slots};
@@ -420,6 +420,15 @@ impl PyConfiguration {
         self.configuration.is_complete()
     }
 
+    /// Return whether the decision `name` and every decision under it are
+    /// assigned or inactive, or `None` if the space has no such decision.
+    ///
+    /// Raises `TypeError` if `name` is not an `Identifier`.
+    fn is_complete_under(&self, name: &Bound<'_, PyAny>) -> PyResult<Option<bool>> {
+        let name = restore_identifier(name, "Configuration", "name")?;
+        Ok(self.configuration.is_complete_under(&name))
+    }
+
     /// Return the `Trace` of the assigned decisions, in decision order.
     ///
     /// Raises `NotEnumerableError` for an assigned variable with no finite
@@ -751,11 +760,7 @@ impl PyConfigurationKey {
             return Ok(py.NotImplemented());
         };
         let equal = with_pending_errors(|| Ok(self.key == other.get().key))?;
-        Ok(match op {
-            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
-            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
-            _ => py.NotImplemented(),
-        })
+        Ok(answer_equality(py, equal, op))
     }
 
     /// Return the key's hash, consistent with `==`.

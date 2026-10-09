@@ -42,6 +42,9 @@ pub struct Recorder {
     configuration: Option<Configuration>,
     /// The configuration a realizing run answers from.
     preset: Option<Configuration>,
+    /// For a realizing run, the run's values together with the preset's
+    /// not yet decided: what an answer must also be admissible in.
+    lookahead: Option<Configuration>,
     steps: Vec<TraceStep>,
 }
 
@@ -56,9 +59,17 @@ impl Recorder {
     /// configuration.
     #[must_use]
     pub fn over(space: &Space) -> Self {
+        Self::over_empty(Configuration::empty(space))
+    }
+
+    /// Return the recorder of a run over the space of `empty`, its empty
+    /// configuration, from `empty`: for the runs of one search, which share
+    /// the empty configuration instead of each building it.
+    pub(super) fn over_empty(empty: Configuration) -> Self {
         Self {
-            configuration: Some(Configuration::empty(space)),
+            configuration: Some(empty),
             preset: None,
+            lookahead: None,
             steps: Vec::new(),
         }
     }
@@ -71,6 +82,7 @@ impl Recorder {
         Self {
             configuration: Some(Configuration::empty(configuration.space())),
             preset: Some(configuration.clone()),
+            lookahead: Some(configuration.clone()),
             steps: Vec::new(),
         }
     }
@@ -139,6 +151,10 @@ impl Recorder {
                 context,
             )
             .ok_or_else(unknown)?;
+            let step = match &self.lookahead {
+                Some(lookahead) => step.with_lookahead(lookahead),
+                None => step,
+            };
             let coordinate = ask(oracle, &step)?;
             // An oracle that checked its answer's admissibility, as the
             // shipped ones do, left the grown configuration on the step.
@@ -158,6 +174,20 @@ impl Recorder {
                     },
                 )?,
             };
+        if preset.is_none() {
+            if let Some(lookahead) = &self.lookahead {
+                // The fixed values not yet reached must still be possible
+                // with this answer, whichever way the oracle checked it.
+                self.lookahead = Some(
+                    try_extend(lookahead, decision, value.clone(), context)?.ok_or_else(|| {
+                        TraceError::Inadmissible {
+                            position,
+                            coordinate: coordinate.clone(),
+                        }
+                    })?,
+                );
+            }
+        }
         let signature = domain.signature_in(Some(space));
         self.steps.push(TraceStep::of_decision(
             kind,

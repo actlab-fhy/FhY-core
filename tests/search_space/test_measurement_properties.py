@@ -14,7 +14,13 @@ pytest.importorskip("hypothesis")
 from hypothesis import HealthCheck, Phase, given, settings
 from hypothesis import strategies as st
 
-from fhy_core.search_space import ConfigurationKey, Direction, Measurement, Objective
+from fhy_core.search_space import (
+    ConfigurationKey,
+    Direction,
+    Measurement,
+    Objective,
+    non_dominated,
+)
 
 from ..strategies.settings import cap_max_examples
 from .conftest import build_complete_configuration, build_tiling_space
@@ -144,3 +150,106 @@ def test_the_drawn_pairs_dominate_often_enough() -> None:
     assert len(pairs) >= 100
     assert dominating >= 20
     assert len(pairs) - dominating >= 20
+
+
+# A population: each member is either a failure or a success with values.
+_POPULATIONS = st.lists(st.one_of(st.none(), _VALUES), max_size=8)
+
+
+def _population(
+    directions: tuple[Direction, ...], cells: list[tuple[float, ...] | None]
+) -> list[Measurement]:
+    """Return the measurements of `cells`: a failure for `None`, else a success."""
+    return [
+        Measurement.failed(_KEY, "crashed")
+        if cell is None
+        else _measure(directions, cell)
+        for cell in cells
+    ]
+
+
+@cap_max_examples(200)
+@given(_DIRECTIONS, _POPULATIONS)
+def test_no_returned_measurement_is_dominated_by_the_input(
+    directions: tuple[Direction, ...], cells: list[tuple[float, ...] | None]
+) -> None:
+    """Test nothing `non_dominated` returns is dominated by any successful input.
+
+    Oracle: the pairwise `dominates` of the input.
+    """
+    population = _population(directions, cells)
+    successes = [m for m in population if m.is_ok()]
+
+    front = non_dominated(population)
+
+    for kept in front:
+        assert kept.is_ok()
+        assert not any(other.dominates(kept) for other in successes)
+
+
+@cap_max_examples(200)
+@given(_DIRECTIONS, _POPULATIONS)
+def test_every_omitted_success_is_dominated_by_a_returned_one(
+    directions: tuple[Direction, ...], cells: list[tuple[float, ...] | None]
+) -> None:
+    """Test each successful input left out is dominated by a returned measurement.
+
+    Oracle: the pairwise `dominates` of the input.
+    """
+    population = _population(directions, cells)
+
+    front = non_dominated(population)
+
+    kept = {id(m) for m in front}
+    for measurement in population:
+        if measurement.is_ok() and id(measurement) not in kept:
+            assert any(member.dominates(measurement) for member in front)
+
+
+@cap_max_examples(200)
+@given(_DIRECTIONS, _POPULATIONS)
+def test_the_front_is_a_subsequence_of_the_input_without_failures(
+    directions: tuple[Direction, ...], cells: list[tuple[float, ...] | None]
+) -> None:
+    """Test the front holds input measurements only, once each, in input order.
+
+    Oracle: filtering the input by position with the pairwise `dominates`.
+    """
+    population = _population(directions, cells)
+    expected = [
+        m
+        for m in population
+        if m.is_ok() and not any(o.dominates(m) for o in population if o.is_ok())
+    ]
+
+    front = non_dominated(population)
+
+    assert [id(m) for m in front] == [id(m) for m in expected]
+
+
+def test_the_drawn_populations_hold_kept_and_omitted_measurements() -> None:
+    """Test a fixed sample has fronts that drop a success, a failure, or neither."""
+    fronts: list[tuple[int, int, int]] = []
+
+    @settings(
+        max_examples=200,
+        derandomize=True,
+        database=None,
+        phases=[Phase.generate],
+        suppress_health_check=list(HealthCheck),
+    )
+    @given(_DIRECTIONS, _POPULATIONS)
+    def collect(
+        directions: tuple[Direction, ...], cells: list[tuple[float, ...] | None]
+    ) -> None:
+        population = _population(directions, cells)
+        front = non_dominated(population)
+        successes = sum(m.is_ok() for m in population)
+        fronts.append((len(population), successes, len(front)))
+
+    collect()
+
+    assert any(successes > front for _, successes, front in fronts)
+    assert any(total > successes for total, successes, _ in fronts)
+    assert any(front >= 2 for _, _, front in fronts)
+    assert any(total == 0 for total, _, _ in fronts)

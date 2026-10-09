@@ -1,5 +1,6 @@
 //! [`Trace`]: the steps of one run of a search, recorded in the order they
-//! were asked, and [`TraceStep`], one of them.
+//! were asked, [`TraceStep`], one of them, and [`TraceKey`], a trace's
+//! identity without its subjects.
 
 use std::fmt;
 use std::sync::Arc;
@@ -193,6 +194,153 @@ impl Trace {
     #[must_use]
     pub fn traversed_cardinality(&self) -> BigUint {
         self.0.iter().map(TraceStep::cardinality).product()
+    }
+
+    /// Return the trace's key: per step, in the order asked, its kind, its
+    /// decision's canonical position (none for a dynamic step), its
+    /// domain's signature and its coordinate, and neither its subject nor
+    /// its value.
+    #[must_use]
+    pub fn key(&self) -> TraceKey {
+        TraceKey(
+            self.0
+                .iter()
+                .map(|step| TraceKeyStep {
+                    kind: step.kind.clone(),
+                    decision: step.decision,
+                    signature: step.signature.clone(),
+                    coordinate: step.coordinate.clone(),
+                })
+                .collect(),
+        )
+    }
+}
+
+/// The identity of a [`Trace`] without its subjects: per step, in the
+/// order asked, the step's [kind](TraceStep::kind), its static
+/// [decision](TraceStep::decision) or none, its domain's
+/// [signature](TraceStep::signature) and its
+/// [coordinate](TraceStep::coordinate).
+///
+/// Two runs that took the same answers over the same domains have equal
+/// keys, also when their dynamic subjects were minted anew for each run or
+/// their spaces differ only in their names, since a signature writes an
+/// identifier a static step's space binds by its position and any other
+/// as `identifier`. Two runs that differ in a dynamic step, such as an
+/// address placed elsewhere, have different keys, where their
+/// configurations' [`ConfigurationKey`](super::ConfigurationKey)s are
+/// equal. A key means nothing outside the stream that recorded it.
+///
+/// `==` and `Hash` compare the steps. `serde` writes `{"steps": [{"kind",
+/// "decision", "domain", "coordinate"}, ..]}`, `decision` `null` for a
+/// dynamic step, and reading refuses a coordinate its signature does not
+/// contain.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TraceKey(Arc<[TraceKeyStep]>);
+
+/// One step of a [`TraceKey`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TraceKeyStep {
+    kind: DecisionKind,
+    decision: Option<u32>,
+    signature: DomainSignature,
+    coordinate: Coordinate,
+}
+
+impl TraceKey {
+    /// Return the number of steps.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Return whether the key has no step.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Return the steps' coordinates, in the order asked.
+    pub fn coordinates(&self) -> impl ExactSizeIterator<Item = &Coordinate> + '_ {
+        self.0.iter().map(|step| &step.coordinate)
+    }
+}
+
+/// The wire form of a [`TraceKeyStep`], written.
+#[derive(Serialize)]
+#[serde(rename = "TraceKeyStep")]
+struct KeyStepRef<'a> {
+    kind: &'a DecisionKind,
+    decision: Option<u32>,
+    domain: &'a DomainSignature,
+    coordinate: &'a Coordinate,
+}
+
+/// The wire form of a [`TraceKeyStep`], read.
+#[derive(Deserialize)]
+#[serde(rename = "TraceKeyStep", deny_unknown_fields)]
+struct KeyStepWire {
+    kind: DecisionKind,
+    decision: Option<u32>,
+    domain: DomainSignature,
+    coordinate: Coordinate,
+}
+
+/// The wire form of a [`TraceKey`], written.
+#[derive(Serialize)]
+#[serde(rename = "TraceKey")]
+struct KeyRef<'a> {
+    steps: Vec<KeyStepRef<'a>>,
+}
+
+/// The wire form of a [`TraceKey`], read.
+#[derive(Deserialize)]
+#[serde(rename = "TraceKey", deny_unknown_fields)]
+struct KeyWire {
+    steps: Vec<KeyStepWire>,
+}
+
+/// Serializes the shape of the type's documentation.
+impl Serialize for TraceKey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        KeyRef {
+            steps: self
+                .0
+                .iter()
+                .map(|step| KeyStepRef {
+                    kind: &step.kind,
+                    decision: step.decision,
+                    domain: &step.signature,
+                    coordinate: &step.coordinate,
+                })
+                .collect(),
+        }
+        .serialize(serializer)
+    }
+}
+
+/// Deserializes the shape of the type's documentation.
+impl<'de> Deserialize<'de> for TraceKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = KeyWire::deserialize(deserializer)?;
+        wire.steps
+            .into_iter()
+            .map(|step| {
+                if step.domain.contains(&step.coordinate) {
+                    Ok(TraceKeyStep {
+                        kind: step.kind,
+                        decision: step.decision,
+                        signature: step.domain,
+                        coordinate: step.coordinate,
+                    })
+                } else {
+                    Err(de::Error::custom(
+                        "a step's coordinate names no value of its domain",
+                    ))
+                }
+            })
+            .collect::<Result<Arc<[_]>, _>>()
+            .map(Self)
     }
 }
 

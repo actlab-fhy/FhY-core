@@ -25,7 +25,7 @@ use super::step::{
 
 /// The decisions of a space as a tree: per decision its children, by
 /// alternative for a choice, and the top-level decisions.
-struct Tree {
+pub(super) struct Tree {
     /// The top-level decisions' canonical positions.
     tops: Vec<usize>,
     /// Per decision, per alternative, the canonical positions of the
@@ -35,7 +35,7 @@ struct Tree {
 
 impl Tree {
     /// Return the tree of `space`.
-    fn of(space: &Space) -> Self {
+    pub(super) fn of(space: &Space) -> Self {
         let count = space.decision_count();
         let mut children: Vec<Vec<Vec<usize>>> = (0..count)
             .map(|position| match space.decision_at(position) {
@@ -51,6 +51,14 @@ impl Tree {
             }
         }
         Self { tops, children }
+    }
+
+    /// Return the canonical positions of the decisions under the
+    /// alternative `alternative` of the choice at `position`, or none.
+    pub(super) fn children_of(&self, position: usize, alternative: usize) -> &[usize] {
+        self.children[position]
+            .get(alternative)
+            .map_or(&[], Vec::as_slice)
     }
 }
 
@@ -119,6 +127,11 @@ enum EmptyVariable {
 /// Return the relaxed count of the decision at `position`: a variable's
 /// domain's, an empty variable's as `empty` says, or a choice's sum over
 /// its alternatives of the product of their decisions'.
+///
+/// # Errors
+///
+/// Returns [`TraceError::Hook`] for a failing
+/// [`search_domain`](super::Variable::search_domain).
 fn count_relaxed(
     space: &Space,
     tree: &Tree,
@@ -156,6 +169,32 @@ fn count_relaxed(
             Err(error) => Err(error),
         },
     }
+}
+
+/// Return whether the alternative `alternative` of the choice at
+/// `position` admits a completion a search can draw when no condition,
+/// forbidden clause or param constraint beyond integer bounds reaches under
+/// it: the relaxed counts of the decisions under it, a variable whose param
+/// admits no value counted as none, multiply to a finite number other than
+/// zero. An unbounded or unknown count means some decision under it has no
+/// finite domain to draw from, so the alternative is no option.
+///
+/// # Errors
+///
+/// Returns [`TraceError::Hook`] for a failing
+/// [`search_domain`](super::Variable::search_domain).
+pub(super) fn admits_completion(
+    space: &Space,
+    tree: &Tree,
+    position: usize,
+    alternative: usize,
+) -> Result<bool, TraceError> {
+    let counts = tree
+        .children_of(position, alternative)
+        .iter()
+        .map(|&child| count_relaxed(space, tree, child, EmptyVariable::Empty))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(matches!(Count::product(counts), Count::Finite(count) if count != BigUint::ZERO))
 }
 
 /// Return the relaxed counts of every decision, by canonical position, an
@@ -301,12 +340,11 @@ pub(super) fn count_space(
     budget: u64,
 ) -> Result<Cardinality, TraceError> {
     let tree = Tree::of(space);
-    let components = find_components(space, &tree);
+    let components = Components::of(space, &tree);
     let mut answers = Vec::new();
-    for component in components {
-        let answer = if is_closed_form(space, &component) {
-            let counts = component
-                .tops
+    for (index, tops) in components.tops.iter().enumerate() {
+        let answer = if components.is_closed_form(index) {
+            let counts = tops
                 .iter()
                 .map(|&top| count_relaxed(space, &tree, top, EmptyVariable::Empty))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -316,18 +354,99 @@ pub(super) fn count_space(
                 Count::Unknown(decision) => Cardinality::Unknown { decision },
             }
         } else {
-            count_by_enumeration(space, &component, context, budget)?
+            count_by_enumeration(
+                space,
+                |position| components.component_of(position) == index,
+                context,
+                budget,
+            )?
         };
         answers.push(answer);
     }
     Ok(combine(answers))
 }
 
-/// A set of top-level decisions no condition or forbidden clause links to
-/// another set, and every decision at or under them.
-struct Component {
-    tops: Vec<usize>,
-    members: Vec<bool>,
+/// The components of a space: sets of top-level decisions no condition or
+/// forbidden clause links to another set, each with every decision at or
+/// under them, in canonical order of their first top-level decision.
+pub(super) struct Components {
+    /// Per component, its top-level decisions' canonical positions.
+    tops: Vec<Vec<usize>>,
+    /// Per decision, by canonical position, the component it is in.
+    of: Vec<usize>,
+    /// Per component, whether its count has a closed form.
+    closed: Vec<bool>,
+}
+
+impl Components {
+    /// Return the components of `space`.
+    pub(super) fn of(space: &Space, tree: &Tree) -> Self {
+        let count = space.decision_count();
+        let mut leader = link_top_level_decisions(space);
+        let mut tops: Vec<Vec<usize>> = Vec::new();
+        let mut by_root: HashMap<usize, usize> = HashMap::new();
+        for &top in &tree.tops {
+            let group = root(&mut leader, top);
+            let index = *by_root.entry(group).or_insert_with(|| {
+                tops.push(Vec::new());
+                tops.len() - 1
+            });
+            tops[index].push(top);
+        }
+        let of: Vec<usize> = (0..count)
+            .map(|position| {
+                let group = root(&mut leader, find_top(space, position));
+                *by_root
+                    .get(&group)
+                    .expect("every decision is at or under a top-level decision of a component")
+            })
+            .collect();
+        let closed = find_closed_forms(space, &of, tops.len());
+        Self { tops, of, closed }
+    }
+
+    /// Return the component the decision at `position` is in.
+    pub(super) fn component_of(&self, position: usize) -> usize {
+        self.of[position]
+    }
+
+    /// Return whether the count of the component `index` has a closed
+    /// form: no condition or forbidden clause names its decisions, and no
+    /// variable's param constrains its values beyond the bounds of an
+    /// integer domain.
+    pub(super) fn is_closed_form(&self, index: usize) -> bool {
+        self.closed[index]
+    }
+}
+
+/// Return the union-find forest, per canonical position its leader, that
+/// links the top-level decisions a condition or a forbidden clause names
+/// together; [`root`] finds a decision's group.
+fn link_top_level_decisions(space: &Space) -> Vec<usize> {
+    let mut leader: Vec<usize> = (0..space.decision_count()).collect();
+    let mut link = |left: usize, right: usize| {
+        let (left, right) = (root(&mut leader, left), root(&mut leader, right));
+        if left != right {
+            leader[left.max(right)] = left.min(right);
+        }
+    };
+    for position in 0..space.decision_count() {
+        if let Some((_, references)) = space.condition_with_references_at(position) {
+            let target = find_top(space, position);
+            for &reference in references {
+                link(target, find_top(space, reference));
+            }
+        }
+    }
+    for index in 0..space.forbidden().len() {
+        let references = space.forbidden_references(index);
+        if let Some((&first, rest)) = references.split_first() {
+            for &reference in rest {
+                link(find_top(space, first), find_top(space, reference));
+            }
+        }
+    }
+    leader
 }
 
 /// Return the top-level decision the decision at `position` is at or
@@ -351,96 +470,50 @@ fn root(leader: &mut [usize], position: usize) -> usize {
     current
 }
 
-/// Return the components of `space`, in canonical order of their first
-/// top-level decision.
-fn find_components(space: &Space, tree: &Tree) -> Vec<Component> {
-    let count = space.decision_count();
-    let mut leader: Vec<usize> = (0..count).collect();
-    let link = |left: usize, right: usize, leader: &mut Vec<usize>| {
-        let (left, right) = (root(leader, left), root(leader, right));
-        if left != right {
-            leader[left.max(right)] = left.min(right);
-        }
-    };
-    for position in 0..count {
-        if let Some((_, references)) = space.condition_with_references_at(position) {
-            let target = find_top(space, position);
-            for &reference in references {
-                link(target, find_top(space, reference), &mut leader);
-            }
+/// Return, per component of `space` (`of` giving each decision's, of
+/// `count` components), whether its count has a closed form, as
+/// [`Components::is_closed_form`] documents.
+fn find_closed_forms(space: &Space, of: &[usize], count: usize) -> Vec<bool> {
+    let mut closed = vec![true; count];
+    for (position, &component) in of.iter().enumerate() {
+        if space.condition_at(position).is_some() || !is_closed_form_decision(space, position) {
+            closed[component] = false;
         }
     }
     for index in 0..space.forbidden().len() {
-        let references = space.forbidden_references(index);
-        if let Some((&first, rest)) = references.split_first() {
-            for &reference in rest {
-                link(
-                    find_top(space, first),
-                    find_top(space, reference),
-                    &mut leader,
-                );
-            }
+        for &reference in space.forbidden_references(index) {
+            closed[of[reference]] = false;
         }
     }
-    let mut components: Vec<Component> = Vec::new();
-    let mut by_root: HashMap<usize, usize> = HashMap::new();
-    for &top in &tree.tops {
-        let group = root(&mut leader, top);
-        let index = *by_root.entry(group).or_insert_with(|| {
-            components.push(Component {
-                tops: Vec::new(),
-                members: vec![false; count],
-            });
-            components.len() - 1
-        });
-        components[index].tops.push(top);
-    }
-    for position in 0..count {
-        let group = root(&mut leader, find_top(space, position));
-        if let Some(&index) = by_root.get(&group) {
-            components[index].members[position] = true;
+    closed
+}
+
+/// Return whether the decision at `position` counts in closed form: a
+/// choice, or a variable whose param has no constraint, or only bounds of
+/// an integer domain that the variable offers no search domain of its own
+/// for.
+fn is_closed_form_decision(space: &Space, position: usize) -> bool {
+    match space.decision_at(position) {
+        Decision::Choice(_) => true,
+        Decision::Variable(variable) => {
+            let part = variable.get();
+            let param = part.param();
+            param.constraints().is_empty()
+                || (matches!(
+                    param.domain(),
+                    ParamDomain::Integer(_) | ParamDomain::IntervalInteger(_)
+                ) && part.search_domain().is_ok_and(|domain| domain.is_none())
+                    && are_bounds(param))
         }
     }
-    components
 }
 
-/// Return whether `component`'s count has a closed form: no condition or
-/// forbidden clause names its decisions, and no variable's param
-/// constrains its values beyond the bounds of an integer domain.
-fn is_closed_form(space: &Space, component: &Component) -> bool {
-    let is_linked = (0..space.decision_count())
-        .any(|position| component.members[position] && space.condition_at(position).is_some())
-        || (0..space.forbidden().len()).any(|index| {
-            space
-                .forbidden_references(index)
-                .iter()
-                .any(|&reference| component.members[reference])
-        });
-    if is_linked {
-        return false;
-    }
-    (0..space.decision_count())
-        .filter(|&position| component.members[position])
-        .all(|position| match space.decision_at(position) {
-            Decision::Choice(_) => true,
-            Decision::Variable(variable) => {
-                let part = variable.get();
-                let param = part.param();
-                param.constraints().is_empty()
-                    || (matches!(
-                        param.domain(),
-                        ParamDomain::Integer(_) | ParamDomain::IntervalInteger(_)
-                    ) && part.search_domain().is_ok_and(|domain| domain.is_none())
-                        && are_bounds(param))
-            }
-        })
-}
-
-/// Count `component`'s complete configurations by enumerating them,
-/// checking at most `budget` of its paths.
+/// Count the complete configurations of the component whose decisions
+/// `includes` holds by enumerating them, checking at most `budget` of its
+/// paths.
 fn count_by_enumeration(
     space: &Space,
-    component: &Component,
+    includes: impl Fn(usize) -> bool,
     context: &ParamContext<'_>,
     budget: u64,
 ) -> Result<Cardinality, TraceError> {
@@ -452,12 +525,7 @@ fn count_by_enumeration(
             return Ok(Cardinality::AtLeast(found));
         }
         checked += 1;
-        let result = walk(
-            space,
-            |position| component.members[position],
-            &mut oracle,
-            context,
-        );
+        let result = walk(space, &includes, &mut oracle, context);
         match result {
             Ok(_) => found += 1_u8,
             Err(error) if ExhaustiveOracle::is_dead_branch(&error) => {}

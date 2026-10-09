@@ -1,6 +1,8 @@
 """Testing utilitiy functions."""
 
+import gc
 import os
+import weakref
 from collections.abc import Callable, Iterator, Sequence
 from importlib.util import find_spec
 from typing import Any
@@ -19,6 +21,7 @@ from .v1 import writing_v1
 __all__ = [
     "MockIdentifierAliasError",
     "SerializableEqualHashable",
+    "is_cycle_collected",
     "mock_identifier",
     "run_counter_operations",
 ]
@@ -103,6 +106,17 @@ def function_registry_snapshot() -> Iterator[None]:
         yield
     finally:
         set_function_registry_state(snapshot)
+
+
+def is_cycle_collected(build: Callable[[], object]) -> bool:
+    """Return whether the cycle `build` makes is freed by `gc.collect()`.
+
+    `build` returns the object a weak reference watches; the cycle is
+    otherwise unreachable once `build` returns.
+    """
+    watched = weakref.ref(build())
+    gc.collect()
+    return watched() is None
 
 
 def run_counter_operations(

@@ -8,13 +8,14 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{CompareOp, PyTraverseError, PyVisit};
-use pyo3::types::{PyBool, PyDict, PyTuple, PyType};
+use pyo3::types::{PyDict, PyTuple, PyType};
 
-use fhy_core::search_space::{DecisionKind, Trace, TraceStep};
+use fhy_core::search_space::{DecisionKind, Trace, TraceKey, TraceStep};
 
 use crate::constraint::value_to_python;
 use crate::identifier::identifier_to_python;
-use crate::util::dataclass::hash_value;
+use crate::util::dataclass::{answer_equality, hash_value};
+use crate::util::exceptions::DESERIALIZATION_VALUE_ERROR;
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::util::gc::{Slots, collect_slots};
 use crate::util::pending::with_pending_errors;
@@ -336,6 +337,13 @@ impl PyTrace {
         natural_to_python(py, self.trace.traversed_cardinality()).map(Bound::unbind)
     }
 
+    /// Return the trace's `TraceKey`: per step its kind, its decision's
+    /// position, its domain's signature and its coordinate, without its
+    /// subject or value.
+    fn key(&self) -> PyTraceKey {
+        PyTraceKey::of(self.trace.key())
+    }
+
     /// Return the steps of the kind `kind`, a `str`, in the order asked.
     fn of_kind<'py>(&self, py: Python<'py>, kind: &str) -> PyResult<Bound<'py, PyTuple>> {
         let steps = self.steps.bind(py);
@@ -387,11 +395,7 @@ impl PyTrace {
             return Ok(py.NotImplemented());
         };
         let equal = with_pending_errors(|| Ok(self.trace == other.get().trace))?;
-        Ok(match op {
-            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
-            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
-            _ => py.NotImplemented(),
-        })
+        Ok(answer_equality(py, equal, op))
     }
 
     /// Return the trace's hash, consistent with `==`.
@@ -470,4 +474,90 @@ impl PyTrace {
 fn decoded<'py>(cls: &Bound<'py, PyType>, trace: &Trace) -> PyResult<Bound<'py, PyAny>> {
     let seeded = PyTrace::assemble(cls.py(), trace, |_| StepObjects::default())?;
     check_instance(cls, instantiate(cls, 0, Seeded::Trace(seeded))?)
+}
+
+/// The identity of a trace without its subjects, backed by the core
+/// [`TraceKey`]: equal for runs that took the same answers over the same
+/// domains, dynamic steps included.
+///
+/// It is hashable and compares structurally, so it keys a dict. It has no
+/// constructor; it pickles through its wire form.
+#[pyclass(frozen, module = "fhy_core._rs", name = "TraceKey")]
+pub(crate) struct PyTraceKey {
+    key: TraceKey,
+}
+
+impl PyTraceKey {
+    /// Return the core key.
+    pub(super) const fn core(&self) -> &TraceKey {
+        &self.key
+    }
+
+    /// Return the key object of `key`.
+    pub(super) const fn of(key: TraceKey) -> Self {
+        Self { key }
+    }
+}
+
+#[pymethods]
+impl PyTraceKey {
+    /// Compare structurally with another key; another type is
+    /// `NotImplemented`.
+    fn __richcmp__(&self, other: &Bound<'_, PyAny>, op: CompareOp) -> Py<PyAny> {
+        let py = other.py();
+        let Ok(other) = other.cast::<Self>() else {
+            return py.NotImplemented();
+        };
+        let equal = self.key == other.get().key;
+        answer_equality(py, equal, op)
+    }
+
+    /// Return the key's hash, consistent with `==`.
+    fn __hash__(&self) -> u64 {
+        hash_value(&self.key)
+    }
+
+    /// Return the number of steps.
+    fn __len__(&self) -> usize {
+        self.key.len()
+    }
+
+    /// Return `TraceKey(...)`.
+    fn __repr__(&self) -> String {
+        format!("TraceKey({:?})", self.key)
+    }
+
+    /// The steps' coordinates, in the order asked.
+    #[getter]
+    fn coordinates<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let coordinates = self
+            .key
+            .coordinates()
+            .map(|coordinate| coordinate_to_python(py, coordinate))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, coordinates)
+    }
+
+    /// Pickle as a call of `_from_wire` with the key's V2 text.
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
+        let py = slf.py();
+        let text = to_json(py, &slf.get().key)?;
+        let restore = slf.get_type().getattr(intern!(py, "_from_wire"))?;
+        PyTuple::new(py, [restore, PyTuple::new(py, [text])?.into_any()])
+    }
+
+    /// Return the key of its V2 text `text`, the inverse of the text
+    /// `__reduce__` writes.
+    ///
+    /// Raises `DeserializationValueError` for a text of another shape.
+    #[staticmethod]
+    fn _from_wire(py: Python<'_>, text: &str) -> PyResult<Self> {
+        let key: TraceKey = serde_json::from_str(text).map_err(|error| {
+            DESERIALIZATION_VALUE_ERROR.err(
+                py,
+                (format!("Invalid V2 payload for \"TraceKey\": {error}"),),
+            )
+        })?;
+        Ok(Self { key })
+    }
 }

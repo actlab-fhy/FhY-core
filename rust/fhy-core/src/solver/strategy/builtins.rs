@@ -5,13 +5,14 @@ use std::borrow::Cow;
 use num_traits::{One, Zero};
 
 use crate::expression::builtins::BuiltinFunction;
-use crate::expression::{Expression, Rational};
+use crate::expression::{
+    Expression, Rational, build_integer, build_zero, floor, raise_to_power, take_root,
+};
 use crate::solver::SimplifyContext;
 
 use super::SimplificationStrategy;
 use super::exact::{
-    build_integer, build_number_expression, build_zero, ceil, floor, is_one, raise_to_power,
-    read_builtin_call, read_numbers, take_integer_logarithm, take_root,
+    build_number_expression, ceil, is_one, read_builtin_call, read_numbers, take_integer_logarithm,
 };
 
 /// Rewrites a call of a built-in function of exact numbers to its value,

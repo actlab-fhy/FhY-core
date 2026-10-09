@@ -11,7 +11,7 @@ use crate::identifier::Identifier;
 use crate::term::{AlphaEquivalence, AlphaRenaming};
 
 use super::context::ParamContext;
-use super::decide::{Evaluation, evaluate_constraints};
+use super::decide::{Evaluation, evaluate_param_constraints};
 use super::domain::{IntervalProfile, ParamDomain, Side};
 use super::error::{AssignmentError, IntervalError, ParamBuildError, ParamError};
 use super::interval::{
@@ -266,18 +266,26 @@ impl Param {
     }
 
     /// Evaluate the constraints under `environment`, member by member, as
-    /// [`evaluate_constraints`] does.
+    /// [`evaluate_constraints`](super::evaluate_constraints) does, except
+    /// that a member that is an integer bound of the param's variable
+    /// (`x >= c`, `x > c`, `x <= c` or `x < c` for an integer literal `c`,
+    /// as [`with_bound`](Self::with_bound) writes one), while `environment`
+    /// binds the variable to an integer value, is decided by comparing the
+    /// two integers, without asking the context's solver and without
+    /// reporting a member event.
     ///
     /// # Errors
     ///
-    /// Returns what [`evaluate_constraints`] returns.
+    /// Returns what [`evaluate_constraints`](super::evaluate_constraints)
+    /// returns.
     pub fn evaluate_constraints(
         &self,
         environment: &Bindings,
         context: &ParamContext<'_>,
     ) -> Result<Evaluation, AssignmentError> {
-        Ok(evaluate_constraints(
+        Ok(evaluate_param_constraints(
             self.constraints(),
+            self.variable(),
             environment,
             context,
         )?)

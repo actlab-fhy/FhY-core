@@ -16,6 +16,7 @@ use crate::solver::CheckLimits;
 use super::context::{MemberForwarder, ParamContext, ParamEvent, QuestionForwarder};
 use super::domain::{ParamDomain, Side};
 use super::error::{ParamBuildError, ParamError};
+use super::interval::decide_bound;
 use super::screen::{Screened, rename_system, screen};
 use super::value::member_value;
 
@@ -77,9 +78,54 @@ pub fn evaluate_constraints(
     bindings: &Bindings,
     context: &ParamContext<'_>,
 ) -> Result<Evaluation, ConstraintError> {
+    evaluate_members(constraints, bindings, context, |_| None)
+}
+
+/// Evaluate the conjunction of a param's `constraints` under `bindings`,
+/// as [`evaluate_constraints`] does, except that a member that is an
+/// integer bound of the param's `variable`, while `bindings` binds the
+/// variable to an integer value, is decided by comparing the integers:
+/// without asking the solver and without reporting an event.
+///
+/// # Errors
+///
+/// Returns what [`evaluate_constraints`] returns.
+pub(super) fn evaluate_param_constraints(
+    constraints: &[Constraint],
+    variable: &Identifier,
+    bindings: &Bindings,
+    context: &ParamContext<'_>,
+) -> Result<Evaluation, ConstraintError> {
+    let Some(Binding::Value(Value::Int(value))) = bindings.get(variable) else {
+        return evaluate_constraints(constraints, bindings, context);
+    };
+    evaluate_members(constraints, bindings, context, |constraint| {
+        decide_bound(constraint, variable, value).map(|is_satisfied| {
+            if is_satisfied {
+                Outcome::Satisfied
+            } else {
+                Outcome::Violated
+            }
+        })
+    })
+}
+
+/// Evaluate the conjunction of `constraints` under `bindings`, as
+/// [`evaluate_constraints`] documents, taking the outcome `decide` gives a
+/// member, if any, without evaluating it or reporting its events.
+fn evaluate_members(
+    constraints: &[Constraint],
+    bindings: &Bindings,
+    context: &ParamContext<'_>,
+    decide: impl Fn(&Constraint) -> Option<Outcome>,
+) -> Result<Evaluation, ConstraintError> {
     let mut first_undecided = None;
     for (index, constraint) in constraints.iter().enumerate() {
-        let outcome = match evaluate_member(constraint, bindings, context) {
+        let evaluated = match decide(constraint) {
+            Some(outcome) => Ok(outcome),
+            None => evaluate_member(constraint, bindings, context),
+        };
+        let outcome = match evaluated {
             Ok(outcome) => outcome,
             Err(error) if context.is_undecidable(&error) => {
                 context.notify(&ParamEvent::BridgeFailed {

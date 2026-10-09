@@ -13,12 +13,7 @@ use crate::support::search::{
     ScriptedOracle, TilingSpace, build_tiling_space, index, kind, order, order_of, strided,
     with_context,
 };
-use crate::support::serde::check_serde_round_trip;
-
-/// Return the JSON of `value`, as a value is written.
-fn json_of<T: serde::Serialize>(value: &T) -> serde_json::Value {
-    serde_json::to_value(value).expect("the value serializes")
-}
+use crate::support::serde::{check_serde_round_trip, json_of};
 
 /// Return a trace over the tiling space: `t = 1`, `c = a`, a dynamic
 /// address step answered 17, and `x = 2`.

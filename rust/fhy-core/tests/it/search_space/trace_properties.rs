@@ -17,10 +17,10 @@ use fhy_core::search_space::{
 };
 use num_bigint::BigUint;
 use proptest::prelude::*;
-use proptest::strategy::ValueTree;
-use proptest::test_runner::{Config, RngAlgorithm, TestRng, TestRunner};
+use proptest::test_runner::Config;
 
 use crate::support::constraint::int;
+use crate::support::guard::{GUARD_CASES, draw_guard_cases};
 use crate::support::param::in_set;
 use crate::support::search::{
     build_tiling_space, tiling_configurations, tiling_entries, with_context,
@@ -328,6 +328,42 @@ fn collect_keys(configurations: &[Configuration]) -> HashSet<ConfigurationKey> {
     configurations.iter().map(Configuration::key).collect()
 }
 
+/// Return, per decision of `space` in decision order, the values other than
+/// `original`'s that some of `configurations` takes while agreeing with
+/// `original` on every earlier decision: none for a decision `original`
+/// leaves unassigned.
+fn compute_takeable_values(
+    space: &Space,
+    configurations: &[Configuration],
+    original: &Configuration,
+) -> Vec<Vec<Value>> {
+    let order = space.decision_order();
+    order
+        .iter()
+        .enumerate()
+        .map(|(position, name)| {
+            let Some(current) = original.value(name) else {
+                return Vec::new();
+            };
+            let mut values: Vec<Value> = Vec::new();
+            for configuration in configurations {
+                let agrees = order[..position]
+                    .iter()
+                    .all(|earlier| configuration.value(earlier) == original.value(earlier));
+                if !agrees {
+                    continue;
+                }
+                if let Some(value) = configuration.value(name) {
+                    if value != current && !values.contains(value) {
+                        values.push(value.clone());
+                    }
+                }
+            }
+            values
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Strategies
 // ---------------------------------------------------------------------------
@@ -519,6 +555,52 @@ proptest! {
         }
     }
 
+    /// Test a mutation is refused exactly when a brute-force oracle finds no
+    /// decision that may change, and otherwise gives a complete reference
+    /// configuration, other than the original, whose first changed decision
+    /// is one the oracle allows, to a value the oracle allows.
+    ///
+    /// The oracle: a decision may change to a value iff some complete
+    /// configuration agrees with the original on every decision before it
+    /// in decision order and takes that value there.
+    #[test]
+    fn mutation_changes_only_what_the_brute_force_oracle_allows(
+        model in generate_model(),
+        pick in any::<prop::sample::Index>(),
+        seed in any::<u64>(),
+    ) {
+        let (space, names) = build_space(&model);
+        let configurations = build_reference_configurations(&model, &space, &names);
+        prop_assume!(!configurations.is_empty());
+        let original = &configurations[pick.index(configurations.len())];
+        let takeable = compute_takeable_values(&space, &configurations, original);
+
+        let result = with_context(|context| {
+            space.mutate(original, &mut Rng::new(seed), context, NonZeroU32::new(256).expect("positive"))
+        });
+
+        if takeable.iter().all(Vec::is_empty) {
+            prop_assert!(matches!(result, Err(TraceError::NothingToMutate)), "{result:?}");
+        } else {
+            let recorded = result.expect("a decision may change");
+            let mutated = recorded.configuration().expect("over a space");
+            prop_assert!(mutated.is_complete());
+            prop_assert!(collect_keys(&configurations).contains(&mutated.key()));
+            prop_assert_ne!(mutated.key(), original.key());
+            let first = space
+                .decision_order()
+                .iter()
+                .position(|name| mutated.value(name) != original.value(name))
+                .expect("the mutation differs from the original");
+            let value = mutated.value(&space.decision_order()[first]).expect("the changed decision is assigned");
+            prop_assert!(
+                takeable[first].contains(value),
+                "decision {first} took {value:?}, which the oracle does not allow: {:?}",
+                takeable[first]
+            );
+        }
+    }
+
     /// Test a configuration's trace round-trips through JSON and postcard.
     #[test]
     fn a_configurations_trace_round_trips_through_json_and_postcard(
@@ -635,27 +717,6 @@ fn per_step_sampling_is_uniform_per_step() {
 // Non-vacuity guards
 // ---------------------------------------------------------------------------
 
-/// The cases each guard draws.
-const GUARD_CASES: usize = 256;
-
-/// Return `GUARD_CASES` models drawn by a runner with a fixed seed, so a
-/// guard's count is the same on every run.
-fn draw_models() -> Vec<Model> {
-    let strategy = generate_model();
-    let mut runner = TestRunner::new_with_rng(
-        Config::default(),
-        TestRng::deterministic_rng(RngAlgorithm::ChaCha),
-    );
-    (0..GUARD_CASES)
-        .map(|_| {
-            strategy
-                .new_tree(&mut runner)
-                .expect("the strategy draws")
-                .current()
-        })
-        .collect()
-}
-
 /// Return whether `model`'s condition makes its target inactive in some
 /// complete configuration.
 fn has_deactivating_condition(model: &Model) -> bool {
@@ -675,9 +736,21 @@ fn has_excluding_clause(model: &Model) -> bool {
     }
 }
 
+/// Return whether some complete configuration of `model` can be mutated:
+/// the oracle finds a changeable decision for it.
+fn has_changeable_configuration(model: &Model) -> bool {
+    let (space, names) = build_space(model);
+    let configurations = build_reference_configurations(model, &space, &names);
+    configurations.iter().any(|original| {
+        compute_takeable_values(&space, &configurations, original)
+            .iter()
+            .any(|values| !values.is_empty())
+    })
+}
+
 #[test]
 fn most_generated_models_have_two_or_more_configurations() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let count = models
         .iter()
@@ -693,7 +766,7 @@ fn most_generated_models_have_two_or_more_configurations() {
 
 #[test]
 fn many_generated_conditions_deactivate_their_target() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let count = models
         .iter()
@@ -709,7 +782,7 @@ fn many_generated_conditions_deactivate_their_target() {
 
 #[test]
 fn many_generated_clauses_exclude_a_configuration() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let count = models
         .iter()
@@ -725,7 +798,7 @@ fn many_generated_clauses_exclude_a_configuration() {
 
 #[test]
 fn some_generated_models_have_no_configuration() {
-    let models = draw_models();
+    let models = draw_guard_cases(&generate_model());
 
     let count = models
         .iter()
@@ -736,5 +809,65 @@ fn some_generated_models_have_no_configuration() {
         count >= 1,
         "no model of {GUARD_CASES} has an empty space; uniform sampling's exhaustion \
          is not exercised"
+    );
+}
+
+/// Test the strategy behind the mutation property (a guard of the
+/// strategy, not of `mutate`) draws models with a configuration that can be
+/// mutated often enough for the oracle's allowed values to matter.
+#[test]
+fn many_generated_models_can_be_mutated() {
+    let models = draw_guard_cases(&generate_model());
+
+    let mutable = models
+        .iter()
+        .filter(|model| has_changeable_configuration(model))
+        .count();
+
+    assert!(
+        mutable * 10 >= GUARD_CASES * 6,
+        "{mutable} of {GUARD_CASES} models have a mutable configuration; the oracle's \
+         allowed values are exercised only on those"
+    );
+}
+
+/// Test the strategy draws models with exactly one configuration, which no
+/// mutation can change, often enough for the refusal to be exercised (a
+/// guard of the strategy).
+#[test]
+fn some_generated_models_cannot_be_mutated() {
+    let models = draw_guard_cases(&generate_model());
+
+    let immutable = models
+        .iter()
+        .filter(|model| compute_reference_points(model).len() == 1)
+        .count();
+
+    assert!(
+        immutable >= 8,
+        "{immutable} of {GUARD_CASES} models have exactly one configuration; the refusal \
+         of a mutation is exercised only on those"
+    );
+}
+
+/// Test the strategy draws mutable models with a condition or a forbidden
+/// clause often enough for repair after a mutation to be exercised (a
+/// guard of the strategy).
+#[test]
+fn many_mutable_models_have_a_condition_or_a_forbidden_clause() {
+    let models = draw_guard_cases(&generate_model());
+
+    let constrained = models
+        .iter()
+        .filter(|model| {
+            (model.condition.is_some() || model.forbidden.is_some())
+                && has_changeable_configuration(model)
+        })
+        .count();
+
+    assert!(
+        constrained * 5 >= GUARD_CASES,
+        "{constrained} of {GUARD_CASES} models have a condition or a forbidden clause and \
+         can be mutated; repair after a mutation is exercised only on those"
     );
 }

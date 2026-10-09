@@ -13,10 +13,15 @@ from fhy_core.identifier import Identifier
 from fhy_core.search_space import (
     Alternative,
     Choice,
+    ChoiceDomain,
     Condition,
     Configuration,
     Forbidden,
+    Recorder,
     Space,
+    StridedDomain,
+    StridedRun,
+    Trace,
     Variable,
 )
 from fhy_core.symbolic.constraint import (
@@ -31,11 +36,14 @@ from fhy_core.utils.override import override
 
 __all__ = [
     "EXPLOSIONS",
+    "AnsweringOracle",
     "ExplodingConstraint",
     "Explosion",
+    "FailingOracle",
     "TilingSpace",
     "build_chain",
     "build_complete_configuration",
+    "build_dynamic_trace",
     "build_tiling_space",
     "categorical",
     "make_alternative",
@@ -144,6 +152,44 @@ def build_complete_configuration(tiling: TilingSpace, tile: int = 4) -> Configur
             tiling.tile.name: tile,
         },
     )
+
+
+class AnsweringOracle:
+    """An oracle answering the given coordinates, one per step, in order."""
+
+    def __init__(self, *coordinates: Any) -> None:
+        self._coordinates = iter(coordinates)
+
+    def decide(self, step: Any) -> Any:
+        return next(self._coordinates)
+
+
+class FailingOracle:
+    """An oracle that raises a given exception when asked."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def decide(self, step: Any) -> Any:
+        raise self._error
+
+
+def build_dynamic_trace(
+    subject: Identifier | None = None, option: int = 1, address: int = 5
+) -> Trace:
+    """Return the trace of a run of two dynamic steps over `subject`.
+
+    The first step picks coordinate `option` of a choice among `"a"`, `"b"`
+    and `"c"`; the second picks coordinate `address` of one run of 64
+    addresses. A run built with another `subject` and the same answers has
+    another trace and the same trace key.
+    """
+
+    recorder = Recorder(AnsweringOracle(option, address))
+    owner = subject if subject is not None else Identifier("subject")
+    recorder.decide_dynamic("tests.option", owner, ChoiceDomain(("a", "b", "c")))
+    recorder.decide_dynamic("tests.address", owner, StridedDomain((StridedRun(0, 64),)))
+    return recorder.trace
 
 
 def build_chain(depth: int) -> Choice:

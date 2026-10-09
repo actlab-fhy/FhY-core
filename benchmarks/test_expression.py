@@ -27,6 +27,7 @@ from fhy_core.symbolic.expression import (
     PiecewiseExpression,
     UnaryExpression,
     UnaryOperation,
+    affine_form,
     call,
     logical_and,
     logical_not,
@@ -571,3 +572,18 @@ def test_pickle_round_trip_of_deep_tree(
         return loaded
 
     assert benchmark(round_trip).is_structurally_equivalent(deep_tree)
+
+
+# ---------------------------------------------------------------------------
+# Affine analysis
+# ---------------------------------------------------------------------------
+
+
+def test_affine_form_of_an_offset(benchmark: Benchmark) -> None:
+    """Benchmark the affine form of an index offset, `2 * (i + 1) - 1` and more."""
+    i, s, t = (IdentifierExpression(Identifier(name)) for name in ("i", "s", "t"))
+    offset = 2 * (i + 1) - 1 + ((3 * s + t) - t)
+
+    form = benchmark(affine_form, offset)
+
+    assert form is not None

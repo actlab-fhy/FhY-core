@@ -6,6 +6,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
 
+use crate::constraint::wire::MAX_VALUE_DEPTH;
 use crate::constraint::{
     Constraint, EquationConstraint, Member, MemberError, MemberSet, Outcome, Value,
 };
@@ -371,7 +372,8 @@ pub struct RealDomain;
 pub struct OrdinalDomain(Arc<FiniteValues>);
 
 /// A finite, unordered set of categories, kept in the members' canonical
-/// order. Cloning one shares it.
+/// order. A category is a leaf value or a tuple or frozen set of
+/// categories, such as a tile shape `(8, 8)`. Cloning one shares it.
 #[derive(Debug, Clone)]
 pub struct CategoricalDomain(Arc<FiniteValues>);
 
@@ -387,25 +389,63 @@ struct FiniteValues {
     lookup: MemberSet,
 }
 
-/// Return the members of the leaf `values` of a finite domain of `kind`,
-/// checked in order: non-empty, each value a leaf (a float only when
-/// `allows_float`), then no NaN.
-fn read_leaf_values(
+/// What a value of a finite domain may be, beyond the Boolean, integer,
+/// string, identifier and member-shaped opaque leaves every domain admits.
+#[derive(Clone, Copy)]
+struct Admits {
+    /// Whether a float is a leaf.
+    float: bool,
+    /// Whether a tuple or frozen set of admitted values is.
+    composite: bool,
+}
+
+impl Admits {
+    /// What an ordinal or a permutation domain admits: floats, and no
+    /// tuple or frozen set, since those have no order.
+    const ORDERED: Self = Self {
+        float: true,
+        composite: false,
+    };
+
+    /// What a categorical domain admits: tuples and frozen sets of
+    /// categories, and no float.
+    const CATEGORICAL: Self = Self {
+        float: false,
+        composite: true,
+    };
+}
+
+/// Return whether `value` is admitted, with `remaining` more tuples or
+/// frozen sets allowed around its innermost value.
+fn is_admitted(value: &Value, admits: Admits, remaining: usize) -> bool {
+    match value {
+        Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Identifier(_) => true,
+        Value::Float(_) => admits.float,
+        Value::Opaque(opaque) => opaque.get().is_member_shaped(),
+        Value::Decimal(_) => false,
+        Value::Tuple(elements) | Value::FrozenSet(elements) => {
+            admits.composite
+                && remaining > 0
+                && elements
+                    .iter()
+                    .all(|element| is_admitted(element, admits, remaining - 1))
+        }
+    }
+}
+
+/// Return the members of the `values` of a finite domain of `kind`,
+/// checked in order: non-empty, each value admitted by `admits`, then no
+/// NaN. A composite value nests at most [`MAX_VALUE_DEPTH`] deep.
+fn read_finite_members(
     kind: DomainKind,
     values: Vec<Value>,
-    allows_float: bool,
+    admits: Admits,
 ) -> Result<Vec<Member>, DomainError> {
     if values.is_empty() {
         return Err(DomainError::EmptyValues(kind));
     }
     for (index, value) in values.iter().enumerate() {
-        let is_leaf = match value {
-            Value::Bool(_) | Value::Int(_) | Value::Str(_) | Value::Identifier(_) => true,
-            Value::Float(_) => allows_float,
-            Value::Opaque(opaque) => opaque.get().is_member_shaped(),
-            Value::Decimal(_) | Value::Tuple(_) | Value::FrozenSet(_) => false,
-        };
-        if !is_leaf {
+        if !is_admitted(value, admits, MAX_VALUE_DEPTH) {
             return Err(DomainError::NotALeafValue { kind, index });
         }
     }
@@ -453,7 +493,7 @@ impl OrdinalDomain {
     /// for two values that do not order, such as two identifiers; and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
-        let members = read_leaf_values(DomainKind::Ordinal, values, true)?;
+        let members = read_finite_members(DomainKind::Ordinal, values, Admits::ORDERED)?;
         let sorted = sort_tolerantly(members, |left, right| {
             compare_ordinal(left, right)
                 .map_err(DomainError::Custom)?
@@ -482,11 +522,12 @@ impl CategoricalDomain {
     ///
     /// In order: [`DomainError::EmptyValues`] for no value;
     /// [`DomainError::NotALeafValue`] for a value that is no Boolean,
-    /// integer, string, identifier or member-shaped opaque value, a float
-    /// included; and
+    /// integer, string, identifier or member-shaped opaque value, or tuple
+    /// or frozen set of such values at any depth (a float or a decimal
+    /// refused, inside a tuple too); and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
-        let members = read_leaf_values(DomainKind::Categorical, values, false)?;
+        let members = read_finite_members(DomainKind::Categorical, values, Admits::CATEGORICAL)?;
         let count = members.len();
         let lookup = MemberSet::new(members);
         if lookup.len() != count {
@@ -522,7 +563,7 @@ impl PermutationDomain {
     /// [`DomainError::NanValue`] for a NaN; and
     /// [`DomainError::DuplicateValues`] for two equal values.
     pub fn new(values: Vec<Value>) -> Result<Self, DomainError> {
-        let members = read_leaf_values(DomainKind::Permutation, values, true)?;
+        let members = read_finite_members(DomainKind::Permutation, values, Admits::ORDERED)?;
         build_finite_values(DomainKind::Permutation, members).map(|values| Self(Arc::new(values)))
     }
 

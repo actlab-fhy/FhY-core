@@ -100,6 +100,7 @@ pub fn register(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_part_2(module)?;
     register_part_3(module)?;
     register_part_4(module)?;
+    register_part_5(module)?;
     module.add(VERSION_ATTRIBUTE, env!("CARGO_PKG_VERSION"))?;
     module.add(
         pass::REGISTRY_ATTRIBUTE,
@@ -111,7 +112,7 @@ pub fn register(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     )
 }
 
-/// Add the classes and functions of the `constraint`, `diagnostic`, `expression`, `identifier`, `lattice`, `op_attribute` modules.
+/// Add the classes and functions of the `constraint`, `diagnostic` and `expression` modules.
 fn register_part_1(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<constraint::PyConstraintSystem>()?;
     module.add_class::<constraint::PyEquationConstraint>()?;
@@ -163,6 +164,8 @@ fn register_part_1(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(expression::fold_expression, module)?)?;
+    module.add_class::<expression::PyAffineForm>()?;
+    module.add_function(wrap_pyfunction!(expression::affine_form, module)?)?;
     module.add_function(wrap_pyfunction!(
         expression::is_decimal_text_exactly_binary,
         module
@@ -199,18 +202,6 @@ fn register_part_1(module: &Bound<'_, PyModule>) -> PyResult<()> {
         expression::try_get_registered_result_sort,
         module
     )?)?;
-    module.add_function(wrap_pyfunction!(
-        identifier::advance_identifier_counter_past,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        identifier::allocate_identifier_id,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(identifier::next_identifier_id, module)?)?;
-    module.add_class::<lattice::PyLattice>()?;
-    module.add_class::<lattice::PyPartiallyOrderedSet>()?;
-    module.add_class::<op_attribute::PyOpAttribute>()?;
     Ok(())
 }
 
@@ -384,15 +375,35 @@ fn register_part_4(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<search_space::PyPendingStep>()?;
     module.add_class::<search_space::PyRandomOracle>()?;
     module.add_class::<search_space::PyReplayOracle>()?;
+    module.add_class::<search_space::PyGuidedOracle>()?;
     module.add_class::<search_space::PyExhaustiveOracle>()?;
     module.add_class::<search_space::PyRecorder>()?;
     module.add_class::<search_space::PyTraceStep>()?;
     module.add_class::<search_space::PyTrace>()?;
+    module.add_class::<search_space::PyTraceKey>()?;
     module.add_class::<search_space::PyObjective>()?;
     module.add_class::<search_space::PyMeasurement>()?;
     module.add_function(wrap_pyfunction!(
         search_space::get_search_space_kind_class,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(search_space::non_dominated, module)?)?;
+    Ok(())
+}
+
+/// Add the classes and functions of the `identifier`, `lattice` and `op_attribute` modules.
+fn register_part_5(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(
+        identifier::advance_identifier_counter_past,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        identifier::allocate_identifier_id,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(identifier::next_identifier_id, module)?)?;
+    module.add_class::<lattice::PyLattice>()?;
+    module.add_class::<lattice::PyPartiallyOrderedSet>()?;
+    module.add_class::<op_attribute::PyOpAttribute>()?;
     Ok(())
 }

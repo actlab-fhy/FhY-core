@@ -1,5 +1,7 @@
 """Tests for categorical parameters."""
 
+from typing import Any
+
 import pytest
 
 from fhy_core.identifier import Identifier
@@ -9,8 +11,11 @@ from fhy_core.serialization import (
 )
 from fhy_core.symbolic.constraint import EquationConstraint, InSetConstraint
 from fhy_core.symbolic.param import (
+    OrdinalDomain,
     ParamError,
+    PermutationDomain,
     create_categorical_param,
+    create_permutation_param,
     create_single_valid_value_param,
 )
 from fhy_core.symbolic.param.core import Param
@@ -287,12 +292,13 @@ def test_categorical_param_deserialize_rejects_wrapped_non_leaf_values() -> None
     """Test categorical deserialize rejects wrapped container values.
 
     Under the derived format the value list lives at
-    ``payload["domain"]["__data__"]["categories"]``; a wrapped tuple is not a
-    valid categorical leaf value and must be rejected.
+    ``payload["domain"]["__data__"]["categories"]``; a wrapped tuple holding a
+    float is not a valid category (a tuple of leaf values is, but a float is
+    refused inside one too) and must be rejected.
     """
     payload = create_categorical_param({"a", "b"}).serialize_to_dict()
     payload["domain"]["__data__"]["categories"] = [  # type: ignore[index,call-overload]  # test: modify serialized
-        serialize_registry_wrapped_value(("a", "b"))
+        serialize_registry_wrapped_value(("a", 1.5))
     ]
 
     with pytest.raises(DeserializationValueError):
@@ -354,3 +360,161 @@ def test_categorical_param_bool_and_int_categories_round_trip_distinctly() -> No
     assert len(restored.domain.categories) == 2
     assert restored.is_value_admissible(True)
     assert restored.is_value_admissible(1)
+
+
+# =============================================================================
+# Tuple and frozen-set categories
+# =============================================================================
+
+
+def _tile_shapes() -> tuple[tuple[int, int], ...]:
+    """Return the tile shapes `(4, 4)` and `(8, 8)`."""
+    return ((8, 8), (4, 4))
+
+
+def test_categorical_domain_accepts_tuple_categories() -> None:
+    """Test a domain over tile shapes builds and keeps them as tuples."""
+    domain = CategoricalDomain(_tile_shapes())
+
+    assert set(domain.categories) == {(4, 4), (8, 8)}
+    assert all(isinstance(category, tuple) for category in domain.categories)
+
+
+def test_tuple_categories_come_back_in_a_canonical_order() -> None:
+    """Test the categories' order does not depend on the order they were given in."""
+    ascending = ((4, 4), (8, 8))
+    descending = ((8, 8), (4, 4))
+
+    forward = CategoricalDomain(ascending).categories
+    backward = CategoricalDomain(descending).categories
+
+    assert forward == backward == ((4, 4), (8, 8))
+
+
+def test_tuple_categories_may_mix_leaf_kinds_and_nest() -> None:
+    """Test a tuple of a string and an int, and a nested tuple, are categories."""
+    categories = (("x", 4), (1, (2, 3)), (True, "y"))
+
+    domain = CategoricalDomain(categories)
+
+    assert set(domain.categories) == set(categories)
+    assert domain.is_value_admissible(("x", 4))
+    assert domain.is_value_admissible((1, (2, 3)))
+
+
+def test_a_frozen_set_is_a_category() -> None:
+    """Test a frozen set of leaf values is a category."""
+    categories = (frozenset({1, 2}), frozenset({3}))
+
+    domain = CategoricalDomain(categories)
+
+    assert set(domain.categories) == {frozenset({1, 2}), frozenset({3})}
+    assert domain.is_value_admissible(frozenset({3}))
+
+
+def test_a_categorical_param_over_tuples_admits_exactly_them() -> None:
+    """Test a param admits each tile shape and nothing else."""
+    param = create_categorical_param(_tile_shapes())
+
+    assert param.is_value_admissible((8, 8))
+    assert param.is_value_admissible((4, 4))
+    assert not param.is_value_admissible((4, 8))
+    assert not param.is_value_admissible((8,))
+    assert not param.is_value_admissible(8)
+
+
+def test_a_categorical_param_over_tuples_assigns_a_tuple() -> None:
+    """Test assigning `(8, 8)` keeps the tuple, assigning `(5, 5)` is refused."""
+    param = create_categorical_param(_tile_shapes())
+
+    assignment = param.assign((8, 8))
+
+    assert assignment.value == (8, 8)
+    with pytest.raises(ParamError):
+        param.assign((5, 5))
+
+
+def test_tuple_categories_that_repeat_are_refused() -> None:
+    """Test two equal tuples are one category twice: `ParamError`."""
+    repeated = ((4, 4), (4, 4))
+
+    with pytest.raises(ParamError, match="unique"):
+        CategoricalDomain(repeated)
+
+
+def test_a_tuple_category_round_trips_through_its_payload() -> None:
+    """Test a param over tuples serializes and reads back admitting the same."""
+    param = create_categorical_param(_tile_shapes())
+
+    restored: Param[Any] = Param.deserialize_from_dict(param.serialize_to_dict())
+
+    assert isinstance(restored.domain, CategoricalDomain)
+    assert restored.domain.categories == ((4, 4), (8, 8))
+    assert restored.is_value_admissible((8, 8))
+    assert not restored.is_value_admissible((4, 8))
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        pytest.param((4, 4.5), id="float_in_a_tuple"),
+        pytest.param((4, (4, 4.5)), id="float_nested"),
+        pytest.param(4.5, id="float"),
+        pytest.param(frozenset({4.5}), id="float_in_a_frozen_set"),
+    ],
+)
+def test_a_float_category_is_refused_inside_a_tuple_too(category: Any) -> None:
+    """Test a float, bare or inside a composite category, is a `TypeError`."""
+    categories: Any = ((4, 4), category)
+
+    with pytest.raises(TypeError):
+        CategoricalDomain(categories)
+
+
+def test_ordinal_and_permutation_domains_still_refuse_tuples() -> None:
+    """Test composite values are for categorical domains only."""
+    values: Any = ((4, 4), (8, 8))
+
+    with pytest.raises(TypeError):
+        OrdinalDomain(values)
+    with pytest.raises(TypeError):
+        PermutationDomain(values)
+
+
+# =============================================================================
+# A list is no tuple category
+# =============================================================================
+
+
+def test_a_list_is_not_admissible_for_a_tuple_category() -> None:
+    """Test `[8, 8]` is not `(8, 8)`, for the domain and for the param."""
+    categories = _tile_shapes()
+    domain = CategoricalDomain(categories)
+    param = create_categorical_param(categories)
+
+    assert domain.is_value_admissible((8, 8))
+    assert param.is_value_admissible((8, 8))
+    assert not domain.is_value_admissible([8, 8])
+    assert not param.is_value_admissible([8, 8])
+
+
+def test_assigning_a_list_to_a_tuple_category_param_is_refused() -> None:
+    """Test assignment agrees with admissibility: the list is refused."""
+    param = create_categorical_param(_tile_shapes())
+    candidate: Any = [8, 8]
+
+    assert not param.is_value_admissible(candidate)
+    with pytest.raises(ParamError):
+        param.assign(candidate)
+
+
+def test_a_permutation_param_still_admits_and_assigns_a_list_ordering() -> None:
+    """Test a list is the documented way to give a permutation its ordering."""
+    param = create_permutation_param(["n", "c", "h", "w"])
+    domain = param.domain
+    ordering: Any = ["c", "n", "w", "h"]
+
+    assert domain.is_value_admissible(ordering)
+    assert param.is_value_admissible(ordering)
+    assert param.assign(ordering).value == ("c", "n", "w", "h")
+    assert not domain.is_value_admissible(["n", "c", "h", "n"])

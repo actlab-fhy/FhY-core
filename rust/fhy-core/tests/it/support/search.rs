@@ -5,6 +5,7 @@
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
+use std::num::NonZeroU32;
 
 use fhy_core::constraint::Value;
 use fhy_core::expression::{BigInt, LiteralValue};
@@ -15,8 +16,8 @@ use fhy_core::param::{
     ZeroInclusion,
 };
 use fhy_core::search_space::{
-    ChoiceDomain, Coordinate, DecisionKind, OrderDomain, PendingStep, SearchOracle, Space,
-    StepDomain, StridedDomain, StridedRun,
+    ChoiceDomain, Configuration, Coordinate, DecisionKind, OrderDomain, PendingStep, Recorder,
+    SearchOracle, Space, StepDomain, StridedDomain, StridedRun, Trace,
 };
 use fhy_core::solver::Solver;
 use num_bigint::BigUint;
@@ -26,6 +27,15 @@ use super::search_space::{
     bare_alternative, choice_of, chooses, chosen, condition, forbidden, int_variable,
     plain_alternative, plain_variable,
 };
+
+/// Return the positive attempt count `count`.
+///
+/// # Panics
+///
+/// Panics if `count` is zero.
+pub(crate) fn attempts(count: u32) -> NonZeroU32 {
+    NonZeroU32::new(count).expect("a positive count")
+}
 
 /// Return the kind named `kind`.
 ///
@@ -283,6 +293,41 @@ pub(crate) fn tiling_entries(
         entries.push((tiling.x.clone(), int(*x)));
     }
     entries
+}
+
+/// Record a run of the tiling space: `t = 1`, `c = a`, a dynamic step of
+/// the kind `moga.cir.address` about `subject`, over `[0, 64)` and answered
+/// `address`, and `x = 2`. Return the run's trace and its complete
+/// configuration.
+///
+/// # Panics
+///
+/// Panics if an answer is refused.
+pub(crate) fn record_tiling_run(
+    tiling: &TilingSpace,
+    address: u64,
+    subject: &Identifier,
+) -> (Trace, Configuration) {
+    let mut recorder = Recorder::over(&tiling.space);
+    let mut oracle = ScriptedOracle::new([index(0), index(0), index(address), index(1)]);
+    with_context(|context| {
+        recorder.decide(&tiling.t, &mut oracle, context)?;
+        recorder.decide(&tiling.c, &mut oracle, context)?;
+        recorder.decide_dynamic(
+            &kind("moga.cir.address"),
+            subject,
+            &strided(&[(0, 64)]),
+            &mut oracle,
+            context,
+        )?;
+        recorder.decide(&tiling.x, &mut oracle, context)
+    })
+    .expect("admissible answers");
+    let configuration = recorder
+        .configuration()
+        .expect("a run over a space")
+        .clone();
+    (recorder.trace(), configuration)
 }
 
 /// Return the space `name` of one top-level variable over the natural

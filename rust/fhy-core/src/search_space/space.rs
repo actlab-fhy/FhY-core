@@ -168,6 +168,16 @@ struct SpaceInner {
     /// The canonical positions of the decisions each forbidden clause
     /// names, ascending.
     forbidden_references: Vec<Vec<usize>>,
+    /// Per decision, by canonical position, the positions of the
+    /// forbidden clauses naming it, ascending.
+    forbidden_naming: Vec<Vec<usize>>,
+    /// Per decision, by canonical position, the canonical positions of the
+    /// decisions that depend on it directly, ascending: those under its
+    /// alternatives' top level, and the targets of the conditions naming
+    /// it.
+    dependents: Vec<Vec<usize>>,
+    /// Per decision, by canonical position, its rank in decision order.
+    order_ranks: Vec<usize>,
 }
 
 /// One decision of a space, in canonical order.
@@ -302,6 +312,123 @@ impl Space {
     #[must_use]
     pub fn decision_order(&self) -> &[Identifier] {
         &self.0.order
+    }
+
+    /// Return this space with each of `variables` and `choices` put at the
+    /// top level: in place of the top-level variable, or choice, of the
+    /// same name, keeping its slot, or after the last top-level variable,
+    /// or choice, in the order given. The name, the conditions, the
+    /// forbidden clauses and the notes are kept, and the space is checked
+    /// as [`new`](Self::new) checks one.
+    ///
+    /// Every decision before the first one the edit changes, in canonical
+    /// order, keeps its canonical position, and so do the steps of a trace
+    /// over them: appending choices and replacing a variable keep every
+    /// existing position, appending a variable moves every choice's subtree
+    /// by one, and replacing a choice by one whose subtree holds another
+    /// number of decisions moves the decisions after it.
+    ///
+    /// # Errors
+    ///
+    /// Returns what [`new`](Self::new) returns for the edited space, such
+    /// as [`SpaceError::DuplicateName`] for a variable named as a top-level
+    /// choice, [`SpaceError::UnknownConditionTarget`] for a condition on a
+    /// decision a replaced choice no longer holds, or
+    /// [`SpaceError::UnknownReference`] for a condition naming one.
+    pub fn with_decisions(
+        &self,
+        variables: Vec<Part<dyn Variable>>,
+        choices: Vec<Choice>,
+    ) -> Result<Self, SpaceError> {
+        let variables = replace_or_append(&self.0.variables, variables, |variable| {
+            variable.get().name()
+        });
+        let choices = replace_or_append(&self.0.choices, choices, Choice::name);
+        self.rebuild(variables, choices, self.0.conditions.clone())
+    }
+
+    /// Return this space without the top-level decisions `names`, and
+    /// without the conditions on them or on any decision under them. The
+    /// name, the other conditions, the forbidden clauses and the notes are
+    /// kept, and the space is checked as [`new`](Self::new) checks one. A
+    /// name given twice is removed once.
+    ///
+    /// The decisions before the first one removed, in canonical order,
+    /// keep their canonical positions; the decisions after it move.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpaceError::NotTopLevelDecision`] for the first of `names`
+    /// that is no top-level decision of the space, and what
+    /// [`new`](Self::new) returns for the edited space, such as
+    /// [`SpaceError::UnknownReference`] for a condition or a forbidden
+    /// clause that names a removed decision.
+    pub fn without_decisions(
+        &self,
+        names: impl IntoIterator<Item = Identifier>,
+    ) -> Result<Self, SpaceError> {
+        let mut removed: HashSet<usize> = HashSet::new();
+        for name in names {
+            match self.position(&name) {
+                Some(position) if self.0.nodes[position].parent.is_none() => {
+                    removed.insert(position);
+                }
+                _ => return Err(SpaceError::NotTopLevelDecision { name }),
+            }
+        }
+        let is_removed = |name: &Identifier| {
+            self.position(name)
+                .is_some_and(|position| removed.contains(&position))
+        };
+        let is_under_removed = |position: usize| {
+            removed
+                .iter()
+                .any(|&top| (top..self.0.nodes[top].subtree_end).contains(&position))
+        };
+        let variables = self
+            .0
+            .variables
+            .iter()
+            .filter(|variable| !is_removed(variable.get().name()))
+            .cloned()
+            .collect();
+        let choices = self
+            .0
+            .choices
+            .iter()
+            .filter(|choice| !is_removed(choice.name()))
+            .cloned()
+            .collect();
+        let conditions = self
+            .0
+            .conditions
+            .iter()
+            .filter(|condition| {
+                self.position(condition.target())
+                    .is_none_or(|target| !is_under_removed(target))
+            })
+            .cloned()
+            .collect();
+        self.rebuild(variables, choices, conditions)
+    }
+
+    /// Return the space of this one's name, forbidden clauses and notes,
+    /// holding `variables`, `choices` and `conditions`, checked as
+    /// [`new`](Self::new) checks one.
+    fn rebuild(
+        &self,
+        variables: Vec<Part<dyn Variable>>,
+        choices: Vec<Choice>,
+        conditions: Vec<Condition>,
+    ) -> Result<Self, SpaceError> {
+        let space = Self::new(
+            self.0.name.clone(),
+            variables,
+            choices,
+            conditions,
+            self.0.forbidden.clone(),
+        )?;
+        Ok(space.with_notes(self.0.notes.clone()))
     }
 
     /// Return whether `other` is the same space up to identity: equal
@@ -439,6 +566,50 @@ impl Space {
     pub(super) fn forbidden_references(&self, index: usize) -> &[usize] {
         &self.0.forbidden_references[index]
     }
+
+    /// Return the positions of the forbidden clauses naming the decision at
+    /// `position`, ascending.
+    pub(super) fn forbidden_naming_at(&self, position: usize) -> &[usize] {
+        &self.0.forbidden_naming[position]
+    }
+
+    /// Return the canonical positions of the decisions that depend on the
+    /// decision at `position` directly, through its choice or their
+    /// condition, ascending.
+    pub(super) fn dependents_at(&self, position: usize) -> &[usize] {
+        &self.0.dependents[position]
+    }
+
+    /// Return the rank of the decision at `position` in decision order.
+    pub(super) fn order_rank_at(&self, position: usize) -> usize {
+        self.0.order_ranks[position]
+    }
+
+    /// Return the canonical position after the subtree of the decision at
+    /// `position`: the decisions under it are the ones between the two.
+    pub(super) fn subtree_end_at(&self, position: usize) -> usize {
+        self.0.nodes[position].subtree_end
+    }
+}
+
+/// Return `held` with each of `given` in place of the one of the same
+/// name, keeping its slot, or appended after the last, in the order given.
+fn replace_or_append<T: Clone>(
+    held: &[T],
+    given: Vec<T>,
+    name_of: impl Fn(&T) -> &Identifier,
+) -> Vec<T> {
+    let mut edited = held.to_vec();
+    for item in given {
+        match edited
+            .iter()
+            .position(|kept| name_of(kept) == name_of(&item))
+        {
+            Some(slot) => edited[slot] = item,
+            None => edited.push(item),
+        }
+    }
+    edited
 }
 
 /// The conditions on one target, gathered: their members, and the
@@ -468,7 +639,9 @@ fn build(
         .map(|(index, clause)| check_forbidden(index, clause, &positions, &nodes))
         .collect::<Result<Vec<_>, _>>()?;
     let merged = merge_conditions(gathered, &mut nodes)?;
-    let order_positions = find_decision_order(&nodes)?;
+    let (order_positions, dependents) = find_decision_order(&nodes)?;
+    let order_ranks = rank_by_position(&order_positions);
+    let forbidden_naming = index_clauses_by_decision(&forbidden_references, nodes.len());
     let label_positions = labels
         .iter()
         .enumerate()
@@ -491,7 +664,33 @@ fn build(
         nodes,
         positions,
         forbidden_references,
+        forbidden_naming,
+        dependents,
+        order_ranks,
     })
+}
+
+/// Return, per canonical position, the rank of its decision in
+/// `order_positions`, the decisions' positions in decision order.
+fn rank_by_position(order_positions: &[usize]) -> Vec<usize> {
+    let mut ranks = vec![0; order_positions.len()];
+    for (rank, &position) in order_positions.iter().enumerate() {
+        ranks[position] = rank;
+    }
+    ranks
+}
+
+/// Return, per canonical position of a space of `count` decisions, the
+/// indices of the forbidden clauses naming its decision, ascending, given
+/// each clause's `references`.
+fn index_clauses_by_decision(references: &[Vec<usize>], count: usize) -> Vec<Vec<usize>> {
+    let mut naming = vec![Vec::new(); count];
+    for (index, clause_references) in references.iter().enumerate() {
+        for &reference in clause_references {
+            naming[reference].push(index);
+        }
+    }
+    naming
 }
 
 /// Return the space's names, its own first, refusing a repeated one.
@@ -716,9 +915,10 @@ fn find_references(
     Ok(references)
 }
 
-/// Return the decisions' canonical positions in decision order, or the
-/// cycle that prevents one.
-fn find_decision_order(nodes: &[Node]) -> Result<Vec<usize>, SpaceError> {
+/// Return the decisions' canonical positions in decision order and, per
+/// decision, the canonical positions of the decisions depending on it
+/// directly, ascending; or the cycle that prevents an order.
+fn find_decision_order(nodes: &[Node]) -> Result<(Vec<usize>, Vec<Vec<usize>>), SpaceError> {
     let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
     let mut waiting: Vec<usize> = vec![0; nodes.len()];
     for (position, node) in nodes.iter().enumerate() {
@@ -748,7 +948,7 @@ fn find_decision_order(nodes: &[Node]) -> Result<Vec<usize>, SpaceError> {
         }
     }
     if order.len() == nodes.len() {
-        return Ok(order);
+        return Ok((order, dependents));
     }
     let placed: HashSet<usize> = order.into_iter().collect();
     let cycle = (0..nodes.len())

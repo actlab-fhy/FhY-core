@@ -8,7 +8,8 @@ use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 
 use fhy_core::constraint::{
-    Constraint, ConstraintSystem, CustomConstraint, OpaqueValue, Polarity, SetConstraint, Value,
+    Constraint, ConstraintSystem, CustomConstraint, EquationConstraint, OpaqueValue, Polarity,
+    SetConstraint, Value,
 };
 use fhy_core::diagnostic::Note;
 use fhy_core::foreign::{BoxError, Foreign, ForeignError, ForeignPart, NoForeign, Part, Resolve};
@@ -27,6 +28,7 @@ use fhy_core::term::{AlphaEquivalence, AlphaRenaming};
 use serde::{Deserialize, Serialize};
 
 use super::constraint::{int, member_set};
+use super::param::{literal, reference};
 
 /// Return a solver whose simplifier decides ground equations, so the
 /// conditions and forbidden clauses over numeric variables evaluate.
@@ -126,6 +128,29 @@ pub(crate) fn natural_param() -> Param {
         &ParamContext::new(&solver),
     )
     .expect("the param is valid")
+}
+
+/// Return the equation `variable % 2 == 1`, a constraint no integer bound
+/// decides, so a param holding it asks the solver to check a value.
+pub(crate) fn odd(variable: &Identifier) -> Constraint {
+    Constraint::from(EquationConstraint::new(
+        reference(variable).floor_mod(literal(2)).equals(literal(1)),
+    ))
+}
+
+/// Return the param over the odd non-negative integers, its variable
+/// fresh: a natural number constrained by [`odd`], which only a solver
+/// that decides ground equations checks a value against.
+///
+/// # Panics
+///
+/// Panics if the param is refused.
+pub(crate) fn odd_natural_param() -> Param {
+    let param = natural_param();
+    let solver = Solver::new();
+    param
+        .with_constraint(odd(param.variable()), &ParamContext::new(&solver))
+        .expect("the param is valid")
 }
 
 /// Return the plain variable `name` over `param`.

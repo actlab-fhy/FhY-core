@@ -15,6 +15,7 @@ mod interned;
 mod lattice;
 mod param;
 mod pass;
+mod provenance_custom_stories;
 mod provenance_diagnostic_properties;
 mod provenance_stories;
 mod scope_stack_properties;

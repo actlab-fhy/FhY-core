@@ -29,7 +29,7 @@ use crate::support::param::{at_least, at_most, in_set, ints};
 use crate::support::search_space::{
     ImplementorResolver, REALIZATION, Realization, TILE_KNOB, TileKnob, bare_alternative,
     build_choice_chain, categorical, choice_of, chooses, chosen, condition, configure, forbidden,
-    ground_solver, int_param, int_variable, natural_param, plain_alternative, plain_variable,
+    ground_solver, int_param, int_variable, natural_param, odd, plain_alternative, plain_variable,
     space_of,
 };
 use crate::support::serde::{check_serde_round_trip, restored};
@@ -915,7 +915,8 @@ impl ParamObserver for SolveIsUndecided {
 }
 
 /// Return the space of one variable over the non-negative integers
-/// constrained by `p <= 10`, and the variable's name.
+/// constrained by `p % 2 == 1`, which no integer bound decides, and the
+/// variable's name.
 fn build_bounded_space() -> (Space, Identifier) {
     let name = Identifier::new("n");
     let variable = Identifier::new("p");
@@ -926,7 +927,7 @@ fn build_bounded_space() -> (Space, Identifier) {
             ZeroInclusion::Included,
         )),
         variable.clone(),
-        vec![at_most(&variable, 10)],
+        vec![odd(&variable)],
         &ParamContext::new(&solver),
     )
     .expect("the param is valid");
@@ -1217,11 +1218,14 @@ fn nested_choice_tree(depth: usize) -> serde_json::Value {
 fn a_postcard_key_nested_20000_deep_is_refused() {
     let refused = run_on_stack(DECODE_STACK_BYTES, || {
         let bytes = nested_key_bytes(DEEP_INPUT);
+        // A measurement's key is a `MeasurementKey`, whose variant 0 holds
+        // a configuration key.
+        let measurement_bytes = [&[0][..], &bytes].concat();
         [
             postcard::from_bytes::<ConfigurationKey>(&bytes).err(),
             postcard::from_bytes::<ConfigurationKeyData>(&bytes).err(),
-            postcard::from_bytes::<Measurement>(&bytes).err(),
-            postcard::from_bytes::<MeasurementData>(&bytes).err(),
+            postcard::from_bytes::<Measurement>(&measurement_bytes).err(),
+            postcard::from_bytes::<MeasurementData>(&measurement_bytes).err(),
         ]
         .map(|error| matches!(error, Some(postcard::Error::SerdeDeCustom)))
     });

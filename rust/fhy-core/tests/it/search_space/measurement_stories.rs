@@ -9,7 +9,7 @@ use fhy_core::diagnostic::Note;
 use fhy_core::foreign::BoxError;
 use fhy_core::identifier::Identifier;
 use fhy_core::search_space::{
-    Configuration, ConfigurationKey, Direction, Measurement, MeasurementError, MeasurementStatus,
+    Configuration, Direction, Measurement, MeasurementError, MeasurementKey, MeasurementStatus,
     Measurer, Objective,
 };
 use rstest::rstest;
@@ -324,6 +324,27 @@ fn dominance_refuses_different_objectives(#[case] other: Objective) {
     );
 }
 
+/// Test measurements of the same number of objectives, one of them named
+/// otherwise, are refused even where the first objective already shows a
+/// worse value, in either direction.
+#[test]
+fn dominance_refuses_a_renamed_objective_after_a_worse_value() {
+    let latency = objective("latency", Direction::Minimize);
+    let energy = objective("energy", Direction::Minimize);
+    let power = objective("power", Direction::Minimize);
+    let left = measured(0, &[(&latency, 2.0), (&energy, 1.0)]);
+    let right = measured(1, &[(&latency, 1.0), (&power, 1.0)]);
+
+    assert_eq!(
+        left.dominates(&right),
+        Err(MeasurementError::DifferentObjectives)
+    );
+    assert_eq!(
+        right.dominates(&left),
+        Err(MeasurementError::DifferentObjectives)
+    );
+}
+
 /// Test a measurement holding an extra objective is not compared.
 #[test]
 fn dominance_refuses_an_extra_objective() {
@@ -408,7 +429,7 @@ impl Measurer<Configuration> for TilingMeasurer {
 
     fn measure(
         &mut self,
-        key: &ConfigurationKey,
+        key: &MeasurementKey,
         subject: &Configuration,
     ) -> Result<Measurement, BoxError> {
         let read = |value: &Value| match value {
@@ -451,7 +472,7 @@ fn a_measurer_ranks_the_configurations_of_a_space() {
         .iter()
         .map(|configuration| {
             let measurer: &mut dyn Measurer<Configuration> = &mut measurer;
-            measurer.measure(&configuration.key(), configuration)
+            measurer.measure(&MeasurementKey::from(configuration.key()), configuration)
         })
         .collect::<Result<_, _>>()
         .expect("the measurer has no fault");

@@ -15,6 +15,7 @@
 //! expressions, the registry snapshot and the materializer through the
 //! crate-visible items below.
 
+mod affine;
 mod evaluate;
 mod literal;
 mod materialize;
@@ -27,6 +28,7 @@ mod screen;
 mod table;
 mod text;
 
+pub(crate) use affine::{PyAffineForm, affine_form};
 pub(crate) use evaluate::{
     PyBuiltinNativeImplementation, coerce_literal_value, evaluate_expression_with_numpy,
     evaluation_error_to_python, fold_expression, is_decimal_text_exactly_binary,

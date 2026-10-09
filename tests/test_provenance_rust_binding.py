@@ -141,6 +141,18 @@ def test_provenance_base_stays_abstract_and_unconstructible() -> None:
         Provenance()  # type: ignore[abstract]  # test: the base is abstract
 
 
+def test_the_rust_provenance_base_is_unconstructible() -> None:
+    """Test `fhy_core._rs.Provenance` itself refuses construction.
+
+    Only a subclass holds a provenance, so the base is refused as the
+    interpreter refuses a class it cannot instantiate.
+    """
+    with pytest.raises(
+        TypeError, match=r"^cannot create 'fhy_core\._rs\.Provenance' instances$"
+    ):
+        fhy_core._rs.Provenance()
+
+
 @_PUBLIC_CLASSES
 def test_registering_the_public_class_again_is_a_no_op(cls: type[Any]) -> None:
     """Test re-registering the registered public class succeeds."""

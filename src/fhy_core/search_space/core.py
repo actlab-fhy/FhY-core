@@ -27,6 +27,7 @@ __all__ = [
     "Direction",
     "ExhaustiveOracle",
     "Forbidden",
+    "GuidedOracle",
     "Measurement",
     "MeasurementStatus",
     "Measurer",
@@ -42,8 +43,10 @@ __all__ = [
     "StridedDomain",
     "StridedRun",
     "Trace",
+    "TraceKey",
     "TraceStep",
     "Variable",
+    "non_dominated",
 ]
 
 from collections.abc import Iterable, Sequence
@@ -375,6 +378,9 @@ RandomOracle = _rs.RandomOracle
 ReplayOracle = _rs.ReplayOracle
 """Answers the steps of a recorded trace back, refusing a run that leaves it."""
 
+GuidedOracle = _rs.GuidedOracle
+"""Answers a recorded trace back where it fits, and asks a fallback otherwise."""
+
 ExhaustiveOracle = _rs.ExhaustiveOracle
 """Takes every path of a deterministic stream once, over successive runs."""
 
@@ -383,6 +389,9 @@ Recorder = _rs.Recorder
 
 TraceStep = _rs.TraceStep
 """One recorded step: its kind, subject, domain signature and answer."""
+
+TraceKey = _rs.TraceKey
+"""The identity of a trace without its subjects; hashable, compared structurally."""
 
 
 @runtime_checkable
@@ -500,9 +509,10 @@ class Objective(_rs.Objective, Serializable):
 @final
 @register_serializable(type_id="search_space.measurement")
 class Measurement(_rs.Measurement, Serializable):
-    """The record of one measured configuration.
+    """The record of one measured configuration or run.
 
-    It holds the configuration's :class:`ConfigurationKey`, a
+    It holds the :class:`ConfigurationKey` of the configuration, or the
+    :class:`TraceKey` of the run, it measured, a
     :class:`MeasurementStatus` and, when the status is ``OK``, a finite
     value per objective, and notes. Build one with :meth:`ok`,
     :meth:`infeasible`, :meth:`failed` or :meth:`timeout`. ``==`` and
@@ -514,7 +524,7 @@ class Measurement(_rs.Measurement, Serializable):
 
 @runtime_checkable
 class Measurer(Protocol[_S_contra]):
-    """Measures subjects, such as a lowered program, as configurations of a space.
+    """Measures subjects, such as a lowered program, as configurations or runs.
 
     A subject that cannot be measured is a :class:`Measurement` with a
     failing status; an exception is a fault of the measurer, which stops
@@ -527,9 +537,33 @@ class Measurer(Protocol[_S_contra]):
         """The objectives every successful measurement holds a value for."""
         ...
 
-    def measure(self, key: ConfigurationKey, subject: _S_contra) -> Measurement:
+    def measure(
+        self, key: ConfigurationKey | TraceKey, subject: _S_contra
+    ) -> Measurement:
         """Return the measurement of ``subject``, which realizes ``key``."""
         ...
+
+
+def non_dominated(measurements: Iterable[Measurement]) -> list[Measurement]:
+    """Return the measurements no other successful one dominates: the Pareto front.
+
+    Measurements that did not succeed are left out; the rest keep their
+    order. Two measurements with equal values are both kept unless a third
+    dominates them.
+
+    Args:
+        measurements: The measurements to filter.
+
+    Returns:
+        The successful measurements no other successful one dominates.
+
+    Raises:
+        TypeError: If an element is no :class:`Measurement`.
+        MeasurementError: If two successful measurements are over different
+            objectives.
+
+    """
+    return _rs.non_dominated(measurements)
 
 
 # The classes are registered, not derived: `FrozenMixin` carries an instance
@@ -543,6 +577,7 @@ for _frozen_class in (
     Space,
     Configuration,
     ConfigurationKey,
+    TraceKey,
     Trace,
     Objective,
     Measurement,

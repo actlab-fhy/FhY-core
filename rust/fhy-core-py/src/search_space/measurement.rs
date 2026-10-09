@@ -16,13 +16,16 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::pyclass::{CompareOp, PyTraverseError, PyVisit};
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyMapping, PyString, PyTuple, PyType};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyTuple, PyType};
 
 use fhy_core::search_space::wire::MeasurementData;
-use fhy_core::search_space::{Direction, Measurement, MeasurementStatus, Objective};
+use fhy_core::search_space::{
+    Direction, Measurement, MeasurementKey, MeasurementStatus, Objective,
+    non_dominated as core_non_dominated,
+};
 
 use crate::diagnostic::note_to_python;
-use crate::util::dataclass::hash_value;
+use crate::util::dataclass::{answer_equality, hash_value};
 use crate::util::frozen::{refuse_attribute_assignment, refuse_attribute_deletion};
 use crate::util::gc::collect_slots;
 use crate::util::pending::with_pending_errors;
@@ -35,6 +38,7 @@ use crate::wire::{
 use super::arguments::{Seeded, instantiate, read_notes, take_seed, wrong_seed};
 use super::configuration::{KeyHolder, PyConfigurationKey};
 use super::errors::measurement_error_to_py;
+use super::trace::PyTraceKey;
 use super::wire::{refuse_v1, write_part, write_part_json};
 
 /// The module of the public classes.
@@ -228,11 +232,7 @@ impl PyObjective {
             return py.NotImplemented();
         };
         let equal = self.objective == other.get().objective;
-        match op {
-            CompareOp::Eq => PyBool::new(py, equal).to_owned().into_any().unbind(),
-            CompareOp::Ne => PyBool::new(py, !equal).to_owned().into_any().unbind(),
-            _ => py.NotImplemented(),
-        }
+        answer_equality(py, equal, op)
     }
 
     /// Return the objective's hash, consistent with `==`.
@@ -375,26 +375,30 @@ fn decode_measurement<'py>(
     measurement_of_class(cls, measurement?, KeyHolder::Slots(slots))
 }
 
-/// Return the core key of `key`, a `ConfigurationKey`, and the holder of a
-/// measurement sharing it.
+/// Return the core key of `key`, a `ConfigurationKey` or a `TraceKey`, and
+/// the holder of a measurement sharing it.
 ///
 /// # Errors
 ///
 /// Raises `TypeError` for another object.
-fn read_key(
-    key: &Bound<'_, PyAny>,
-) -> PyResult<(fhy_core::search_space::ConfigurationKey, KeyHolder)> {
-    key.cast::<PyConfigurationKey>()
-        .map(|read| {
-            let read = read.get();
-            (read.core().clone(), read.holder().share(key.py(), key))
-        })
-        .map_err(|_not_a_key| {
-            PyTypeError::new_err(format!(
-                "a measurement's key must be a ConfigurationKey, got {}.",
-                read_type_name(key)
-            ))
-        })
+fn read_key(key: &Bound<'_, PyAny>) -> PyResult<(MeasurementKey, KeyHolder)> {
+    if let Ok(read) = key.cast::<PyConfigurationKey>() {
+        let read = read.get();
+        return Ok((
+            MeasurementKey::Configuration(read.core().clone()),
+            read.holder().share(key.py(), key),
+        ));
+    }
+    if let Ok(read) = key.cast::<PyTraceKey>() {
+        return Ok((
+            MeasurementKey::Trace(read.get().core().clone()),
+            KeyHolder::Nothing,
+        ));
+    }
+    Err(PyTypeError::new_err(format!(
+        "a measurement's key must be a ConfigurationKey or a TraceKey, got {}.",
+        read_type_name(key)
+    )))
 }
 
 /// Return the reason `reason`, a `str`.
@@ -481,7 +485,7 @@ impl PyMeasurement {
     /// `key`, a value per objective: `values` a mapping of `Objective` to
     /// value, or `(Objective, value)` pairs, in order.
     ///
-    /// Raises `TypeError` for a key that is no `ConfigurationKey`, an
+    /// Raises `TypeError` for a key that is no `ConfigurationKey` or `TraceKey`, an
     /// objective that is no `Objective` or a value that is no `int` or
     /// `float` (a `bool` included), and `MeasurementError` for no value, a
     /// repeated objective name or a value that is not finite.
@@ -534,16 +538,20 @@ impl PyMeasurement {
         measurement_of_class(cls, Measurement::timeout(key), holder)
     }
 
-    /// The key of the configuration measured, a `ConfigurationKey`.
+    /// The key of what was measured: a `ConfigurationKey`, sharing the
+    /// measurement's holder of its opaque values, or a `TraceKey`.
     #[getter]
     fn key(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
         let py = slf.py();
         let this = slf.get();
-        let key = PyConfigurationKey::of(
-            this.measurement.key().clone(),
-            this.holder.share(py, slf.as_any()),
-        );
-        Ok(Py::new(py, key)?.into_any())
+        Ok(match this.measurement.key() {
+            MeasurementKey::Configuration(key) => Py::new(
+                py,
+                PyConfigurationKey::of(key.clone(), this.holder.share(py, slf.as_any())),
+            )?
+            .into_any(),
+            MeasurementKey::Trace(key) => Py::new(py, PyTraceKey::of(key.clone()))?.into_any(),
+        })
     }
 
     /// Visit the Python objects the measurement keeps, for the cycle
@@ -754,4 +762,45 @@ impl PyMeasurement {
         let restore = slf.get_type().getattr(intern!(py, "from_json"))?;
         PyTuple::new(py, [restore, PyTuple::new(py, [text])?.into_any()])
     }
+}
+
+/// Return the successful measurements of `measurements` that no other
+/// successful one dominates, in the order given, as a `list`.
+///
+/// Raises `MeasurementError` for two successful measurements over
+/// different objectives, and `TypeError` for an element that is no
+/// `Measurement`.
+#[pyfunction]
+pub(crate) fn non_dominated<'py>(
+    py: Python<'py>,
+    measurements: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let objects = measurements
+        .try_iter()?
+        .map(|element| {
+            let element = element?;
+            element
+                .cast_into::<PyMeasurement>()
+                .map_err(|not_a_measurement| {
+                    PyTypeError::new_err(format!(
+                        "non_dominated takes Measurements, got {}.",
+                        read_type_name(not_a_measurement.into_inner().as_any())
+                    ))
+                })
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let cores: Vec<Measurement> = objects
+        .iter()
+        .map(|object| object.get().core().clone())
+        .collect();
+    let front = core_non_dominated(&cores).map_err(|error| measurement_error_to_py(py, &error))?;
+    // The front keeps the order given, so one pass over the inputs finds
+    // the object of each measurement it keeps.
+    let mut front = front.into_iter().peekable();
+    let kept = objects.iter().zip(&cores).filter_map(|(object, core)| {
+        front
+            .next_if(|kept| std::ptr::eq(*kept, core))
+            .map(|_| object.clone().into_any())
+    });
+    Ok(PyList::new(py, kept)?.into_any())
 }

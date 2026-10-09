@@ -1141,7 +1141,16 @@ def test_default_smt_solver_refuses_an_adapter_that_is_no_smt_solver(
 def test_replacing_the_default_solver_reaches_the_functions_constraints_and_params(
     x: Identifier,
 ) -> None:
-    """Test a plugged backend answers the module functions, constraints and params."""
+    """Test a plugged backend answers the module functions, constraints and params.
+
+    The param's bound ``>= 0`` is decided exactly without the solver, so the
+    param also holds a non-bound constraint, ``% 2 == 0``, that only the
+    plugged simplifier decides: it answers False even for the even value 4.
+    """
+    natural = create_natural_param()
+    param = natural.add_constraint(
+        EquationConstraint((natural.variable_expression % 2).equals(0))
+    )
     backend = _RecordingSmtSolver(SatResult.UNSAT)
     simplifier = _RecordingSimplifier(LiteralExpression(False))
     set_default_solver(Solver(smt_solver=backend, simplifier=simplifier))
@@ -1158,7 +1167,7 @@ def test_replacing_the_default_solver_reaches_the_functions_constraints_and_para
         create_constraint_system(EquationConstraint(IdentifierExpression(x) >= 0)),
         {x: SymbolType.INT},
     )
-    is_valid = create_natural_param().is_value_valid(3)
+    is_valid = param.is_value_valid(4)
 
     assert satisfiable is False
     assert simplified == LiteralExpression(False)

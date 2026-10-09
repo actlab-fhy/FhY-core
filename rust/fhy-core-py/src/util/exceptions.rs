@@ -146,6 +146,7 @@ exception_classes! {
     pub(crate) VALIDATION_FAILED_ERROR = "fhy_core.diagnostic", "ValidationFailedError";
 
     pub FROZEN_MUTATION_ERROR = "fhy_core.traits.frozen", "FrozenMutationError";
+    pub(crate) FROZEN_VALIDATION_ERROR = "fhy_core.traits.frozen", "FrozenValidationError";
     pub(crate) VERIFICATION_ERROR = "fhy_core.traits.verifiable", "VerificationError";
     pub(crate) CORE_TYPE_ERROR = "fhy_core.types.core", "FhYCoreTypeError";
     pub(crate) SYMBOL_TABLE_ERROR = "fhy_core.symbol_table", "SymbolTableError";

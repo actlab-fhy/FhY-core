@@ -2,6 +2,8 @@
 //! form, text forms, built-ins, the function registry and inlining,
 //! evaluation and folding, passes, and the patterns over them.
 
+mod affine_properties;
+mod affine_stories;
 mod builders_stories;
 mod builtins_stories;
 mod error_text_stories;
