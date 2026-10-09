@@ -19,7 +19,7 @@ const RECIPE: &str = "the SymPy backend's stories need Python with SymPy. Build 
      package, PYTHONPATH naming that Python's site-packages (an embedded interpreter \
      does not read a virtualenv's pyvenv.cfg), and LD_LIBRARY_PATH naming the \
      directory of its libpython when the loader does not find it; CONTRIBUTING's \
-     \"Rust test layout\" records the recipe";
+     \"Rust tests\" records the recipe";
 
 /// The backend the stories share, in an interpreter this test binary
 /// embeds. The interpreter runs without signal handlers and is never
