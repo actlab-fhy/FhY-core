@@ -309,7 +309,7 @@ jobs:
       - name: Unit & Integration Testing
         run: uv run nox -s "tests-${{ matrix.python-version }}"
       - name: Save Coverage Data
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-data-${{ matrix.os }}-${{ matrix.python-version }}
           path: .coverage.*
