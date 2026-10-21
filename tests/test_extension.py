@@ -1166,7 +1166,7 @@ def test_the_selection_of_this_process_is_public() -> None:
     assert (chosen.module, chosen.reason, chosen.layers) == (
         loaded.module,
         loaded.reason,
-        loaded.layers,
+        _extension.read_module_layers(_rs),
     )
     assert chosen.module == _rs.__name__
     assert chosen.reason != "own" or chosen.module == "fhy_core._rs"
@@ -1185,6 +1185,45 @@ def test_the_current_selection_is_an_error_before_one_is_made(
         get_current_selection()
     with pytest.raises(RuntimeError, match="has not selected its native module"):
         native.get_selection()
+
+
+def test_the_selection_reports_the_layers_its_module_contains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the layers are those the module reports, advertised or not."""
+    module = _fake_module(__fhy_core_version__="0", __demo_version__="1")
+    _install_selection(monkeypatch, module, Selection("native_fake", "environment", ()))
+
+    assert native.get_selection().layers == {"fhy_core", "demo"}
+
+
+def test_only_string_versions_of_layer_names_are_layers() -> None:
+    """Test attributes that are not a layer's string version are ignored."""
+    module = _fake_module(
+        __version__="1",
+        __a_version__="1",
+        __b_version__=2,
+        __c_version__=None,
+        _d_version__="1",
+        __e_version="1",
+        **{
+            "__class_version__": "1",
+            "__not-a-layer_version__": "1",
+            "__1st_version__": "1",
+        },
+    )
+
+    assert _extension.read_module_layers(module) == {"fhy_core", "a"}
+
+
+@pytest.mark.skipif(
+    _has_native_entry_points(),
+    reason="a combined extension is installed, so the package does not run alone",
+)
+def test_the_own_module_contains_the_fhy_core_layer_alone() -> None:
+    """Test `fhy_core._rs`, which reports `__version__`, holds `fhy_core` only."""
+    assert _extension.read_module_layers(_rs) == {"fhy_core"}
+    assert native.get_selection().layers == {"fhy_core"}
 
 
 def test_require_layer_installs_the_module_for_the_package(
@@ -1366,7 +1405,8 @@ def test_require_layer_names_the_missing_declaration(
         reason,  # type: ignore[arg-type]
         (_candidate("other_layer"),),
     )
-    _install_selection(monkeypatch, _fake_module(), chosen)
+    module = _fake_module(__other_layer_version__="1", __unadvertised_version__="1")
+    _install_selection(monkeypatch, module, chosen)
 
     with pytest.raises(ImportError) as caught:
         native.require_layer("demo_layer", "1")
@@ -1374,7 +1414,8 @@ def test_require_layer_names_the_missing_declaration(
     assert str(caught.value) == (
         "The layer 'demo_layer' (version '1') is not in the native module "
         "'native_fake' that fhy_core runs on, which contains 'fhy_core', "
-        "'other_layer', and no installed distribution declares it in the "
+        "'other_layer', 'unadvertised', and no installed distribution "
+        "declares it in the "
         "entry point group 'fhy_core.native'. Reinstall the package that "
         "provides the aggregate containing 'demo_layer'."
     )

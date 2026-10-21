@@ -7,7 +7,8 @@ A process runs on one native (Rust extension) module, installed as
 contains the *layer* ``name``, the import name of the Python package whose
 Rust binding the module holds. ``fhy_core`` is always a layer. A layer is
 present in a module if and only if the module has a ``str`` attribute
-``__<layer>_version__``.
+``__<layer>_version__``, so `get_selection` reports the layers the module
+contains, whether or not an entry point advertises them.
 
 This module is the interface a downstream package uses to claim its layer:
 call `require_layer` while that package is being imported, to check the layer is in
@@ -31,6 +32,7 @@ from fhy_core._extension import (
     get_layer_version_attribute,
     is_module_name,
     normalize_pep440_version,
+    read_module_layers,
 )
 
 __all__ = [
@@ -58,8 +60,10 @@ class NativeSelection:
         reason: ``"environment"`` if ``FHY_CORE_NATIVE_MODULE`` named it,
             ``"entry_points"`` if installed distributions advertised it, or
             ``"own"`` if nothing was advertised and it is ``fhy_core._rs``.
-        layers: The layers its entry points declare it contains, always
-            including ``fhy_core``.
+        layers: The layers the module contains: every layer ``L`` for
+            which it has a ``str`` attribute ``__L_version__``, and always
+            ``fhy_core``. They are read from the module, so they include
+            layers no entry point advertises.
 
     """
 
@@ -76,7 +80,11 @@ def get_selection() -> NativeSelection:
 
     """
     chosen = get_current_selection()
-    return NativeSelection(chosen.module, chosen.reason, chosen.layers)
+    return NativeSelection(
+        chosen.module,
+        chosen.reason,
+        read_module_layers(sys.modules[EXTENSION_MODULE]),
+    )
 
 
 def _build_missing_layer_error(layer: str, version: str) -> ImportError:
@@ -99,7 +107,8 @@ def _build_missing_layer_error(layer: str, version: str) -> ImportError:
             f"(no {attribute}). {advice}",
             name=chosen.module,
         )
-    layers = ", ".join(repr(name) for name in sorted(chosen.layers))
+    contained = read_module_layers(sys.modules[EXTENSION_MODULE])
+    layers = ", ".join(repr(name) for name in sorted(contained))
     return ImportError(
         f"The layer {layer!r} (version {version!r}) is not in the native "
         f"module {chosen.module!r} that fhy_core runs on, which contains "

@@ -49,7 +49,9 @@ the one the product expects. An ``fhy_core._rs`` that the failed import
 loaded and then refused, as stale or lacking a claimed layer, is removed from
 ``sys.modules``, so a retry in the same process, such as one with the
 variable set, can load another module. ``fhy_core.native`` is the public
-interface to the selection.
+interface to the selection; the layers it reports are those the loaded module
+contains (`read_module_layers`), whether or not an entry point advertises
+them.
 """
 
 __all__: list[str] = []
@@ -81,6 +83,9 @@ EXTENSION_STEM = "_rs"
 # File endings of a compiled extension module on any platform.
 _EXTENSION_FILE_ENDINGS = (".so", ".pyd")
 _PACKAGE_NAME = "fhy_core"
+# A layer `L` reports its version as the attribute `__L_version__`.
+_LAYER_VERSION_PREFIX = "__"
+_LAYER_VERSION_SUFFIX = "_version__"
 _REQUIREMENT = f"{_PACKAGE_NAME} requires its Rust extension {EXTENSION_MODULE}"
 _REBUILD_ADVICE = (
     "Rebuild the extension for this interpreter from the source checkout "
@@ -165,7 +170,37 @@ def get_layer_version_attribute(layer: str) -> str:
         raise ValueError(
             f"a layer is named by an identifier that is not a keyword, not {layer!r}"
         )
-    return f"__{layer}_version__"
+    return f"{_LAYER_VERSION_PREFIX}{layer}{_LAYER_VERSION_SUFFIX}"
+
+
+def read_module_layers(module: ModuleType) -> frozenset[str]:
+    """Return the layers a native module contains, by what it reports.
+
+    A layer ``L`` is present in a module if and only if the module has a
+    ``str`` attribute ``__L_version__`` and ``L`` is a layer name (an
+    identifier that is not a keyword). ``__version__``, which names no
+    layer, is not one.
+
+    Args:
+        module: The native module.
+
+    Returns:
+        Every layer the module reports, and ``fhy_core``, which every native
+        module contains.
+
+    """
+    layers = {_PACKAGE_NAME}
+    for name, value in vars(module).items():
+        if not (
+            isinstance(value, str)
+            and name.startswith(_LAYER_VERSION_PREFIX)
+            and name.endswith(_LAYER_VERSION_SUFFIX)
+        ):
+            continue
+        layer = name[len(_LAYER_VERSION_PREFIX) : -len(_LAYER_VERSION_SUFFIX)]
+        if _is_layer_name(layer):
+            layers.add(layer)
+    return frozenset(layers)
 
 
 def _find_foreign_extension_builds(

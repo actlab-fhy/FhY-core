@@ -671,7 +671,9 @@ module chosen by the variable that lacks the layer, a layer no installed
 distribution declares, and a stale layer, which includes a reported version
 that is not a PEP 440 version. `fhy_core.native.get_selection()`
 returns the module, the reason it was chosen (`environment`, `entry_points` or
-`own`) and its declared layers.
+`own`) and the layers the module contains, read from its
+`__<layer>_version__` attributes whether or not an entry point advertises
+them; the missing-layer message names those layers too.
 
 `tests/test_extension.py` covers the selection as pure functions, in process,
 and the loading in fresh interpreters with fake modules
