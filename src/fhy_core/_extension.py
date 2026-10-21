@@ -12,22 +12,33 @@ Which native module is the extension depends on what is installed:
 - ``fhy_core`` alone uses its own module, ``fhy_core._rs``.
 - A downstream product that builds *one* combined extension for the whole
   process (``fhy-core-py``'s ``register`` called next to its own crates')
-  advertises that module with an entry point in the group
-  ``fhy_core.native`` (``name = "module.path"``). ``fhy_core`` then loads that
-  module instead of its own and installs it under the name ``fhy_core._rs`` as
-  well, so the classes, whose qualified names are ``fhy_core._rs.<Class>``,
-  and the binding's lookups by that name reach it. The module reports the
-  ``fhy_core`` version it holds as ``__fhy_core_version__``. It must be
+  advertises that module with entry points in the group ``fhy_core.native``.
+  An entry point ``name = "module.path"`` means the module contains the
+  *layer* ``name``, the import name of the Python package whose Rust binding
+  the module holds. The loader groups the entry points by module across all
+  distributions; a module's layers are its claims plus ``fhy_core``. The one
+  module whose layers are all the installed layers is loaded instead of
+  ``fhy_core._rs``, and installed under that name as well, so the classes,
+  whose qualified names are ``fhy_core._rs.<Class>``, and the binding's
+  lookups by that name reach it. The module reports the ``fhy_core`` version
+  it holds as ``__fhy_core_version__``, and a layer ``L`` is present in it
+  if and only if it has a ``str`` attribute ``__L_version__``. It must be
   importable without importing ``fhy_core``.
 - The environment variable ``FHY_CORE_NATIVE_MODULE`` names the module to
   load and overrides the entry points; ``fhy_core._rs`` names the module
   ``fhy_core`` ships.
 
-A process holds one native module: two entry points that name different
-modules, or an entry point whose module differs from the ``fhy_core._rs`` the
-process already holds, raise ``ImportError`` naming both. A named module that
-fails to import is never replaced by ``fhy_core._rs``, since a second copy of
-the Rust code would then run beside the one the product expects.
+A process holds one native module. Several modules that each contain every
+installed layer (a tie) and modules whose layers are not a chain
+(incomparable) raise ``ImportError`` naming them and what each lacks, as does
+an entry point whose name is not an identifier or whose module differs from
+the ``fhy_core._rs`` the process already holds. A module that is not
+selected is never imported. A selected module whose entry points claim a
+layer it does not report is refused, naming the entry point and the missing
+attribute. A named module that fails to import is never replaced by
+``fhy_core._rs``, since a second copy of the Rust code would then run beside
+the one the product expects. ``fhy_core.native`` is the public interface to
+the selection.
 """
 
 __all__: list[str] = []
