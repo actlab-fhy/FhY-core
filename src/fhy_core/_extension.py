@@ -95,6 +95,25 @@ _PEP440_PRE_RELEASE_LABELS = {
 }
 
 
+def layer_version_attribute(layer: str) -> str:
+    """Return the module attribute that holds the version of a layer.
+
+    Args:
+        layer: Import name of the package whose Rust binding the layer is.
+
+    Returns:
+        ``__<layer>_version__``, the attribute a native module sets when it
+        contains the layer.
+
+    Raises:
+        ValueError: If `layer` is not a valid Python identifier.
+
+    """
+    if not layer.isidentifier():
+        raise ValueError(f"a layer is named by an identifier, not {layer!r}")
+    return f"__{layer}_version__"
+
+
 def _find_foreign_extension_builds(
     directory: Path, extension_suffixes: list[str]
 ) -> list[str]:
@@ -282,16 +301,16 @@ class _Selection:
 _SELECTION: _Selection | None = None
 
 
+def _distribution_name(entry_point: importlib.metadata.EntryPoint) -> str:
+    """Return the name of the distribution of an entry point, or ``""``."""
+    distribution = getattr(entry_point, "dist", None)
+    return "" if distribution is None else str(distribution.name)
+
+
 def _describe_candidate(candidate: _Candidate) -> str:
     """Return the module of a candidate and the entry points that name it."""
     owners = sorted(
-        {
-            (
-                ep.name,
-                getattr(getattr(ep, "dist", None), "name", None) or "",
-            )
-            for ep in candidate.entry_points
-        },
+        {(ep.name, _distribution_name(ep)) for ep in candidate.entry_points},
         key=lambda owner: (owner[1], owner[0]),
     )
     parts = [
@@ -356,8 +375,8 @@ def _build_incomparable_error(
 def _build_invalid_layer_name_error(
     entry_point: importlib.metadata.EntryPoint,
 ) -> ImportError:
-    distribution = getattr(entry_point, "dist", None)
-    owner = f" of {distribution.name!r}" if distribution is not None else ""
+    distribution = _distribution_name(entry_point)
+    owner = f" of {distribution!r}" if distribution else ""
     return ImportError(
         f"The entry point {entry_point.name!r}{owner} in the group "
         f"{NATIVE_ENTRY_POINT_GROUP!r} names the module {entry_point.module!r}, "
@@ -402,10 +421,7 @@ def _collect_candidates(
             tuple(
                 sorted(
                     claims,
-                    key=lambda ep: (
-                        getattr(getattr(ep, "dist", None), "name", None) or "",
-                        ep.name,
-                    ),
+                    key=lambda ep: (_distribution_name(ep), ep.name),
                 )
             ),
         )
@@ -497,16 +513,75 @@ def _build_stale_aggregate_error(
     )
 
 
-def _load_aggregate_extension(module_name: str) -> None:
+def _build_undeclared_layer_error(
+    module_name: str, missing: Sequence[importlib.metadata.EntryPoint]
+) -> ImportError:
+    claims = "; ".join(
+        f"the entry point {ep.name!r}"
+        + (f" of {_distribution_name(ep)!r}" if _distribution_name(ep) else "")
+        + f" claims the layer {ep.name!r}, but the module has no string "
+        f"attribute {layer_version_attribute(ep.name)!r}"
+        for ep in missing
+    )
+    return ImportError(
+        f"{_PACKAGE_NAME} is set to run on the native extension module "
+        f"{module_name!r}, which does not contain every layer it is declared "
+        f"to: {claims}. A layer is present in a module only if the module "
+        "reports its version. Rebuild or reinstall the distribution that "
+        "provides the module, or correct its entry points.",
+        name=module_name,
+    )
+
+
+def _verify_declared_layers(
+    module_name: str, extension: ModuleType, candidate: _Candidate | None
+) -> None:
+    """Check a module holds every layer its entry points claim for it.
+
+    A layer ``L`` is present in a module if and only if the module has a
+    ``str`` attribute ``__L_version__``. The layer ``fhy_core`` is checked
+    separately, by its version.
+
+    Args:
+        module_name: Name `extension` was imported as.
+        extension: The imported native module.
+        candidate: The entry points that advertise the module, or ``None``
+            if none does, as when the environment variable names it.
+
+    Raises:
+        ImportError: If a claimed layer has no version attribute. The message
+            names each such entry point, its distribution and the attribute.
+
+    """
+    if candidate is None:
+        return
+    missing = [
+        entry_point
+        for entry_point in candidate.entry_points
+        if entry_point.name != _PACKAGE_NAME
+        and not isinstance(
+            getattr(extension, layer_version_attribute(entry_point.name), None), str
+        )
+    ]
+    if missing:
+        raise _build_undeclared_layer_error(module_name, missing)
+
+
+def _load_aggregate_extension(
+    module_name: str, candidate: _Candidate | None = None
+) -> None:
     """Load a combined extension module and install it as ``fhy_core._rs``.
 
     Args:
         module_name: Importable name of the combined extension module.
+        candidate: The entry points that advertise the module, whose claimed
+            layers are verified, or ``None`` if none does.
 
     Raises:
         ImportError: If the module fails to import, does not report the
-            installed package's version as ``__fhy_core_version__``, or
-            another native module is already installed as ``fhy_core._rs``.
+            installed package's version as ``__fhy_core_version__``, lacks a
+            layer its entry points claim, or another native module is already
+            installed as ``fhy_core._rs``.
 
     """
     try:
@@ -522,6 +597,7 @@ def _load_aggregate_extension(module_name: str) -> None:
         raise _build_stale_aggregate_error(
             module_name, extension_version, package_version
         )
+    _verify_declared_layers(module_name, extension, candidate)
     _install_as_own_extension(module_name, extension)
 
 
@@ -564,7 +640,7 @@ def _check_extension() -> None:
     if selection.module == _EXTENSION_MODULE:
         _load_own_extension()
     else:
-        _load_aggregate_extension(selection.module)
+        _load_aggregate_extension(selection.module, selection.candidate)
 
 
 _check_extension()

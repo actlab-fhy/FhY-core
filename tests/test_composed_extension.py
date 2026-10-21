@@ -82,7 +82,7 @@ def site(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     shutil.copy(
         target / "debug" / _library_name(), site / f"{MODULE}{extension_suffix}"
     )
-    write_distribution(site, PACKAGE, {"example": MODULE})
+    write_distribution(site, PACKAGE, {"fhy_core": MODULE})
     return site
 
 

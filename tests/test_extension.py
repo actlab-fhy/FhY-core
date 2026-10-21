@@ -16,6 +16,7 @@ import subprocess
 import sys
 import sysconfig
 from collections.abc import Iterable
+from types import ModuleType
 
 import pytest
 
@@ -23,9 +24,12 @@ from fhy_core import _rs
 from fhy_core._extension import (
     NATIVE_ENTRY_POINT_GROUP,
     NATIVE_MODULE_ENVIRONMENT_VARIABLE,
+    _Candidate,
     _find_foreign_extension_builds,
     _normalize_pep440_version,
     _select_native_module,
+    _verify_declared_layers,
+    layer_version_attribute,
 )
 from tests.native_modules import (
     read_import_error,
@@ -663,3 +667,108 @@ def test_a_module_that_is_not_selected_is_never_imported(
     assert "'native_upper'" in message
     assert "native_lower" not in message
     assert "was imported" not in message
+
+
+def _candidate(*names: str) -> _Candidate:
+    """Return the candidate `native_fake` that the named layers claim."""
+    return _Candidate(
+        "native_fake", tuple(_entry_point(n, "native_fake") for n in names)
+    )
+
+
+def _fake_module(**attributes: object) -> ModuleType:
+    module = ModuleType("native_fake")
+    for name, value in attributes.items():
+        setattr(module, name, value)
+    return module
+
+
+def test_the_version_attribute_of_a_layer_is_dunder_version() -> None:
+    """Test a layer's attribute is its name between `__` and `_version__`."""
+    assert layer_version_attribute("moga_sim") == "__moga_sim_version__"
+    with pytest.raises(ValueError, match="identifier"):
+        layer_version_attribute("not-a-layer")
+
+
+def test_a_module_holding_every_claimed_layer_is_verified() -> None:
+    """Test claims backed by version attributes pass; `fhy_core` is exempt."""
+    module = _fake_module(__a_version__="1", __b_version__="2")
+
+    _verify_declared_layers("native_fake", module, _candidate("a", "b", "fhy_core"))
+
+
+def test_a_module_with_no_entry_points_is_not_verified() -> None:
+    """Test a module no entry point advertises claims nothing to verify."""
+    _verify_declared_layers("native_fake", _fake_module(), None)
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [{}, {"__b_version__": 2}, {"__b_version__": None}],
+    ids=["absent", "not-a-string", "none"],
+)
+def test_a_claimed_layer_without_a_version_string_is_refused(
+    attributes: dict[str, object],
+) -> None:
+    """Test a lying claim names the entry point and the missing attribute."""
+    module = _fake_module(__a_version__="1", **attributes)
+
+    with pytest.raises(ImportError) as caught:
+        _verify_declared_layers("native_fake", module, _candidate("a", "b"))
+
+    message = str(caught.value)
+    assert "'native_fake'" in message
+    assert "the entry point 'b' claims the layer 'b'" in message
+    assert "'__b_version__'" in message
+    assert "__a_version__" not in message
+
+
+def test_every_missing_layer_is_named() -> None:
+    """Test a module that lacks several claimed layers is refused naming each."""
+    with pytest.raises(ImportError) as caught:
+        _verify_declared_layers("native_fake", _fake_module(), _candidate("a", "b"))
+
+    message = str(caught.value)
+    assert "'__a_version__'" in message
+    assert "'__b_version__'" in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_claim_the_module_does_not_back_is_refused_end_to_end(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test an entry point claiming a layer the module lacks fails the import."""
+    version = importlib.metadata.version("fhy_core")
+    write_distribution(
+        tmp_path, "product", {"fhy_core": "native_lying", "extra": "native_lying"}
+    )
+    write_native_module(tmp_path, "native_lying", {}, fhy_core_version=version)
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "the entry point 'extra' of 'product' claims the layer 'extra'" in message
+    assert "'__extra_version__'" in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_claim_the_module_backs_is_accepted_end_to_end(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test a module that reports a claimed layer passes verification."""
+    version = importlib.metadata.version("fhy_core")
+    write_distribution(tmp_path, "product", {"extra": "native_honest"})
+    write_native_module(
+        tmp_path, "native_honest", {"extra": "1"}, fhy_core_version=version
+    )
+
+    completed = run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+
+    # The fake holds none of the binding, so the package fails later, not in
+    # the verification of the claims.
+    assert completed.returncode != 0
+    assert "claims the layer" not in completed.stderr
+    assert "no attribute 'PartiallyOrderedSet'" in completed.stderr
