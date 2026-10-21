@@ -881,6 +881,64 @@ def test_an_advertised_module_that_fails_to_import_names_its_entry_points() -> N
     )
 
 
+_PACKAGE_VERSION = importlib.metadata.version("fhy_core")
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        (
+            "environment",
+            "FHY_CORE_NATIVE_MODULE=native_stale_by_variable selected the "
+            "native extension module 'native_stale_by_variable', which must "
+            f"hold fhy_core {_PACKAGE_VERSION!r}, but it reports version "
+            "'0.0.0-stale', so it is stale or is not a fhy_core extension. "
+            "Rebuild or reinstall the package that provides it for fhy_core "
+            f"{_PACKAGE_VERSION!r}, or unset FHY_CORE_NATIVE_MODULE to let "
+            "fhy_core choose.",
+        ),
+        (
+            "entry_points",
+            "fhy_core selected the native extension module "
+            "'native_stale_advertised' (entry point 'product') from the "
+            f"installed entry points, which must hold fhy_core {_PACKAGE_VERSION!r}, "
+            "but it reports version '0.0.0-stale', so it is stale or is not "
+            "a fhy_core extension. Rebuild or reinstall the distribution that "
+            f"provides it for fhy_core {_PACKAGE_VERSION!r}, or uninstall that "
+            "distribution.",
+        ),
+    ],
+    ids=["environment", "entry_points"],
+)
+def test_a_stale_aggregate_is_refused_naming_why_it_was_selected(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reason: SelectionReason,
+    expected: str,
+) -> None:
+    """Test the advice for a stale module follows how it was selected."""
+    module = (
+        "native_stale_by_variable"
+        if reason == "environment"
+        else "native_stale_advertised"
+    )
+    write_native_module(tmp_path, module, {}, fhy_core_version="0.0.0-stale")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    advertised = (
+        (Candidate(module, (_entry_point("product", module),)),)
+        if reason == "entry_points"
+        else ()
+    )
+
+    try:
+        with pytest.raises(ImportError) as caught:
+            _extension._load_aggregate_extension(Selection(module, reason, advertised))
+    finally:
+        sys.modules.pop(module, None)
+
+    assert str(caught.value) == expected
+
+
 def _candidate(*names: str) -> Candidate:
     """Return the candidate `native_fake` that the named layers claim."""
     return Candidate(
@@ -1620,6 +1678,28 @@ def test_require_layer_refuses_a_stale_layer(
         "'native_fake' that fhy_core runs on reports version '0.9.0' in "
         "__demo_layer_version__, so it is stale. Rebuild or reinstall the "
         "package that provides the module."
+    )
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_names_the_variable_that_selected_a_stale_layer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a stale layer in the variable's module names the variable."""
+    module = _fake_module(__demo_layer_version__="0.9.0")
+    chosen = Selection("native_fake", "environment", ())
+    _install_selection(monkeypatch, module, chosen)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1.0.0")
+
+    assert str(caught.value) == (
+        "The layer 'demo_layer' needs version '1.0.0', but the native module "
+        "'native_fake' that FHY_CORE_NATIVE_MODULE=native_fake selected "
+        "reports version '0.9.0' in __demo_layer_version__, so it is stale. "
+        "Rebuild or reinstall the package that provides the module, or unset "
+        "FHY_CORE_NATIVE_MODULE to let fhy_core choose, or set it to a module "
+        "that holds 'demo_layer' at version '1.0.0'."
     )
 
 

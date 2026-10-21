@@ -785,18 +785,38 @@ def _build_aggregate_import_error(
 
 
 def _build_stale_aggregate_error(
-    module_name: str, extension_version: object, package_version: str
+    selection: Selection, extension_version: object, package_version: str
 ) -> ImportError:
+    module_name = selection.module
     reported_version = (
         f"no {_AGGREGATE_VERSION_ATTRIBUTE} attribute"
         if extension_version is None
         else f"version {extension_version!r}"
     )
-    return ImportError(
-        f"{_PACKAGE_NAME} needs the native extension module {module_name!r} "
-        f"to hold {_PACKAGE_NAME} {package_version!r}, but it reports "
+    stale = (
+        f"which must hold {_PACKAGE_NAME} {package_version!r}, but it reports "
         f"{reported_version}, so it is stale or is not a {_PACKAGE_NAME} "
-        "extension. Rebuild or reinstall the package that provides it.",
+        "extension"
+    )
+    target = f"for {_PACKAGE_NAME} {package_version!r}"
+    if selection.reason == "environment":
+        return ImportError(
+            f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}={module_name} selected the "
+            f"native extension module {module_name!r}, {stale}. Rebuild or "
+            f"reinstall the package that provides it {target}, or unset "
+            f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE} to let {_PACKAGE_NAME} "
+            "choose.",
+            name=module_name,
+        )
+    candidate = selection.candidate
+    described = (
+        repr(module_name) if candidate is None else describe_candidate(candidate)
+    )
+    return ImportError(
+        f"{_PACKAGE_NAME} selected the native extension module {described} "
+        f"from the installed entry points, {stale}. Rebuild or reinstall the "
+        f"distribution that provides it {target}, or uninstall that "
+        "distribution.",
         name=module_name,
     )
 
@@ -864,7 +884,8 @@ def _load_aggregate_extension(selection: Selection) -> None:
         selection: The selection of a module other than ``fhy_core._rs``.
             The claimed layers of its candidate, if any, are verified, and
             its reason decides the advice given if the module fails to
-            import.
+            import or is stale: the variable is named if it chose the
+            module, else the entry points that advertise it.
 
     Raises:
         ImportError: If importing the module raises an ``Exception``, which
@@ -886,7 +907,7 @@ def _load_aggregate_extension(selection: Selection) -> None:
         or normalize_pep440_version(extension_version) != package_version
     ):
         raise _build_stale_aggregate_error(
-            module_name, extension_version, package_version
+            selection, extension_version, package_version
         )
     _verify_declared_layers(module_name, extension, selection.candidate)
     _install_as_own_extension(module_name, extension)

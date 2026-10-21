@@ -566,7 +566,8 @@ Its public surface for downstream crates:
 
 A downstream crate's own `register` sets `__<layer>_version__` on the module,
 where `<layer>` is the import name of its Python package, as `register` sets
-`__fhy_core_version__`. A layer is present in a module if and only if the
+`__fhy_core_version__`. The value is the crate's Cargo version, which must
+equal the Python package's version after PEP 440 normalization. A layer is present in a module if and only if the
 module has that `str` attribute, so the attribute is what `fhy_core` and the
 package's `fhy_core.native.require_layer` check.
 
@@ -648,8 +649,10 @@ implicit `fhy_core`.
    `[extras]`), is refused, naming it, its distribution and its value.
 
 Only the selected module is imported. Once imported, it is checked: its
-`__fhy_core_version__` must equal the installed package's version, as a stale
-`_rs` is refused, and every other layer its entry points claim must be backed
+`__fhy_core_version__`, a Cargo version, must equal the installed package's
+version after PEP 440 normalization, as a stale `_rs` is refused (the error
+names `FHY_CORE_NATIVE_MODULE` if the variable chose the module, else the
+entry points that advertise it), and every other layer its entry points claim must be backed
 by a `str` attribute `__<layer>_version__`, even when it is the only
 candidate or is `fhy_core._rs` itself (whose version is its `__version__`).
 A named module that fails to import raises `ImportError`, with whatever
@@ -671,7 +674,8 @@ module path or is not yet in `sys.modules`, raises `ValueError` before
 anything is installed. Its `ImportError` tells apart a
 module chosen by the variable that lacks the layer, a layer no installed
 distribution declares, and a stale layer, which includes a reported version
-that is not a PEP 440 version. `fhy_core.native.get_selection()`
+that is not a PEP 440 version; a stale layer in a module the variable chose
+names the variable. `fhy_core.native.get_selection()`
 returns the module, the reason it was chosen (`environment`, `entry_points` or
 `own`) and the layers the module contains, read from its
 `__<layer>_version__` attributes whether or not an entry point advertises

@@ -170,6 +170,16 @@ def _build_stale_layer_error(
         else f"reports {reported!r} in {get_layer_version_attribute(layer)}, which "
         "is not a PEP 440 version"
     )
+    if chosen.reason == "environment":
+        return ImportError(
+            f"The layer {layer!r} needs version {version!r}, but the native "
+            f"module {chosen.module!r} that "
+            f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}={chosen.module} selected "
+            f"{report}, so it is stale. Rebuild or reinstall {source}, or unset "
+            f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE} to let fhy_core choose, or "
+            f"set it to a module that holds {layer!r} at version {version!r}.",
+            name=chosen.module,
+        )
     return ImportError(
         f"The layer {layer!r} needs version {version!r}, but the native "
         f"module {chosen.module!r} that fhy_core runs on {report}, so it is "
@@ -208,11 +218,11 @@ def require_layer(
         ImportError: If the module does not contain the layer, reports
             another version of it or one that is not a PEP 440 version, or
             ``<package>._rs`` is already another module. The message says
-            what to do; if the environment variable selected a module that
-            lacks the layer, it says so, names the installed modules that
-            declare the layer, and names the invalid entry points the
-            variable made the loader skip and any tie or incomparable set
-            among the advertised modules that it overrode.
+            what to do, naming the environment variable if it selected the
+            module; if that module lacks the layer, the message names the
+            installed modules that declare the layer, the invalid entry
+            points the variable made the loader skip, and any tie or
+            incomparable set among the advertised modules that it overrode.
         ValueError: If `layer` is not a valid identifier or is a keyword;
             if `version` is not a PEP 440 version; if the package
             (`package`, or `layer` if it is ``None``) is not an importable
