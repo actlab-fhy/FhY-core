@@ -48,8 +48,9 @@ crate, from its crate's `register`; a layer is present in a module if and only
 if the module has that attribute, and `fhy_core` refuses a module that lacks
 the attribute of a layer it is advertised to contain. `fhy_core` loads the one
 installed module that contains every installed layer in place of its own
-`_rs`, so a chain of products, each declaring its own layer, needs no umbrella
-product. The product's Python package calls
+`_rs`, so a chain of products needs no umbrella product, provided the top
+product's aggregate contains the layers of the products below it and
+advertises each with an entry point. The product's Python package calls
 `fhy_core.native.require_layer("my_product", version)` while it is imported.
 
 An aggregate must also:

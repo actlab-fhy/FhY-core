@@ -29,10 +29,13 @@ Which native module is the extension depends on what is installed:
   ``fhy_core`` ships.
 
 A process holds one native module. Several modules that each contain every
-installed layer (a tie) and modules whose layers are not a chain
-(incomparable) raise ``ImportError`` naming them and what each lacks, as does
-an entry point whose name is not an identifier or whose module differs from
-the ``fhy_core._rs`` the process already holds. A module that is not
+installed layer (a tie) and a set of modules of which none contains every
+installed layer (incomparable) raise ``ImportError`` naming them and what
+each lacks. Layer sets need not form a chain: a diamond such as ``{a}``,
+``{b}``, ``{a, b}`` is accepted, since the last module contains every
+installed layer. ``ImportError`` is raised too for an entry point whose
+name is not an identifier or whose module differs from the ``fhy_core._rs``
+the process already holds. A module that is not
 selected is never imported. A selected module whose entry points claim a
 layer it does not report is refused, naming the entry point and the missing
 attribute. A named module that fails to import is never replaced by

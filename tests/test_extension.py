@@ -357,7 +357,7 @@ _PRINT_EXTENSION_NAME = "import fhy_core\nprint(fhy_core._rs.__name__)"
 def test_incomparable_native_modules_are_refused_naming_both(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test entry points whose layers are not a chain make the import fail."""
+    """Test with no module containing every installed layer the import fails."""
     write_distribution(tmp_path, "product-one", {"one": "native_one"})
     write_distribution(tmp_path, "product-two", {"two": "native_two"})
 
@@ -553,7 +553,7 @@ def test_two_modules_with_the_same_layers_are_a_tie() -> None:
 
 
 def test_incomparable_layer_sets_are_refused_naming_what_each_lacks() -> None:
-    """Test modules that are not a chain are refused, with what each lacks."""
+    """Test with no module containing every installed layer, each lack is named."""
     entry_points = [
         _entry_point("one", "native_small"),
         _entry_point("two", "native_big"),
