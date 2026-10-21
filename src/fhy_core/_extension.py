@@ -27,7 +27,11 @@ Which native module is the extension depends on what is installed:
 - The environment variable ``FHY_CORE_NATIVE_MODULE`` names the module to
   load and overrides the entry points; ``fhy_core._rs`` names the module
   ``fhy_core`` ships. A value that is not an importable module path raises
-  ``ImportError``.
+  ``ImportError``. Under the variable, invalid entry points are skipped and
+  a tie or incomparable set is not an error; the import says nothing of
+  either, and the selection records the skipped entry points so that
+  ``fhy_core.native.require_layer`` can name them, and the conflict, if the
+  module lacks a layer.
 
 A process holds one native module. Several modules that each contain every
 installed layer (a tie) raise ``ImportError`` naming the tied modules; a set
@@ -397,20 +401,32 @@ class Selection:
             if nothing was advertised and ``fhy_core._rs`` is used.
         candidates: Every module the entry points advertise, sorted by name,
             whether or not it was selected.
+        skipped: The entry points left out of the candidates because their
+            name is not a layer name or their value is not a module path,
+            which only the environment variable allows; without it they are
+            refused.
 
     Only a state the loader can reach is built; ``ValueError`` is raised for
     a selection for the reason ``"own"`` of a module other than
     ``fhy_core._rs`` or with candidates, one for the reason
-    ``"entry_points"`` of a module that is not a candidate, and candidates
-    that are not sorted by module or repeat one.
+    ``"entry_points"`` of a module that is not a candidate, candidates that
+    are not sorted by module or repeat one, and skipped entry points under a
+    reason other than ``"environment"``.
 
     """
 
     module: str
     reason: SelectionReason
     candidates: tuple[Candidate, ...]
+    skipped: tuple[importlib.metadata.EntryPoint, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.skipped and self.reason != "environment":
+            names = [entry_point.name for entry_point in self.skipped]
+            raise ValueError(
+                "a selection skips entry points only under the environment "
+                f"variable, but one for the reason {self.reason!r} skips {names}"
+            )
         modules = [candidate.module for candidate in self.candidates]
         if any(first >= second for first, second in itertools.pairwise(modules)):
             raise ValueError(
@@ -504,14 +520,66 @@ def _build_two_native_modules_error(first: str, second: str) -> ImportError:
     )
 
 
+def _describe_tie(required: frozenset[str], tied: Sequence[Candidate]) -> str:
+    return (
+        "several installed modules each contain every installed layer "
+        f"({_format_layers(required)}): "
+        f"{'; '.join(describe_candidate(candidate) for candidate in tied)}"
+    )
+
+
+def _describe_incomparable(
+    required: frozenset[str], candidates: Sequence[Candidate]
+) -> str:
+    ordered = sorted(candidates, key=lambda c: (-len(c.layers), c.module))
+    lacks = "; ".join(
+        f"{describe_candidate(candidate)} lacks "
+        f"{_format_layers(required - candidate.layers)}"
+        for candidate in ordered
+    )
+    return (
+        "no installed module contains every installed layer "
+        f"({_format_layers(required)}): {lacks}"
+    )
+
+
+def _find_complete_candidates(
+    candidates: Sequence[Candidate],
+) -> tuple[frozenset[str], list[Candidate]]:
+    """Return the installed layers and the candidates that contain them all."""
+    required = frozenset().union(*(candidate.layers for candidate in candidates))
+    complete = [candidate for candidate in candidates if candidate.layers == required]
+    return required, complete
+
+
+def describe_candidate_conflict(candidates: Sequence[Candidate]) -> str | None:
+    """Return why no one candidate can be selected, if none can.
+
+    Args:
+        candidates: The advertised modules.
+
+    Returns:
+        A description of the tie, naming the tied modules, or of the
+        incomparable set, naming what each module lacks; ``None`` if there
+        are no candidates or exactly one contains every installed layer.
+
+    """
+    if not candidates:
+        return None
+    required, complete = _find_complete_candidates(candidates)
+    if not complete:
+        return _describe_incomparable(required, candidates)
+    if len(complete) > 1:
+        return _describe_tie(required, complete)
+    return None
+
+
 def _build_tie_error(
     required: frozenset[str], tied: Sequence[Candidate]
 ) -> ImportError:
     return ImportError(
         f"{_PACKAGE_NAME} runs on one native extension module per process, "
-        f"but several installed modules each contain every installed layer "
-        f"({_format_layers(required)}): "
-        f"{'; '.join(describe_candidate(candidate) for candidate in tied)}. "
+        f"but {_describe_tie(required, tied)}. "
         f"{_PACKAGE_NAME} cannot choose between them. Uninstall all but one "
         f"of the distributions that provide them, or name the one to use in "
         f"the environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}.",
@@ -522,17 +590,10 @@ def _build_tie_error(
 def _build_incomparable_error(
     required: frozenset[str], candidates: Sequence[Candidate]
 ) -> ImportError:
-    ordered = sorted(candidates, key=lambda c: (-len(c.layers), c.module))
-    lacks = "; ".join(
-        f"{describe_candidate(candidate)} lacks "
-        f"{_format_layers(required - candidate.layers)}"
-        for candidate in ordered
-    )
     return ImportError(
         f"{_PACKAGE_NAME} runs on one native extension module per process, "
-        f"but no installed module contains every installed layer "
-        f"({_format_layers(required)}): {lacks}. Install a product that "
-        f"contains all of those layers, or name the module to use in the "
+        f"but {_describe_incomparable(required, candidates)}. Install a "
+        "product that contains all of those layers, or name the module to use in the "
         f"environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}, which "
         "leaves the layers it lacks without their native code.",
         name=EXTENSION_MODULE,
@@ -575,18 +636,19 @@ def _build_invalid_module_value_error(
 
 def _collect_candidates(
     entry_points: Iterable[importlib.metadata.EntryPoint], *, strict: bool
-) -> tuple[Candidate, ...]:
+) -> tuple[tuple[Candidate, ...], tuple[importlib.metadata.EntryPoint, ...]]:
     """Group entry points by the module they name, across distributions.
 
     Args:
         entry_points: Entry points of the group ``fhy_core.native``.
         strict: Whether an entry point whose name is not a layer name, or
             whose value is not a module path, is an error. If not, such entry
-            points are ignored.
+            points are skipped.
 
     Returns:
         One candidate per distinct module, sorted by module name, with its
-        entry points sorted by distribution and name.
+        entry points sorted by distribution and name; and the skipped entry
+        points, in the order given, which are none if ``strict``.
 
     Raises:
         ImportError: If ``strict`` and an entry point's name is not a valid
@@ -597,18 +659,21 @@ def _collect_candidates(
 
     """
     by_module: dict[str, list[importlib.metadata.EntryPoint]] = {}
+    skipped: list[importlib.metadata.EntryPoint] = []
     for entry_point in entry_points:
         if not _is_layer_name(entry_point.name):
             if strict:
                 raise _build_invalid_layer_name_error(entry_point)
+            skipped.append(entry_point)
             continue
         module = entry_point.value.strip()
         if not is_module_name(module):
             if strict:
                 raise _build_invalid_module_value_error(entry_point)
+            skipped.append(entry_point)
             continue
         by_module.setdefault(module, []).append(entry_point)
-    return tuple(
+    candidates = tuple(
         Candidate(
             module,
             tuple(
@@ -620,6 +685,7 @@ def _collect_candidates(
         )
         for module, claims in sorted(by_module.items())
     )
+    return candidates, tuple(skipped)
 
 
 def _choose_candidate(candidates: Sequence[Candidate]) -> Candidate | None:
@@ -639,8 +705,7 @@ def _choose_candidate(candidates: Sequence[Candidate]) -> Candidate | None:
     """
     if not candidates:
         return None
-    required = frozenset().union(*(candidate.layers for candidate in candidates))
-    complete = [candidate for candidate in candidates if candidate.layers == required]
+    required, complete = _find_complete_candidates(candidates)
     if not complete:
         raise _build_incomparable_error(required, candidates)
     if len(complete) > 1:
@@ -671,8 +736,9 @@ def _select_native_module(
     Returns:
         A `Selection` of the module named by ``FHY_CORE_NATIVE_MODULE``,
         else of the one advertised module that contains every installed
-        layer, else of ``fhy_core._rs``, with the reason it was chosen and
-        every advertised candidate.
+        layer, else of ``fhy_core._rs``, with the reason it was chosen,
+        every advertised candidate and, under the variable, the entry points
+        skipped as invalid.
 
     Raises:
         ImportError: If the variable is set to a value that is not an
@@ -685,9 +751,9 @@ def _select_native_module(
     named = environ.get(NATIVE_MODULE_ENVIRONMENT_VARIABLE, "").strip()
     if named and not is_module_name(named):
         raise _build_invalid_variable_value_error(named)
-    candidates = _collect_candidates(entry_points, strict=not named)
+    candidates, skipped = _collect_candidates(entry_points, strict=not named)
     if named:
-        return Selection(named, "environment", candidates)
+        return Selection(named, "environment", candidates, skipped)
     chosen = _choose_candidate(candidates)
     if chosen is None:
         return Selection(EXTENSION_MODULE, "own", candidates)

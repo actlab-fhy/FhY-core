@@ -689,6 +689,7 @@ def test_a_malformed_entry_point_value_is_ignored_under_the_variable(
 
     assert selection.module == "native_named"
     assert [candidate.module for candidate in selection.candidates] == ["native_other"]
+    assert selection.skipped == (_entry_point("product", value),)
 
 
 def test_an_invalid_name_with_a_malformed_value_is_refused_for_its_name() -> None:
@@ -745,6 +746,7 @@ def test_an_invalid_entry_point_name_is_ignored_under_the_variable() -> None:
 
     assert selection.module == "native_named"
     assert selection.candidates == ()
+    assert selection.skipped == (_entry_point("not-an-identifier", "native_bad"),)
 
 
 def test_the_environment_variable_selects_over_the_entry_points() -> None:
@@ -1467,7 +1469,7 @@ def test_require_layer_names_the_variable_when_it_selected_the_module(
         "environment",
         (
             _candidate("demo_layer"),
-            Candidate("native_low", (_entry_point("low_layer", "native_low"),)),
+            Candidate("native_low", (_entry_point("fhy_core", "native_low"),)),
         ),
     )
     _install_selection(monkeypatch, _fake_module(), chosen)
@@ -1480,6 +1482,85 @@ def test_require_layer_names_the_variable_when_it_selected_the_module(
         "not contain the layer 'demo_layer' (no __demo_layer_version__). "
         "Installed modules that do: 'native_fake' (entry point 'demo_layer'). "
         "Unset the variable to let fhy_core choose, or set it to one of those."
+    )
+
+
+def _read_installed_entry_points(
+    site_directory: pathlib.Path,
+) -> list[importlib.metadata.EntryPoint]:
+    """Return the native entry points of the distributions in a directory."""
+    return [
+        entry_point
+        for distribution in importlib.metadata.distributions(path=[str(site_directory)])
+        for entry_point in distribution.entry_points
+        if entry_point.group == NATIVE_ENTRY_POINT_GROUP
+    ]
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_under_the_variable_names_what_it_skipped_and_hid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Test a missing layer names the entry points skipped and the tie hidden."""
+    write_distribution(
+        tmp_path, "product", {"bad-name": "native_bad", "a": "native_one"}
+    )
+    write_distribution(tmp_path, "other", {"a": "native_two", "b": "my-product.x"})
+    chosen = _select_native_module(
+        {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "native_low"},
+        _read_installed_entry_points(tmp_path),
+    )
+    _install_selection(monkeypatch, _fake_module(), chosen)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1")
+
+    assert str(caught.value) == (
+        "FHY_CORE_NATIVE_MODULE=native_low selected 'native_low', which does "
+        "not contain the layer 'demo_layer' (no __demo_layer_version__). No "
+        "installed distribution declares that layer; install the package that "
+        "provides it, or unset the variable. The variable made fhy_core skip "
+        "the invalid entry points 'b' of 'other' (value 'my-product.x'), "
+        "'bad-name' of 'product' (value 'native_bad'). Without the variable, "
+        "the import would fail: several installed modules each contain every "
+        "installed layer ('a', 'fhy_core'): 'native_one' (entry point 'a' of "
+        "'product'); 'native_two' (entry point 'a' of 'other')."
+    )
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_under_the_variable_names_incomparable_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a missing layer says the variable hid an incomparable set."""
+    chosen = Selection(
+        "native_low",
+        "environment",
+        (_candidate("demo_layer"), _create_named_candidate("native_low")),
+    )
+    _install_selection(monkeypatch, _fake_module(), chosen)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1")
+
+    assert str(caught.value).endswith(
+        " Without the variable, the import would fail: no installed module "
+        "contains every installed layer ('a', 'demo_layer', 'fhy_core'): "
+        "'native_fake' (entry point 'demo_layer') lacks 'a'; 'native_low' "
+        "(entry point 'a') lacks 'demo_layer'."
+    )
+
+
+def test_only_the_variable_skips_entry_points() -> None:
+    """Test a selection the variable did not make skips no entry point."""
+    with pytest.raises(ValueError) as caught:
+        Selection(
+            "fhy_core._rs", "own", (), skipped=(_entry_point("1st", "native_bad"),)
+        )
+
+    assert str(caught.value) == (
+        "a selection skips entry points only under the environment variable, "
+        "but one for the reason 'own' skips ['1st']"
     )
 
 

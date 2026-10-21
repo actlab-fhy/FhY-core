@@ -632,7 +632,9 @@ implicit `fhy_core`.
    are still read, to name alternatives in messages and to verify the named
    module's claims if they advertise it, and entry points whose names are
    not valid layer names (identifiers that are not keywords) or whose values
-   are not module paths are ignored.
+   are not module paths are skipped. The import stays silent about them and
+   about a tie or incomparable set the variable overrides; if the named
+   module then lacks a layer, `require_layer`'s error names both.
 2. Otherwise, with no entry points, `fhy_core._rs`.
 3. Otherwise, the *required* layers are the union of every advertised
    module's layers, and the loader selects the one module whose layers equal

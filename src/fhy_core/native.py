@@ -16,6 +16,7 @@ the native module of the process and to install the module as the package's
 own ``_rs``.
 """
 
+import importlib.metadata
 import sys
 from dataclasses import dataclass
 from types import ModuleType
@@ -25,8 +26,10 @@ from fhy_core._extension import (
     EXTENSION_STEM,
     NATIVE_ENTRY_POINT_GROUP,
     NATIVE_MODULE_ENVIRONMENT_VARIABLE,
+    Selection,
     SelectionReason,
     describe_candidate,
+    describe_candidate_conflict,
     get_current_selection,
     get_distribution_name,
     get_layer_version_attribute,
@@ -87,6 +90,31 @@ def get_selection() -> NativeSelection:
     )
 
 
+def _describe_skipped_entry_point(entry_point: importlib.metadata.EntryPoint) -> str:
+    distribution = get_distribution_name(entry_point)
+    owner = f" of {distribution!r}" if distribution else ""
+    return f"{entry_point.name!r}{owner} (value {entry_point.value!r})"
+
+
+def _describe_what_the_variable_overrode(chosen: Selection) -> str:
+    """Return the sentences naming what the variable skipped or hid, if any."""
+    sentences = ""
+    if chosen.skipped:
+        ordered = sorted(
+            chosen.skipped,
+            key=lambda ep: (get_distribution_name(ep), ep.name, ep.value),
+        )
+        noun = "entry point" if len(ordered) == 1 else "entry points"
+        sentences += (
+            f" The variable made fhy_core skip the invalid {noun} "
+            f"{', '.join(map(_describe_skipped_entry_point, ordered))}."
+        )
+    conflict = describe_candidate_conflict(chosen.candidates)
+    if conflict is not None:
+        sentences += f" Without the variable, the import would fail: {conflict}."
+    return sentences
+
+
 def _build_missing_layer_error(layer: str, version: str) -> ImportError:
     chosen = get_current_selection()
     attribute = get_layer_version_attribute(layer)
@@ -104,7 +132,8 @@ def _build_missing_layer_error(layer: str, version: str) -> ImportError:
         return ImportError(
             f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}={chosen.module} selected "
             f"{chosen.module!r}, which does not contain the layer {layer!r} "
-            f"(no {attribute}). {advice}",
+            f"(no {attribute}). {advice}"
+            f"{_describe_what_the_variable_overrode(chosen)}",
             name=chosen.module,
         )
     contained = read_module_layers(sys.modules[EXTENSION_MODULE])
@@ -180,8 +209,10 @@ def require_layer(
             another version of it or one that is not a PEP 440 version, or
             ``<package>._rs`` is already another module. The message says
             what to do; if the environment variable selected a module that
-            lacks the layer, it says so and names the installed modules that
-            declare the layer.
+            lacks the layer, it says so, names the installed modules that
+            declare the layer, and names the invalid entry points the
+            variable made the loader skip and any tie or incomparable set
+            among the advertised modules that it overrode.
         ValueError: If `layer` is not a valid identifier or is a keyword;
             if `version` is not a PEP 440 version; if the package
             (`package`, or `layer` if it is ``None``) is not an importable
