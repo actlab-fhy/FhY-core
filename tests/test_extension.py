@@ -1002,6 +1002,106 @@ def test_a_claim_on_the_own_module_it_does_not_back_is_refused(
     assert "'__foo_version__'" in message
 
 
+def _write_proxy_aggregate(site_directory: pathlib.Path, module: str) -> None:
+    """Write an aggregate that is a fresh load of this build of `fhy_core._rs`.
+
+    Importing `module` loads the built extension file again, sets its
+    ``__fhy_core_version__`` to its ``__version__`` and makes the loaded
+    extension the module, so the package runs on it in full.
+    """
+    (site_directory / f"{module}.py").write_text(
+        "import importlib.util, sys\n"
+        "_spec = importlib.util.spec_from_file_location(\n"
+        f"    'fhy_core._rs', {_rs.__file__!r}\n"
+        ")\n"
+        "_extension = importlib.util.module_from_spec(_spec)\n"
+        "_spec.loader.exec_module(_extension)\n"
+        "_extension.__fhy_core_version__ = _extension.__version__\n"
+        "sys.modules[__name__] = _extension\n"
+    )
+
+
+_FAKE_PACKAGE_VERSION = (
+    "import importlib.metadata\n"
+    "_real_version = importlib.metadata.version\n"
+    "importlib.metadata.version = (\n"
+    "    lambda name: '9.9.9' if name == 'fhy_core' else _real_version(name)\n"
+    ")\n"
+)
+_RESTORE_PACKAGE_VERSION = "importlib.metadata.version = _real_version\n"
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+@pytest.mark.parametrize(
+    ("entry_points", "before", "after", "expected_refusal"),
+    [
+        ({}, _FAKE_PACKAGE_VERSION, _RESTORE_PACKAGE_VERSION, "so it is stale"),
+        (
+            {"foo": "fhy_core._rs"},
+            "",
+            "",
+            "the entry point 'foo' of 'product' claims the layer 'foo'",
+        ),
+    ],
+    ids=["stale", "undeclared-layer"],
+)
+def test_a_rejected_own_extension_is_not_kept_for_a_retry(
+    tmp_path: pathlib.Path,
+    entry_points: dict[str, str],
+    before: str,
+    after: str,
+    expected_refusal: str,
+) -> None:
+    """Test a retry under the variable loads its module, not the refused `_rs`."""
+    write_distribution(tmp_path, "product", entry_points)
+    _write_proxy_aggregate(tmp_path, "native_proxy")
+    program = (
+        "import os, sys\n"
+        f"{before}"
+        "try:\n"
+        "    import fhy_core\n"
+        "except ImportError as error:\n"
+        "    print('refused:', error)\n"
+        f"{after}"
+        "print('fhy_core._rs' in sys.modules)\n"
+        f"os.environ[{NATIVE_MODULE_ENVIRONMENT_VARIABLE!r}] = 'native_proxy'\n"
+        "import fhy_core\n"
+        "from fhy_core.identifier import Identifier\n"
+        "print(fhy_core._rs is sys.modules['native_proxy'])\n"
+        "print(fhy_core.native.get_selection().reason)\n"
+        "first = Identifier('first')\n"
+        "print(Identifier('second').id - first.id)\n"
+    )
+
+    completed = run_python(program, python_path=[tmp_path])
+
+    assert completed.returncode == 0, completed.stderr
+    refusal, *rest = completed.stdout.splitlines()
+    assert refusal.startswith("refused: ")
+    assert expected_refusal in refusal
+    assert rest == ["False", "True", "environment", "1"]
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_rejected_extension_held_before_the_import_is_kept() -> None:
+    """Test the loader removes only an extension the failed import loaded."""
+    program = (
+        _create_stale_extension_prefix("_fake_extension.__version__ = '0.0.0-stale'")
+        + "try:\n"
+        "    import fhy_core\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "print(sys.modules['fhy_core._rs'] is _fake_extension)\n"
+    )
+
+    completed = run_python(program)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["True"]
+
+
 @pytest.mark.slow
 @pytest.mark.subprocess
 def test_an_entry_point_naming_the_own_module_as_fhy_core_is_accepted(

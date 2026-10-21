@@ -654,7 +654,10 @@ A named module that fails to import raises `ImportError`, with whatever
 exception the import raised as its cause, advising to unset or correct the
 variable if the variable chose it, or to reinstall or uninstall the
 distribution that advertises it; it never falls back to `fhy_core._rs`. If `fhy_core._rs` already names a different
-module, loading an aggregate raises `ImportError`.
+module, loading an aggregate raises `ImportError`. An `fhy_core._rs` that the
+failed import loaded and then refused, as stale or lacking a claimed layer,
+is removed from `sys.modules`, so a retry in the same process with the
+variable set loads the named module; one that was already there is kept.
 
 A product's Python package calls `fhy_core.native.require_layer(layer,
 version, package=None)` while it is imported. It checks that the native module

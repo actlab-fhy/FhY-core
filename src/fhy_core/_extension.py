@@ -45,8 +45,11 @@ not report is refused, naming the entry point and the missing attribute;
 this holds for ``fhy_core._rs`` too when entry points advertise it. A named
 module that fails to import, whatever it raises, is never replaced by
 ``fhy_core._rs``, since a second copy of the Rust code would then run beside
-the one the product expects. ``fhy_core.native`` is the public interface to
-the selection.
+the one the product expects. An ``fhy_core._rs`` that the failed import
+loaded and then refused, as stale or lacking a claimed layer, is removed from
+``sys.modules``, so a retry in the same process, such as one with the
+variable set, can load another module. ``fhy_core.native`` is the public
+interface to the selection.
 """
 
 __all__: list[str] = []
@@ -773,10 +776,37 @@ def _check_extension() -> None:
     )
     _SELECTION = selection
     if selection.module == EXTENSION_MODULE:
-        extension = _load_own_extension()
-        _verify_declared_layers(EXTENSION_MODULE, extension, selection.candidate)
+        _load_and_verify_own_extension(selection.candidate)
     else:
         _load_aggregate_extension(selection)
+
+
+def _load_and_verify_own_extension(candidate: Candidate | None) -> None:
+    """Load ``fhy_core._rs`` and check its version and claimed layers.
+
+    If this call imports the module and then refuses it, the module is
+    removed from ``sys.modules`` before the error is raised, so a later
+    import of ``fhy_core`` in the process can select another module. A module
+    already in ``sys.modules`` before the call is left there.
+
+    Args:
+        candidate: The entry points that advertise ``fhy_core._rs``, or
+            ``None`` if none does.
+
+    Raises:
+        ImportError: If the module cannot be loaded, reports another version
+            than the installed package's, or lacks a layer its entry points
+            claim.
+
+    """
+    was_held = EXTENSION_MODULE in sys.modules
+    try:
+        extension = _load_own_extension()
+        _verify_declared_layers(EXTENSION_MODULE, extension, candidate)
+    except ImportError:
+        if not was_held:
+            sys.modules.pop(EXTENSION_MODULE, None)
+        raise
 
 
 _check_extension()
