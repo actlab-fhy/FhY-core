@@ -37,13 +37,13 @@ installed layer. ``ImportError`` is raised too for an entry point whose
 name is not a valid layer name (an identifier that is not a keyword) or whose
 value is not an importable module path (dot-separated layer names, with no
 attribute or extras), and for a selected module that differs from the
-``fhy_core._rs`` the process already holds. A module
-that is not selected is never imported. A selected module whose entry points
-claim a layer it does not report is refused, naming the entry point and the
-missing attribute. A named module that fails to import is never replaced by
-``fhy_core._rs``, since a second copy of the Rust code would then run beside
-the one the product expects. ``fhy_core.native`` is the public interface to
-the selection.
+``fhy_core._rs`` the process already holds. A module that is not selected is
+never imported. A selected module whose entry points claim a layer it does
+not report is refused, naming the entry point and the missing attribute;
+this holds for ``fhy_core._rs`` too when entry points advertise it. A named
+module that fails to import is never replaced by ``fhy_core._rs``, since a
+second copy of the Rust code would then run beside the one the product
+expects. ``fhy_core.native`` is the public interface to the selection.
 """
 
 __all__: list[str] = []
@@ -261,8 +261,11 @@ def _normalize_pep440_version(version: str) -> str | None:
     return normalized
 
 
-def _load_own_extension() -> None:
+def _load_own_extension() -> ModuleType:
     """Import ``fhy_core._rs`` and check it matches the installed package.
+
+    Returns:
+        The imported extension module.
 
     Raises:
         ImportError: If the extension is not installed, is built only for
@@ -294,6 +297,7 @@ def _load_own_extension() -> None:
         or _normalize_pep440_version(extension_version) != package_version
     ):
         raise _build_stale_extension_error(extension_version, package_version)
+    return extension
 
 
 @dataclass(frozen=True)
@@ -713,7 +717,8 @@ def _check_extension() -> None:
     )
     _SELECTION = selection
     if selection.module == _EXTENSION_MODULE:
-        _load_own_extension()
+        extension = _load_own_extension()
+        _verify_declared_layers(_EXTENSION_MODULE, extension, selection.candidate)
     else:
         _load_aggregate_extension(selection.module, selection.candidate)
 

@@ -646,8 +646,9 @@ Only the selected module is imported. Once imported, it is checked: its
 `__fhy_core_version__` must equal the installed package's version, as a stale
 `_rs` is refused, and every other layer its entry points claim must be backed
 by a `str` attribute `__<layer>_version__`, even when it is the only
-candidate. A named module that fails to import raises `ImportError`; it never
-falls back to `fhy_core._rs`. If `fhy_core._rs` already names a different
+candidate or is `fhy_core._rs` itself (whose version is its `__version__`).
+A named module that fails to import raises `ImportError`; it never falls back
+to `fhy_core._rs`. If `fhy_core._rs` already names a different
 module, loading an aggregate raises `ImportError`.
 
 A product's Python package calls `fhy_core.native.require_layer(layer,

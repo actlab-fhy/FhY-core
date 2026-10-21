@@ -902,6 +902,36 @@ def test_the_variable_naming_an_advertised_module_verifies_its_claims(
 
 @pytest.mark.slow
 @pytest.mark.subprocess
+def test_a_claim_on_the_own_module_it_does_not_back_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test an entry point naming `fhy_core._rs` has its claim verified too."""
+    write_distribution(tmp_path, "product", {"foo": "fhy_core._rs"})
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "the entry point 'foo' of 'product' claims the layer 'foo'" in message
+    assert "'__foo_version__'" in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_an_entry_point_naming_the_own_module_as_fhy_core_is_accepted(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test advertising `fhy_core._rs` for the layer `fhy_core` imports."""
+    write_distribution(tmp_path, "product", {"fhy_core": "fhy_core._rs"})
+
+    completed = run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["fhy_core._rs"]
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
 def test_a_claim_the_module_backs_is_accepted_end_to_end(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -945,8 +975,15 @@ def test_the_selection_of_this_process_is_public() -> None:
     """Test `fhy_core.native.selection` reports what the loader chose."""
     chosen = native.selection()
 
+    loaded = _extension._SELECTION
+    assert loaded is not None
+    assert (chosen.module, chosen.reason, chosen.layers) == (
+        loaded.module,
+        loaded.reason,
+        loaded.layers,
+    )
     assert chosen.module == _rs.__name__
-    assert (chosen.reason == "own") == (chosen.module == "fhy_core._rs")
+    assert chosen.reason != "own" or chosen.module == "fhy_core._rs"
     assert "fhy_core" in chosen.layers
     assert native.ENTRY_POINT_GROUP == NATIVE_ENTRY_POINT_GROUP
     assert native.MODULE_ENVIRONMENT_VARIABLE == NATIVE_MODULE_ENVIRONMENT_VARIABLE
