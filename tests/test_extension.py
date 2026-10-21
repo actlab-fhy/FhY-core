@@ -1151,6 +1151,65 @@ def test_require_layer_refuses_a_stale_layer(
     )
 
 
+@pytest.mark.parametrize("version", ["dev", "", "1.0.0-foo.1"])
+def test_require_layer_refuses_a_version_that_is_not_pep440(
+    monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    """Test a required version that is not PEP 440 is the caller's error."""
+    module = _fake_module(__demo_layer_version__=version)
+    _install_selection(monkeypatch, module, _Selection("native_fake", "own", ()))
+
+    with pytest.raises(ValueError) as caught:
+        native.require_layer("demo_layer", version)
+
+    assert str(caught.value) == (
+        f"a layer's version is a PEP 440 version, not {version!r}"
+    )
+    assert "demo_layer._rs" not in sys.modules
+
+
+def test_require_layer_checks_the_version_before_the_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a bad version is refused even where the module lacks the layer."""
+    _install_selection(
+        monkeypatch, _fake_module(), _Selection("native_fake", "own", ())
+    )
+
+    with pytest.raises(ValueError, match="PEP 440"):
+        native.require_layer("demo_layer", "dev")
+
+
+def test_require_layer_refuses_a_reported_version_that_is_not_pep440(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a module reporting a non-PEP 440 version of the layer is stale."""
+    module = _fake_module(__demo_layer_version__="garbage")
+    _install_selection(monkeypatch, module, _Selection("native_fake", "own", ()))
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1.0.0")
+
+    assert str(caught.value) == (
+        "The layer 'demo_layer' needs version '1.0.0', but the native module "
+        "'native_fake' that fhy_core runs on reports 'garbage' in "
+        "__demo_layer_version__, which is not a PEP 440 version, so it is "
+        "stale. Rebuild or reinstall the package that provides the module."
+    )
+    assert "demo_layer._rs" not in sys.modules
+
+
+def test_require_layer_accepts_versions_equal_in_normal_form(
+    monkeypatch: pytest.MonkeyPatch, demo_package: ModuleType
+) -> None:
+    """Test a Cargo-form report meets a PEP 440 requirement, and the reverse."""
+    module = _fake_module(__demo_layer_version__="1.2.3-rc.1")
+    _install_selection(monkeypatch, module, _Selection("native_fake", "own", ()))
+
+    assert native.require_layer("demo_layer", "1.2.3rc1") is module
+    assert native.require_layer("demo_layer", "v1.2.3-RC1") is module
+
+
 def test_require_layer_treats_a_non_string_version_as_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
