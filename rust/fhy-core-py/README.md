@@ -36,7 +36,8 @@ fn aggregate(module: &Bound<'_, PyModule>) -> PyResult<()> {
 The product's wheel advertises the module through the `fhy_core.native`
 entry-point group, one entry point per *layer* the module contains. An entry
 point's name is the import name of the Python package whose Rust binding the
-module holds, and its value is the module:
+module holds, and its value is the module's import path, with no
+`:attribute` or `[extras]`:
 
 ```toml
 [project.entry-points."fhy_core.native"]

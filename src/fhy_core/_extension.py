@@ -35,7 +35,9 @@ each lacks. Layer sets need not form a chain: a diamond such as ``{a}``,
 ``{b}``, ``{a, b}`` is accepted, since the last module contains every
 installed layer. ``ImportError`` is raised too for an entry point whose
 name is not a valid layer name (an identifier that is not a keyword) or whose
-module differs from the ``fhy_core._rs`` the process already holds. A module
+value is not an importable module path (dot-separated layer names, with no
+attribute or extras), and for a selected module that differs from the
+``fhy_core._rs`` the process already holds. A module
 that is not selected is never imported. A selected module whose entry points
 claim a layer it does not report is refused, naming the entry point and the
 missing attribute. A named module that fails to import is never replaced by
@@ -121,6 +123,21 @@ def _is_layer_name(name: str) -> bool:
 
     """
     return name.isidentifier() and not keyword.iskeyword(name)
+
+
+def _is_module_name(name: str) -> bool:
+    """Return whether `name` is an absolute, importable module path.
+
+    Args:
+        name: Candidate module name, such as ``"my_product._native"``.
+
+    Returns:
+        ``True`` if every dot-separated part of `name` is a layer name (an
+        identifier that is not a keyword); an empty part, as in a relative
+        name, fails.
+
+    """
+    return all(_is_layer_name(part) for part in name.split("."))
 
 
 def layer_version_attribute(layer: str) -> str:
@@ -410,13 +427,29 @@ def _build_invalid_layer_name_error(
     owner = f" of {distribution!r}" if distribution else ""
     return ImportError(
         f"The entry point {entry_point.name!r}{owner} in the group "
-        f"{NATIVE_ENTRY_POINT_GROUP!r} names the module {entry_point.module!r}, "
+        f"{NATIVE_ENTRY_POINT_GROUP!r} names the module {entry_point.value!r}, "
         "but an entry point's name is the layer the module contains, the "
         "import name of a Python package, and "
         f"{entry_point.name!r} is not a valid Python identifier (a keyword is "
         "not one). Fix the "
         f"entry point, or name the module to use in the environment variable "
         f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}.",
+        name=_EXTENSION_MODULE,
+    )
+
+
+def _build_invalid_module_value_error(
+    entry_point: importlib.metadata.EntryPoint,
+) -> ImportError:
+    distribution = _distribution_name(entry_point)
+    owner = f" of {distribution!r}" if distribution else ""
+    return ImportError(
+        f"The entry point {entry_point.name!r}{owner} in the group "
+        f"{NATIVE_ENTRY_POINT_GROUP!r} has the value {entry_point.value!r}, "
+        "but an entry point's value is the native module, an importable "
+        "module path such as 'my_product._native' with no attribute or "
+        "extras. Fix the entry point, or name the module to use in the "
+        f"environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}.",
         name=_EXTENSION_MODULE,
     )
 
@@ -428,8 +461,9 @@ def _collect_candidates(
 
     Args:
         entry_points: Entry points of the group ``fhy_core.native``.
-        strict: Whether an entry point whose name is not a layer name is an
-            error. If not, such entry points are ignored.
+        strict: Whether an entry point whose name is not a layer name, or
+            whose value is not a module path, is an error. If not, such entry
+            points are ignored.
 
     Returns:
         One candidate per distinct module, sorted by module name, with its
@@ -437,7 +471,10 @@ def _collect_candidates(
 
     Raises:
         ImportError: If ``strict`` and an entry point's name is not a valid
-            layer name (an identifier that is not a keyword).
+            layer name (an identifier that is not a keyword), or its value,
+            stripped of surrounding space, is not an absolute module path
+            (dot-separated layer names, with no attribute or extras). The name
+            is checked first.
 
     """
     by_module: dict[str, list[importlib.metadata.EntryPoint]] = {}
@@ -446,7 +483,12 @@ def _collect_candidates(
             if strict:
                 raise _build_invalid_layer_name_error(entry_point)
             continue
-        by_module.setdefault(entry_point.module, []).append(entry_point)
+        module = entry_point.value.strip()
+        if not _is_module_name(module):
+            if strict:
+                raise _build_invalid_module_value_error(entry_point)
+            continue
+        by_module.setdefault(module, []).append(entry_point)
     return tuple(
         _Candidate(
             module,
@@ -504,8 +546,9 @@ def _select_native_module(
 
     Raises:
         ImportError: If the variable is not set and an entry point's name is
-            not a valid layer name (an identifier that is not a keyword), or
-            the advertised modules tie or are incomparable.
+            not a valid layer name (an identifier that is not a keyword) or
+            its value is not a module path, or the advertised modules tie or
+            are incomparable.
 
     """
     named = environ.get(NATIVE_MODULE_ENVIRONMENT_VARIABLE, "").strip()

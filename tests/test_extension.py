@@ -632,6 +632,96 @@ def test_an_entry_point_name_that_is_not_a_layer_name_is_refused(name: str) -> N
     assert "not a valid Python identifier" in message
 
 
+_MALFORMED_MODULE_VALUES = [
+    "",
+    "my-product._native",
+    "a b",
+    "pkg.mod:attr",
+    "pkg.mod [extra]",
+    ".rel",
+    "pkg..mod",
+    "pkg.class",
+]
+
+
+@pytest.mark.parametrize("value", _MALFORMED_MODULE_VALUES)
+def test_an_entry_point_value_that_is_not_a_module_path_is_refused(value: str) -> None:
+    """Test a value that cannot be imported as a module is an error."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, [_entry_point("product", value)])
+
+    message = str(caught.value)
+    assert "The entry point 'product' in the group 'fhy_core.native'" in message
+    assert f"has the value {value!r}" in message
+    assert "importable module path" in message
+    assert "no attribute or extras" in message
+    assert NATIVE_MODULE_ENVIRONMENT_VARIABLE in message
+
+
+def test_a_malformed_entry_point_value_is_refused_naming_the_fix() -> None:
+    """Test the refusal of a malformed value names the cause and the fix."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, [_entry_point("product", "pkg.mod:attr")])
+
+    assert str(caught.value) == (
+        "The entry point 'product' in the group 'fhy_core.native' has the "
+        "value 'pkg.mod:attr', but an entry point's value is the native "
+        "module, an importable module path such as 'my_product._native' with "
+        "no attribute or extras. Fix the entry point, or name the module to "
+        "use in the environment variable FHY_CORE_NATIVE_MODULE."
+    )
+
+
+@pytest.mark.parametrize("value", _MALFORMED_MODULE_VALUES)
+def test_a_malformed_entry_point_value_is_ignored_under_the_variable(
+    value: str,
+) -> None:
+    """Test the variable overrides strict values, as it does strict names."""
+    selection = _select_native_module(
+        {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "native_named"},
+        [_entry_point("product", value), _entry_point("other", "native_other")],
+    )
+
+    assert selection.module == "native_named"
+    assert [candidate.module for candidate in selection.candidates] == ["native_other"]
+
+
+def test_an_invalid_name_with_a_malformed_value_is_refused_for_its_name() -> None:
+    """Test an entry point bad in both ways is refused for its name."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module(
+            {}, [_entry_point("not-an-identifier", "my-product._native")]
+        )
+
+    message = str(caught.value)
+    assert "'not-an-identifier'" in message
+    assert "names the module 'my-product._native'" in message
+    assert "not a valid Python identifier" in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_malformed_entry_point_value_is_refused_end_to_end(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test an installed malformed value fails the import naming its owner."""
+    write_distribution(tmp_path, "product", {"product": "my-product._native"})
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "The entry point 'product' of 'product'" in message
+    assert "has the value 'my-product._native'" in message
+
+
+def test_a_module_value_is_read_without_surrounding_space() -> None:
+    """Test a value padded with spaces names the module it surrounds."""
+    selection = _select_native_module({}, [_entry_point("product", " native_p ")])
+
+    assert selection.module == "native_p"
+
+
 @pytest.mark.parametrize("layer", ["class", "None", "not-a-layer", "1st", ""])
 def test_layer_version_attribute_refuses_a_name_that_is_not_a_layer(layer: str) -> None:
     """Test a keyword or non-identifier layer name raises `ValueError`."""

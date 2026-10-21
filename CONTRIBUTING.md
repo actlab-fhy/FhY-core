@@ -590,7 +590,7 @@ functions, and each of those sets its layer's `__<layer>_version__`. A
 product advertises its aggregate with one entry point per layer in the group
 `fhy_core.native`: the entry point's name is the layer (the import name of
 the Python package whose Rust binding the module holds) and its value is the
-module. `rust/example-aggregate` is the template and the test. It holds two
+module's import path, with no `:attribute` or `[extras]`. `rust/example-aggregate` is the template and the test. It holds two
 layers, `fhy_example` (one class, `Tagger`, that takes and returns an
 `Identifier` and an `OpAttribute`) and `fhy_example_search` (the
 `search_space` and oracle kinds), advertised by two entry points that name the
@@ -628,17 +628,19 @@ distributions, so a module's layers are the union of its claims plus the
 implicit `fhy_core`.
 
 1. `FHY_CORE_NATIVE_MODULE`, if set, overrides everything. The entry points
-   are still read, only to name alternatives in messages, and names that are
-   not valid layer names (identifiers that are not keywords) are ignored.
+   are still read, only to name alternatives in messages, and entry points
+   whose names are not valid layer names (identifiers that are not keywords)
+   or whose values are not module paths are ignored.
 2. Otherwise, with no entry points, `fhy_core._rs`.
 3. Otherwise, the *required* layers are the union of every advertised
    module's layers, and the loader selects the one module whose layers equal
    the required layers. Several such modules are a tie, and no such module
    means the layer sets are incomparable. Either raises `ImportError`
    naming the modules, the layers and what each lacks; set the variable to
-   resolve it. An entry point whose name is not a valid layer name (an identifier
-   that is not a keyword) is refused,
-   naming it and its distribution.
+   resolve it. An entry point whose name is not a valid layer name (an
+   identifier that is not a keyword), or whose value is not an importable
+   module path (dot-separated layer names, with no `:attribute` or
+   `[extras]`), is refused, naming it, its distribution and its value.
 
 Only the selected module is imported. Once imported, it is checked: its
 `__fhy_core_version__` must equal the installed package's version, as a stale
