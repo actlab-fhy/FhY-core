@@ -30,9 +30,10 @@ Which native module is the extension depends on what is installed:
   ``ImportError``.
 
 A process holds one native module. Several modules that each contain every
-installed layer (a tie) and a set of modules of which none contains every
-installed layer (incomparable) raise ``ImportError`` naming them and what
-each lacks. Layer sets need not form a chain: a diamond such as ``{a}``,
+installed layer (a tie) raise ``ImportError`` naming the tied modules; a set
+of modules of which none contains every installed layer (incomparable)
+raises ``ImportError`` naming each module with the layers it lacks. Layer
+sets need not form a chain: a diamond such as ``{a}``,
 ``{b}``, ``{a, b}`` is accepted, since the last module contains every
 installed layer. ``ImportError`` is raised too for an entry point whose
 name is not a valid layer name (an identifier that is not a keyword) or whose
@@ -571,9 +572,10 @@ def _select_native_module(
         entry_points: Entry points of the group ``fhy_core.native``.
 
     Returns:
-        The module named by ``FHY_CORE_NATIVE_MODULE``, else the one
-        advertised module that contains every installed layer, else
-        ``fhy_core._rs``.
+        A `Selection` of the module named by ``FHY_CORE_NATIVE_MODULE``,
+        else of the one advertised module that contains every installed
+        layer, else of ``fhy_core._rs``, with the reason it was chosen and
+        every advertised candidate.
 
     Raises:
         ImportError: If the variable is set to a value that is not an
@@ -669,7 +671,9 @@ def _verify_declared_layers(
         module_name: Name `extension` was imported as.
         extension: The imported native module.
         candidate: The entry points that advertise the module, or ``None``
-            if none does, as when the environment variable names it.
+            only if no entry point names it, as when the environment variable
+            names a module nothing advertises. A module the variable names
+            that entry points advertise has a candidate, and is verified.
 
     Raises:
         ImportError: If a claimed layer has no version attribute. The message
@@ -752,8 +756,15 @@ def _check_extension() -> None:
     """Load the native module of this process and check it.
 
     Raises:
-        ImportError: If no usable native module is installed, or two
-            different ones are. The message names the cause and the fix.
+        ImportError: If ``FHY_CORE_NATIVE_MODULE`` is set to a value that is
+            not an importable module path; if, with the variable unset, an
+            entry point's name is not a valid layer name or its value is not
+            a module path, or the advertised modules tie or are
+            incomparable; if the selected module is not installed, is built
+            only for other interpreters, or fails to import; if it reports a
+            missing, non-PEP 440 or stale version; if it does not report a
+            layer its entry points claim; or if ``fhy_core._rs`` already
+            names another module. The message names the cause and the fix.
 
     """
     global _SELECTION  # noqa: PLW0603

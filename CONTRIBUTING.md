@@ -629,16 +629,18 @@ implicit `fhy_core`.
 
 1. `FHY_CORE_NATIVE_MODULE`, if set, overrides everything; a value that is
    not an importable module path raises `ImportError`. The entry points
-   are still read, only to name alternatives in messages, and entry points
-   whose names are not valid layer names (identifiers that are not keywords)
-   or whose values are not module paths are ignored.
+   are still read, to name alternatives in messages and to verify the named
+   module's claims if they advertise it, and entry points whose names are
+   not valid layer names (identifiers that are not keywords) or whose values
+   are not module paths are ignored.
 2. Otherwise, with no entry points, `fhy_core._rs`.
 3. Otherwise, the *required* layers are the union of every advertised
    module's layers, and the loader selects the one module whose layers equal
-   the required layers. Several such modules are a tie, and no such module
-   means the layer sets are incomparable. Either raises `ImportError`
-   naming the modules, the layers and what each lacks; set the variable to
-   resolve it. An entry point whose name is not a valid layer name (an
+   the required layers. Several such modules are a tie, which raises
+   `ImportError` naming the tied modules and the layers; no such module
+   means the layer sets are incomparable, which raises `ImportError` naming
+   each module with the layers it lacks. Set the variable to resolve
+   either. An entry point whose name is not a valid layer name (an
    identifier that is not a keyword), or whose value is not an importable
    module path (dot-separated layer names, with no `:attribute` or
    `[extras]`), is refused, naming it, its distribution and its value.

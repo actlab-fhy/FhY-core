@@ -167,13 +167,16 @@ def require_layer(
         The native module of the process.
 
     Raises:
-        ImportError: If the module does not contain the layer, or reports
-            another version of it or one that is not a PEP 440 version. The
-            message names the reason the module was selected and what to do.
-        ValueError: If `layer` is not a valid identifier or is a keyword,
-            `version` is not a PEP 440 version, or the package (`package`, or
-            `layer` if it is ``None``) is not an importable module path or is
-            not in ``sys.modules``.
+        ImportError: If the module does not contain the layer, reports
+            another version of it or one that is not a PEP 440 version, or
+            ``<package>._rs`` is already another module. The message says
+            what to do; if the environment variable selected a module that
+            lacks the layer, it says so and names the installed modules that
+            declare the layer.
+        ValueError: If `layer` is not a valid identifier or is a keyword;
+            if `version` is not a PEP 440 version; if the package
+            (`package`, or `layer` if it is ``None``) is not an importable
+            module path; or if the package is not in ``sys.modules``.
 
     """
     attribute = get_layer_version_attribute(layer)
