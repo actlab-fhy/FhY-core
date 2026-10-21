@@ -291,9 +291,15 @@ def test_each_layer_of_the_aggregate_reports_its_version(site: pathlib.Path) -> 
         import {MODULE} as aggregate
         import fhy_core
 
+        from fhy_core._extension import _normalize_pep440_version
+
+        # The crates report a Cargo version; the package's is PEP 440 normal.
         version = importlib.metadata.version("fhy_core")
-        assert aggregate.__fhy_example_version__ == version
-        assert aggregate.__fhy_example_search_version__ == version
+        assert _normalize_pep440_version(aggregate.__fhy_example_version__) == version
+        assert (
+            _normalize_pep440_version(aggregate.__fhy_example_search_version__)
+            == version
+        )
         selection = fhy_core.native.selection()
         assert selection.module == "{MODULE}"
         assert selection.reason == "entry_points"

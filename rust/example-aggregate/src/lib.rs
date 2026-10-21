@@ -25,8 +25,10 @@
 //! What a real downstream aggregate does the same way:
 //!
 //! 1. its `#[pymodule]` calls [`fhy_core_py::register`] first, then the
-//!    registration function of each of its own crates (here `register`),
-//!    each of which sets its layer's `__<layer>_version__`;
+//!    registration function of each of its own crates (here the two
+//!    per-layer functions `register_example` and `register_example_search`,
+//!    which `register` calls in turn), each of which sets its layer's
+//!    `__<layer>_version__`;
 //! 2. its own classes name their module (`module = "..."`) as the package
 //!    they belong to, so their qualified names do not depend on the native
 //!    module's name;
