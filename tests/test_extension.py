@@ -31,6 +31,7 @@ from tests.native_modules import (
     read_import_error,
     run_python,
     write_distribution,
+    write_native_module,
 )
 
 _IMPORT_PACKAGE_PROGRAM = (
@@ -348,10 +349,10 @@ _PRINT_EXTENSION_NAME = "import fhy_core\nprint(fhy_core._rs.__name__)"
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_two_advertised_native_modules_are_refused_naming_both(
+def test_incomparable_native_modules_are_refused_naming_both(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test entry points naming different modules make the import fail."""
+    """Test entry points whose layers are not a chain make the import fail."""
     write_distribution(tmp_path, "product-one", {"one": "native_one"})
     write_distribution(tmp_path, "product-two", {"two": "native_two"})
 
@@ -359,9 +360,9 @@ def test_two_advertised_native_modules_are_refused_naming_both(
         run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
     )
 
-    assert "one native extension module per process" in message
-    assert "'native_one' (entry point 'one' of 'product-one')" in message
-    assert "'native_two' (entry point 'two' of 'product-two')" in message
+    assert "no installed module contains every installed layer" in message
+    assert "'native_one' (entry point 'one' of 'product-one') lacks 'two'" in message
+    assert "'native_two' (entry point 'two' of 'product-two') lacks 'one'" in message
     assert NATIVE_MODULE_ENVIRONMENT_VARIABLE in message
 
 
@@ -379,7 +380,7 @@ def test_two_entry_points_naming_one_module_are_not_a_conflict(
     )
 
     assert "'native_shared'" in message
-    assert "one native extension module per process" not in message
+    assert "no installed module contains every installed layer" not in message
 
 
 @pytest.mark.slow
@@ -473,8 +474,8 @@ def test_one_advertised_module_is_selected() -> None:
     )
 
 
-def test_entry_points_naming_one_module_select_it_once() -> None:
-    """Test two entry points naming one module are not a conflict."""
+def test_entry_points_naming_one_module_are_merged_into_its_layers() -> None:
+    """Test two entry points naming one module give it both layers, once."""
     selection = _select_native_module(
         {},
         [_entry_point("one", "native_shared"), _entry_point("two", "native_shared")],
@@ -482,20 +483,138 @@ def test_entry_points_naming_one_module_select_it_once() -> None:
 
     assert selection.module == "native_shared"
     assert [candidate.module for candidate in selection.candidates] == ["native_shared"]
-    assert len(selection.candidates[0].entry_points) == 2
+    assert selection.layers == {"fhy_core", "one", "two"}
 
 
-def test_two_advertised_modules_are_refused_naming_both() -> None:
-    """Test entry points naming two modules are refused in process."""
-    with pytest.raises(ImportError, match="one native extension module") as caught:
-        _select([_entry_point("one", "native_one"), _entry_point("two", "native_two")])
+_CHAINS = {
+    "one": [("a", "native_a")],
+    "two": [("a", "native_a"), ("b", "native_ab"), ("a", "native_ab")],
+    "three": [
+        ("a", "native_a"),
+        ("a", "native_ab"),
+        ("b", "native_ab"),
+        ("b", "native_abc"),
+        ("a", "native_abc"),
+        ("c", "native_abc"),
+        ("c", "native_abc"),
+    ],
+}
+_CHAIN_TOPS = {"one": "native_a", "two": "native_ab", "three": "native_abc"}
 
-    assert "'native_one'" in str(caught.value)
-    assert "'native_two'" in str(caught.value)
+
+@pytest.mark.parametrize("chain", list(_CHAINS))
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reversed"])
+def test_a_chain_of_layers_selects_its_top(chain: str, reverse: bool) -> None:
+    """Test the module containing every layer is selected, whatever the order."""
+    claims = _CHAINS[chain][::-1] if reverse else _CHAINS[chain]
+    entry_points = [_entry_point(name, module) for name, module in claims]
+
+    selection = _select_native_module({}, entry_points)
+
+    assert (selection.module, selection.reason) == (
+        _CHAIN_TOPS[chain],
+        "entry_points",
+    )
+
+
+def test_the_same_module_declared_by_two_distributions_is_merged() -> None:
+    """Test claims from different distributions on one module are unioned."""
+    selection = _select_native_module(
+        {},
+        [
+            _entry_point("product", "native_top"),
+            _entry_point("base", "native_top"),
+            _entry_point("base", "native_base"),
+        ],
+    )
+
+    assert selection.module == "native_top"
+    assert selection.layers == {"fhy_core", "product", "base"}
+
+
+def test_two_modules_with_the_same_layers_are_a_tie() -> None:
+    """Test equally complete modules are refused, naming both and the fix."""
+    entry_points = [_entry_point("a", "native_one"), _entry_point("a", "native_two")]
+
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, entry_points)
+
+    message = str(caught.value)
+    assert "several installed modules each contain every installed layer" in message
+    assert "'native_one'" in message
+    assert "'native_two'" in message
+    assert "'a'" in message
+    assert NATIVE_MODULE_ENVIRONMENT_VARIABLE in message
+
+
+def test_incomparable_layer_sets_are_refused_naming_what_each_lacks() -> None:
+    """Test modules that are not a chain are refused, with what each lacks."""
+    entry_points = [
+        _entry_point("one", "native_small"),
+        _entry_point("two", "native_big"),
+        _entry_point("three", "native_big"),
+    ]
+
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, entry_points)
+
+    message = str(caught.value)
+    assert "no installed module contains every installed layer" in message
+    assert "'fhy_core', 'one', 'three', 'two'" in message
+    # The module with more layers comes first.
+    assert message.index("'native_big'") < message.index("'native_small'")
+    assert "'native_big' (entry points 'three', 'two') lacks 'one'" in message
+    assert "'native_small' (entry point 'one') lacks 'three', 'two'" in message
+    assert NATIVE_MODULE_ENVIRONMENT_VARIABLE in message
+
+
+@pytest.mark.parametrize(
+    "entry_points",
+    [
+        [("a", "native_one"), ("a", "native_two")],
+        [("one", "native_one"), ("two", "native_two")],
+    ],
+    ids=["tie", "incomparable"],
+)
+def test_the_environment_variable_overrides_a_tie_and_incomparable_sets(
+    entry_points: list[tuple[str, str]],
+) -> None:
+    """Test the named module wins, where the entry points alone are refused."""
+    advertised = [_entry_point(name, module) for name, module in entry_points]
+
+    selection = _select_native_module(
+        {NATIVE_MODULE_ENVIRONMENT_VARIABLE: " native_two "}, advertised
+    )
+
+    assert (selection.module, selection.reason) == ("native_two", "environment")
+    assert len(selection.candidates) == 2
+
+
+@pytest.mark.parametrize("name", ["not-an-identifier", "1st", "a.b", ""])
+def test_an_entry_point_name_that_is_not_an_identifier_is_refused(name: str) -> None:
+    """Test a name that cannot be a package's import name is an error."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, [_entry_point(name, "native_bad")])
+
+    message = str(caught.value)
+    assert repr(name) in message
+    assert "'native_bad'" in message
+    assert "not a valid Python identifier" in message
+
+
+def test_an_invalid_entry_point_name_is_ignored_under_the_variable() -> None:
+    """Test the variable overrides strict names too."""
+    selection = _select_native_module(
+        {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "native_named"},
+        [_entry_point("not-an-identifier", "native_bad")],
+    )
+
+    assert selection.module == "native_named"
+    assert selection.candidates == ()
 
 
 def test_the_environment_variable_selects_over_the_entry_points() -> None:
-    """Test the named module wins, even over two conflicting modules."""
+    """Test the named module wins, even over modules that conflict."""
     entry_points = [
         _entry_point("one", "native_one"),
         _entry_point("two", "native_two"),
@@ -513,3 +632,34 @@ def test_a_blank_environment_variable_is_ignored() -> None:
         "fhy_core._rs",
         "own",
     )
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_module_that_is_not_selected_is_never_imported(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test a lower layer's module is not imported when a higher one is chosen."""
+    version = importlib.metadata.version("fhy_core")
+    write_distribution(tmp_path, "lower", {"base": "native_lower"})
+    write_distribution(
+        tmp_path, "upper", {"base": "native_upper", "top": "native_upper"}
+    )
+    write_native_module(
+        tmp_path,
+        "native_lower",
+        {},
+        fhy_core_version=version,
+        on_import="raise RuntimeError('the lower module was imported')",
+    )
+    write_native_module(
+        tmp_path, "native_upper", {"base": "0", "top": "0"}, fhy_core_version=None
+    )
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "'native_upper'" in message
+    assert "native_lower" not in message
+    assert "was imported" not in message

@@ -231,10 +231,19 @@ def _load_own_extension() -> None:
 
 @dataclass(frozen=True)
 class _Candidate:
-    """A native module that entry points advertise, with its entry points."""
+    """A native module that entry points advertise, with its entry points.
+
+    Each entry point's name is a layer the module claims to contain: the
+    import name of a Python package whose Rust binding the module holds.
+    """
 
     module: str
     entry_points: tuple[importlib.metadata.EntryPoint, ...]
+
+    @property
+    def layers(self) -> frozenset[str]:
+        """The layers the module claims, which always include ``fhy_core``."""
+        return frozenset({_PACKAGE_NAME, *(ep.name for ep in self.entry_points)})
 
 
 @dataclass(frozen=True)
@@ -246,8 +255,8 @@ class _Selection:
         reason: ``"environment"`` if the environment variable named it,
             ``"entry_points"`` if the entry points advertised it, ``"own"``
             if nothing was advertised and ``fhy_core._rs`` is used.
-        candidates: Every module the entry points advertise, in order of
-            first appearance, whether or not it was selected.
+        candidates: Every module the entry points advertise, sorted by name,
+            whether or not it was selected.
 
     """
 
@@ -255,16 +264,46 @@ class _Selection:
     reason: Literal["environment", "entry_points", "own"]
     candidates: tuple[_Candidate, ...]
 
+    @property
+    def candidate(self) -> _Candidate | None:
+        """The advertised module that was selected, if it is advertised."""
+        for candidate in self.candidates:
+            if candidate.module == self.module:
+                return candidate
+        return None
+
+    @property
+    def layers(self) -> frozenset[str]:
+        """The layers the selected module is declared to contain."""
+        candidate = self.candidate
+        return frozenset({_PACKAGE_NAME}) if candidate is None else candidate.layers
+
 
 _SELECTION: _Selection | None = None
 
 
-def _describe_entry_point(entry_point: importlib.metadata.EntryPoint) -> str:
-    """Return the module an entry point names, and the distribution it is in."""
-    distribution = getattr(entry_point, "dist", None)
-    owner = f" (entry point {entry_point.name!r}"
-    owner += f" of {distribution.name!r})" if distribution is not None else ")"
-    return f"{entry_point.module!r}{owner}"
+def _describe_candidate(candidate: _Candidate) -> str:
+    """Return the module of a candidate and the entry points that name it."""
+    owners = sorted(
+        {
+            (
+                ep.name,
+                getattr(getattr(ep, "dist", None), "name", None) or "",
+            )
+            for ep in candidate.entry_points
+        },
+        key=lambda owner: (owner[1], owner[0]),
+    )
+    parts = [
+        f"{name!r} of {distribution!r}" if distribution else f"{name!r}"
+        for name, distribution in owners
+    ]
+    noun = "entry point" if len(parts) == 1 else "entry points"
+    return f"{candidate.module!r} ({noun} {', '.join(parts)})"
+
+
+def _format_layers(layers: Iterable[str]) -> str:
+    return ", ".join(repr(layer) for layer in sorted(layers))
 
 
 def _build_two_native_modules_error(first: str, second: str) -> ImportError:
@@ -279,40 +318,125 @@ def _build_two_native_modules_error(first: str, second: str) -> ImportError:
     )
 
 
+def _build_tie_error(
+    required: frozenset[str], tied: Sequence[_Candidate]
+) -> ImportError:
+    return ImportError(
+        f"{_PACKAGE_NAME} runs on one native extension module per process, "
+        f"but several installed modules each contain every installed layer "
+        f"({_format_layers(required)}): "
+        f"{'; '.join(_describe_candidate(candidate) for candidate in tied)}. "
+        f"{_PACKAGE_NAME} cannot choose between them. Uninstall all but one "
+        f"of the distributions that provide them, or name the one to use in "
+        f"the environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}.",
+        name=_EXTENSION_MODULE,
+    )
+
+
+def _build_incomparable_error(
+    required: frozenset[str], candidates: Sequence[_Candidate]
+) -> ImportError:
+    ordered = sorted(candidates, key=lambda c: (-len(c.layers), c.module))
+    lacks = "; ".join(
+        f"{_describe_candidate(candidate)} lacks "
+        f"{_format_layers(required - candidate.layers)}"
+        for candidate in ordered
+    )
+    return ImportError(
+        f"{_PACKAGE_NAME} runs on one native extension module per process, "
+        f"but no installed module contains every installed layer "
+        f"({_format_layers(required)}): {lacks}. Install a product that "
+        f"contains all of those layers, or name the module to use in the "
+        f"environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}, which "
+        "leaves the layers it lacks without their native code.",
+        name=_EXTENSION_MODULE,
+    )
+
+
+def _build_invalid_layer_name_error(
+    entry_point: importlib.metadata.EntryPoint,
+) -> ImportError:
+    distribution = getattr(entry_point, "dist", None)
+    owner = f" of {distribution.name!r}" if distribution is not None else ""
+    return ImportError(
+        f"The entry point {entry_point.name!r}{owner} in the group "
+        f"{NATIVE_ENTRY_POINT_GROUP!r} names the module {entry_point.module!r}, "
+        "but an entry point's name is the layer the module contains, the "
+        "import name of a Python package, and "
+        f"{entry_point.name!r} is not a valid Python identifier. Fix the "
+        f"entry point, or name the module to use in the environment variable "
+        f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}.",
+        name=_EXTENSION_MODULE,
+    )
+
+
 def _collect_candidates(
-    entry_points: Iterable[importlib.metadata.EntryPoint],
+    entry_points: Iterable[importlib.metadata.EntryPoint], *, strict: bool
 ) -> tuple[_Candidate, ...]:
-    """Group entry points by the module they name.
+    """Group entry points by the module they name, across distributions.
 
     Args:
         entry_points: Entry points of the group ``fhy_core.native``.
+        strict: Whether an entry point whose name is not an identifier is an
+            error. If not, such entry points are ignored.
 
     Returns:
-        One candidate per distinct module, in order of first appearance.
+        One candidate per distinct module, sorted by module name, with its
+        entry points sorted by distribution and name.
+
+    Raises:
+        ImportError: If ``strict`` and an entry point's name is not an
+            identifier.
 
     """
     by_module: dict[str, list[importlib.metadata.EntryPoint]] = {}
     for entry_point in entry_points:
+        if not entry_point.name.isidentifier():
+            if strict:
+                raise _build_invalid_layer_name_error(entry_point)
+            continue
         by_module.setdefault(entry_point.module, []).append(entry_point)
     return tuple(
-        _Candidate(module, tuple(claims)) for module, claims in by_module.items()
+        _Candidate(
+            module,
+            tuple(
+                sorted(
+                    claims,
+                    key=lambda ep: (
+                        getattr(getattr(ep, "dist", None), "name", None) or "",
+                        ep.name,
+                    ),
+                )
+            ),
+        )
+        for module, claims in sorted(by_module.items())
     )
 
 
 def _choose_candidate(candidates: Sequence[_Candidate]) -> _Candidate | None:
-    """Return the one candidate to load, or ``None`` if there is none.
+    """Return the candidate that contains every layer any candidate does.
+
+    Args:
+        candidates: The advertised modules.
+
+    Returns:
+        The one module whose layers are all the installed layers, or
+        ``None`` if there are no candidates.
 
     Raises:
-        ImportError: If the candidates are two different modules.
+        ImportError: If several modules contain every layer (a tie), or none
+            does (the layer sets are incomparable).
 
     """
-    if len(candidates) > 1:
-        first, second, *_ = candidates
-        raise _build_two_native_modules_error(
-            _describe_entry_point(first.entry_points[0]),
-            _describe_entry_point(second.entry_points[0]),
-        )
-    return candidates[0] if candidates else None
+    if not candidates:
+        return None
+    required = frozenset().union(*(candidate.layers for candidate in candidates))
+    complete = [candidate for candidate in candidates if candidate.layers == required]
+    if not complete:
+        raise _build_incomparable_error(required, candidates)
+    if len(complete) > 1:
+        raise _build_tie_error(required, complete)
+    return complete[0]
 
 
 def _select_native_module(
@@ -326,15 +450,18 @@ def _select_native_module(
         entry_points: Entry points of the group ``fhy_core.native``.
 
     Returns:
-        The module named by ``FHY_CORE_NATIVE_MODULE``, else the module the
-        entry points name, else ``fhy_core._rs``.
+        The module named by ``FHY_CORE_NATIVE_MODULE``, else the one
+        advertised module that contains every installed layer, else
+        ``fhy_core._rs``.
 
     Raises:
-        ImportError: If the entry points name two different modules.
+        ImportError: If the variable is not set and an entry point's name is
+            not an identifier, or the advertised modules tie or are
+            incomparable.
 
     """
-    candidates = _collect_candidates(entry_points)
     named = environ.get(NATIVE_MODULE_ENVIRONMENT_VARIABLE, "").strip()
+    candidates = _collect_candidates(entry_points, strict=not named)
     if named:
         return _Selection(named, "environment", candidates)
     chosen = _choose_candidate(candidates)

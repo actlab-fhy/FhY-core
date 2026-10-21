@@ -35,6 +35,34 @@ def write_distribution(
     (metadata_directory / "entry_points.txt").write_text("\n".join(lines) + "\n")
 
 
+def write_native_module(
+    site_directory: pathlib.Path,
+    module: str,
+    layers: Mapping[str, str],
+    *,
+    fhy_core_version: str | None,
+    on_import: str = "",
+) -> None:
+    """Write a fake native module as a plain Python module.
+
+    Args:
+        site_directory: Directory that goes on the interpreter's path.
+        module: Name of the module, a top-level one.
+        layers: The layers the module really holds, as layer name to the
+            version it reports as ``__<layer>_version__``. ``fhy_core`` is
+            given by ``fhy_core_version``, not here.
+        fhy_core_version: The ``__fhy_core_version__`` the module reports,
+            or ``None`` for a module that reports none.
+        on_import: Source the module runs first, such as a ``raise``.
+
+    """
+    lines = [on_import] if on_import else []
+    if fhy_core_version is not None:
+        lines.append(f"__fhy_core_version__ = {fhy_core_version!r}")
+    lines += [f"__{layer}_version__ = {version!r}" for layer, version in layers.items()]
+    (site_directory / f"{module}.py").write_text("\n".join(lines) + "\n")
+
+
 def run_python(
     program: str,
     *,
