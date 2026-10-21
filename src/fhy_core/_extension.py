@@ -5,7 +5,8 @@ Importing this module, which ``fhy_core`` does before anything else, imports
 the extension and raises ``ImportError`` with the cause and the fix when the
 extension is not installed, is built only for other interpreters, fails to
 import, or reports a version that is missing, not a PEP 440 version, or
-unequal to the installed package's version (a stale build).
+unequal to the installed package's version (a stale build), and when the
+package has no installed distribution metadata to read that version from.
 
 Which native module is the extension depends on what is installed:
 
@@ -307,6 +308,32 @@ def normalize_pep440_version(version: str) -> str | None:
     return normalized
 
 
+def _build_missing_metadata_error() -> ImportError:
+    return ImportError(
+        f"{_PACKAGE_NAME} has no installed distribution metadata, which holds "
+        "the version its Rust extension must match; it is likely imported from "
+        f"a source tree that was never installed. {_REBUILD_ADVICE}",
+        name=_PACKAGE_NAME,
+    )
+
+
+def _read_package_version() -> str:
+    """Return the installed version of ``fhy_core`` from its metadata.
+
+    Returns:
+        The version in the package's distribution metadata.
+
+    Raises:
+        ImportError: If the package has no installed distribution metadata.
+            The ``PackageNotFoundError`` is its cause.
+
+    """
+    try:
+        return importlib.metadata.version(_PACKAGE_NAME)
+    except importlib.metadata.PackageNotFoundError as error:
+        raise _build_missing_metadata_error() from error
+
+
 def _load_own_extension() -> ModuleType:
     """Import ``fhy_core._rs`` and check it matches the installed package.
 
@@ -316,8 +343,9 @@ def _load_own_extension() -> ModuleType:
     Raises:
         ImportError: If the extension is not installed, is built only for
             other interpreters, fails to import, or reports another version
-            than the installed package's. The message names the cause and
-            the fix; the original import error, if any, is its cause.
+            than the installed package's, or the package has no installed
+            distribution metadata. The message names the cause and the fix;
+            the original error, if any, is its cause.
 
     """
     try:
@@ -337,7 +365,7 @@ def _load_own_extension() -> ModuleType:
     except ImportError as error:
         raise _build_failed_import_error(error) from error
     extension_version = getattr(extension, "__version__", None)
-    package_version = importlib.metadata.version(_PACKAGE_NAME)
+    package_version = _read_package_version()
     if (
         not isinstance(extension_version, str)
         or normalize_pep440_version(extension_version) != package_version
@@ -890,7 +918,8 @@ def _load_aggregate_extension(selection: Selection) -> None:
     Raises:
         ImportError: If importing the module raises an ``Exception``, which
             becomes the cause of this error, or the module does not report the
-            installed package's version as ``__fhy_core_version__``, lacks a
+            installed package's version as ``__fhy_core_version__``, the
+            package has no installed distribution metadata, the module lacks a
             layer its entry points claim, or another native module is already
             installed as ``fhy_core._rs``.
 
@@ -901,7 +930,7 @@ def _load_aggregate_extension(selection: Selection) -> None:
     except Exception as error:
         raise _build_aggregate_import_error(selection, error) from error
     extension_version = getattr(extension, _AGGREGATE_VERSION_ATTRIBUTE, None)
-    package_version = importlib.metadata.version(_PACKAGE_NAME)
+    package_version = _read_package_version()
     if (
         not isinstance(extension_version, str)
         or normalize_pep440_version(extension_version) != package_version
@@ -946,9 +975,11 @@ def _check_extension() -> None:
             a module path, or the advertised modules tie or are
             incomparable; if the selected module is not installed, is built
             only for other interpreters, or fails to import; if it reports a
-            missing, non-PEP 440 or stale version; if it does not report a
-            layer its entry points claim; or if ``fhy_core._rs`` already
-            names another module. The message names the cause and the fix.
+            missing, non-PEP 440 or stale version; if the package has no
+            installed distribution metadata to read its version from; if the
+            module does not report a layer its entry points claim; or if
+            ``fhy_core._rs`` already names another module. The message names
+            the cause and the fix.
 
     """
     global _SELECTION  # noqa: PLW0603

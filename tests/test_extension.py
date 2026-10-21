@@ -321,6 +321,37 @@ def test_a_versionless_extension_raises_import_error() -> None:
     assert _REBUILD_ADVICE in message
 
 
+# Source that makes the installed package's metadata unreadable, as when the
+# package is imported from a source tree that was never installed.
+_HIDE_PACKAGE_METADATA_PREFIX = (
+    "import importlib.metadata\n"
+    "_read_version = importlib.metadata.version\n"
+    "def _read_version_without_fhy_core(name):\n"
+    "    if name == 'fhy_core':\n"
+    "        raise importlib.metadata.PackageNotFoundError(name)\n"
+    "    return _read_version(name)\n"
+    "importlib.metadata.version = _read_version_without_fhy_core\n"
+)
+_MISSING_METADATA_MESSAGE = (
+    "ImportError: fhy_core has no installed distribution metadata, which "
+    "holds the version its Rust extension must match; it is likely imported "
+    "from a source tree that was never installed. Rebuild the extension for "
+    "this interpreter from the source checkout with `uv sync`, or reinstall "
+    "the fhy_core wheel."
+)
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_missing_package_metadata_raises_import_error() -> None:
+    """Test the import fails with advice when the package has no metadata."""
+    completed = _import_the_package(_HIDE_PACKAGE_METADATA_PREFIX)
+
+    assert _read_import_error(completed) == _MISSING_METADATA_MESSAGE
+    assert "PackageNotFoundError: No package metadata" in completed.stderr
+    assert "was the direct cause of the following exception" in completed.stderr
+
+
 @pytest.mark.skipif(
     not sysconfig.get_config_var("Py_GIL_DISABLED"),
     reason="only a free-threaded interpreter can run without the GIL",
@@ -435,6 +466,27 @@ def test_a_stale_advertised_module_is_refused(
     assert "'native_stale'" in message
     assert expected_detail in message
     assert repr(importlib.metadata.version("fhy_core")) in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_missing_package_metadata_with_an_advertised_module_raises_import_error(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test an advertised module also needs the package's metadata."""
+    write_distribution(tmp_path, "product", {"product": "native_current"})
+    (tmp_path / "native_current.py").write_text(
+        f"__fhy_core_version__ = {importlib.metadata.version('fhy_core')!r}\n"
+    )
+
+    completed = run_python(
+        _HIDE_PACKAGE_METADATA_PREFIX + _PRINT_EXTENSION_NAME,
+        python_path=[tmp_path],
+    )
+
+    assert read_import_error(completed) == _MISSING_METADATA_MESSAGE
+    assert "PackageNotFoundError: No package metadata" in completed.stderr
+    assert "was the direct cause of the following exception" in completed.stderr
 
 
 @pytest.mark.slow
