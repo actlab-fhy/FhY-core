@@ -503,18 +503,11 @@ _CHAINS = {
         ("c", "native_abc"),
         ("c", "native_abc"),
     ],
-    "diamond": [
-        ("a", "native_a"),
-        ("b", "native_b"),
-        ("a", "native_ab"),
-        ("b", "native_ab"),
-    ],
 }
 _CHAIN_TOPS = {
     "one": "native_a",
     "two": "native_ab",
     "three": "native_abc",
-    "diamond": "native_ab",
 }
 
 
@@ -531,6 +524,25 @@ def test_a_chain_of_layers_selects_its_top(chain: str, reverse: bool) -> None:
         _CHAIN_TOPS[chain],
         "entry_points",
     )
+
+
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reversed"])
+def test_a_diamond_selects_the_module_containing_every_layer(reverse: bool) -> None:
+    """Test ``{a}``, ``{b}`` and ``{a, b}`` select the module with both layers."""
+    claims = [
+        ("a", "native_a"),
+        ("b", "native_b"),
+        ("a", "native_ab"),
+        ("b", "native_ab"),
+    ]
+    entry_points = [
+        _entry_point(name, module)
+        for name, module in (claims[::-1] if reverse else claims)
+    ]
+
+    selection = _select_native_module({}, entry_points)
+
+    assert (selection.module, selection.reason) == ("native_ab", "entry_points")
 
 
 def test_separate_entry_points_naming_one_module_are_unioned() -> None:
@@ -609,7 +621,7 @@ def test_the_environment_variable_overrides_a_tie_and_incomparable_sets(
 @pytest.mark.parametrize(
     "name", ["not-an-identifier", "1st", "a.b", "", "class", "None"]
 )
-def test_an_entry_point_name_that_is_not_an_identifier_is_refused(name: str) -> None:
+def test_an_entry_point_name_that_is_not_a_layer_name_is_refused(name: str) -> None:
     """Test a name that cannot be a package's import name is an error."""
     with pytest.raises(ImportError) as caught:
         _select_native_module({}, [_entry_point(name, "native_bad")])
@@ -896,6 +908,22 @@ def test_require_layer_refuses_a_package_that_holds_another_module(
     assert "(loaded from /elsewhere/demo_layer/_rs.so)" in message
     assert "'native_fake'" in message
     assert "Uninstall the package that provides the other module" in message
+
+
+def test_require_layer_refuses_a_held_module_without_a_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the held-module error omits the location when there is no file."""
+    module = _fake_module(__demo_layer_version__="1")
+    _install_selection(monkeypatch, module, _Selection("native_fake", "own", ()))
+    monkeypatch.setitem(sys.modules, "demo_layer._rs", ModuleType("demo_layer._rs"))
+
+    with pytest.raises(ImportError, match="already another module") as caught:
+        native.require_layer("demo_layer", "1")
+
+    message = str(caught.value)
+    assert "loaded from" not in message
+    assert "'demo_layer._rs' is already another module than" in message
 
 
 def test_require_layer_is_idempotent(

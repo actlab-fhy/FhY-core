@@ -34,11 +34,11 @@ installed layer (incomparable) raise ``ImportError`` naming them and what
 each lacks. Layer sets need not form a chain: a diamond such as ``{a}``,
 ``{b}``, ``{a, b}`` is accepted, since the last module contains every
 installed layer. ``ImportError`` is raised too for an entry point whose
-name is not an identifier or whose module differs from the ``fhy_core._rs``
-the process already holds. A module that is not
-selected is never imported. A selected module whose entry points claim a
-layer it does not report is refused, naming the entry point and the missing
-attribute. A named module that fails to import is never replaced by
+name is not a valid layer name (an identifier that is not a keyword) or whose
+module differs from the ``fhy_core._rs`` the process already holds. A module
+that is not selected is never imported. A selected module whose entry points
+claim a layer it does not report is refused, naming the entry point and the
+missing attribute. A named module that fails to import is never replaced by
 ``fhy_core._rs``, since a second copy of the Rust code would then run beside
 the one the product expects. ``fhy_core.native`` is the public interface to
 the selection.
@@ -110,7 +110,7 @@ _PEP440_PRE_RELEASE_LABELS = {
 }
 
 
-def is_layer_name(name: str) -> bool:
+def _is_layer_name(name: str) -> bool:
     """Return whether `name` can be the import name of a package.
 
     Args:
@@ -138,7 +138,7 @@ def layer_version_attribute(layer: str) -> str:
             Python keyword.
 
     """
-    if not is_layer_name(layer):
+    if not _is_layer_name(layer):
         raise ValueError(
             f"a layer is named by an identifier that is not a keyword, not {layer!r}"
         )
@@ -436,13 +436,13 @@ def _collect_candidates(
         entry points sorted by distribution and name.
 
     Raises:
-        ImportError: If ``strict`` and an entry point's name is not an
-            identifier.
+        ImportError: If ``strict`` and an entry point's name is not a valid
+            layer name (an identifier that is not a keyword).
 
     """
     by_module: dict[str, list[importlib.metadata.EntryPoint]] = {}
     for entry_point in entry_points:
-        if not is_layer_name(entry_point.name):
+        if not _is_layer_name(entry_point.name):
             if strict:
                 raise _build_invalid_layer_name_error(entry_point)
             continue
@@ -504,8 +504,8 @@ def _select_native_module(
 
     Raises:
         ImportError: If the variable is not set and an entry point's name is
-            not an identifier, or the advertised modules tie or are
-            incomparable.
+            not a valid layer name (an identifier that is not a keyword), or
+            the advertised modules tie or are incomparable.
 
     """
     named = environ.get(NATIVE_MODULE_ENVIRONMENT_VARIABLE, "").strip()
