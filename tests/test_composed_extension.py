@@ -320,19 +320,27 @@ def test_a_layer_is_required_and_installed_for_its_package(
         f"""
         import importlib.metadata
         import sys
+        import types
         import {MODULE} as aggregate
         import fhy_core
 
+        # The packages that own the layers, as they are while importing.
+        for package in ("fhy_example", "search_package", "not_installed"):
+            sys.modules[package] = types.ModuleType(package)
         version = importlib.metadata.version("fhy_core")
         module = fhy_core.native.require_layer("fhy_example", version)
         assert module is aggregate
         assert sys.modules["fhy_example._rs"] is aggregate
+        assert sys.modules["fhy_example"]._rs is aggregate
         module = fhy_core.native.require_layer(
             "fhy_example_search", version, package="search_package"
         )
         assert sys.modules["search_package._rs"] is aggregate
+        assert sys.modules["search_package"]._rs is aggregate
         try:
-            fhy_core.native.require_layer("fhy_example_search", "999.0.0")
+            fhy_core.native.require_layer(
+                "fhy_example_search", "999.0.0", package="search_package"
+            )
         except ImportError as error:
             assert "is stale" in str(error)
             assert "{PACKAGE}" in str(error)

@@ -1092,17 +1092,63 @@ def test_require_layer_installs_the_module_for_the_package(
 def test_require_layer_installs_under_the_named_package(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test `package` names where the module is installed."""
+    """Test `package` names where the module is installed, and is set on it."""
     module = _fake_module(__demo_layer_version__="1")
     _install_selection(monkeypatch, module, _Selection("native_fake", "own", ()))
+    other = ModuleType("demo_other")
+    monkeypatch.setitem(sys.modules, "demo_other", other)
     try:
         native.require_layer("demo_layer", "1", package="demo_other")
 
         assert sys.modules["demo_other._rs"] is module
+        assert other._rs is module
+        assert "demo_layer._rs" not in sys.modules
     finally:
         sys.modules.pop("demo_other._rs", None)
 
 
+@pytest.mark.parametrize("package", ["", "a b", "pkg.", ".rel", "class"])
+def test_require_layer_refuses_a_package_that_is_not_a_module_path(
+    monkeypatch: pytest.MonkeyPatch, package: str
+) -> None:
+    """Test a package name that cannot be imported is the caller's error."""
+    module = _fake_module(__demo_layer_version__="1")
+    _install_selection(monkeypatch, module, _Selection("native_fake", "own", ()))
+
+    with pytest.raises(ValueError) as caught:
+        native.require_layer("demo_layer", "1", package=package)
+
+    assert str(caught.value) == (
+        f"a package is named by an importable module path, not {package!r}"
+    )
+    assert f"{package}._rs" not in sys.modules
+    assert "demo_layer._rs" not in sys.modules
+
+
+@pytest.mark.parametrize(
+    ("layer", "package"),
+    [("demo_layer", "typo_pkg"), ("demo_unimported", None)],
+    ids=["package", "layer"],
+)
+def test_require_layer_refuses_a_package_that_is_not_imported(
+    monkeypatch: pytest.MonkeyPatch, layer: str, package: str | None
+) -> None:
+    """Test the owner must be imported, so its `_rs` is set on it."""
+    module = _fake_module(**{f"__{layer}_version__": "1"})
+    _install_selection(monkeypatch, module, _Selection("native_fake", "own", ()))
+    owner = package or layer
+
+    with pytest.raises(ValueError) as caught:
+        native.require_layer(layer, "1", package=package)
+
+    assert str(caught.value) == (
+        f"the package {owner!r} is not in sys.modules; call require_layer "
+        "while that package is being imported"
+    )
+    assert f"{owner}._rs" not in sys.modules
+
+
+@pytest.mark.usefixtures("demo_package")
 def test_require_layer_refuses_a_package_that_holds_another_module(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1122,6 +1168,7 @@ def test_require_layer_refuses_a_package_that_holds_another_module(
     assert "Uninstall the package that provides the other module" in message
 
 
+@pytest.mark.usefixtures("demo_package")
 def test_require_layer_refuses_a_held_module_without_a_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1160,6 +1207,7 @@ def test_require_layer_refuses_a_name_that_is_not_a_layer(layer: str) -> None:
         native.require_layer(layer, "1")
 
 
+@pytest.mark.usefixtures("demo_package")
 def test_require_layer_names_the_variable_when_it_selected_the_module(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1182,6 +1230,7 @@ def test_require_layer_names_the_variable_when_it_selected_the_module(
     )
 
 
+@pytest.mark.usefixtures("demo_package")
 def test_require_layer_with_the_variable_and_no_holder_says_so(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1193,6 +1242,7 @@ def test_require_layer_with_the_variable_and_no_holder_says_so(
         native.require_layer("demo_layer", "1")
 
 
+@pytest.mark.usefixtures("demo_package")
 @pytest.mark.parametrize("reason", ["entry_points", "own"])
 def test_require_layer_names_the_missing_declaration(
     monkeypatch: pytest.MonkeyPatch, reason: str
@@ -1217,6 +1267,7 @@ def test_require_layer_names_the_missing_declaration(
     )
 
 
+@pytest.mark.usefixtures("demo_package")
 def test_require_layer_refuses_a_stale_layer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1265,6 +1316,7 @@ def test_require_layer_checks_the_version_before_the_module(
         native.require_layer("demo_layer", "dev")
 
 
+@pytest.mark.usefixtures("demo_package")
 def test_require_layer_refuses_a_reported_version_that_is_not_pep440(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1295,6 +1347,7 @@ def test_require_layer_accepts_versions_equal_in_normal_form(
     assert native.require_layer("demo_layer", "v1.2.3-RC1") is module
 
 
+@pytest.mark.usefixtures("demo_package")
 def test_require_layer_treats_a_non_string_version_as_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

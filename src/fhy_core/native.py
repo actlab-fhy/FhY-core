@@ -10,7 +10,7 @@ present in a module if and only if the module has a ``str`` attribute
 ``__<layer>_version__``.
 
 This module is the interface a downstream package uses to claim its layer:
-call `require_layer` while that package is imported, to check the layer is in
+call `require_layer` while that package is being imported, to check the layer is in
 the native module of the process and to install the module as the package's
 own ``_rs``.
 """
@@ -28,6 +28,7 @@ from fhy_core._extension import (
     NATIVE_MODULE_ENVIRONMENT_VARIABLE,
     _describe_candidate,
     _distribution_name,
+    _is_module_name,
     _normalize_pep440_version,
     get_layer_version_attribute,
 )
@@ -154,9 +155,10 @@ def require_layer(
     Call this while the package that owns the layer is imported. The check
     is that the native module ``fhy_core`` runs on has the attribute
     ``__<layer>_version__`` and that its PEP 440 normal form equals that of
-    `version`. The module is then installed as ``<package>._rs``, so the
+    `version`. The module is then installed as ``<package>._rs``, in
+    ``sys.modules`` and as the attribute ``_rs`` of the package, so the
     package's binding finds its state there as ``fhy_core``'s finds its own
-    in ``fhy_core._rs``.
+    in ``fhy_core._rs``. Nothing is installed unless every check passes.
 
     Args:
         layer: Import name of the package whose Rust binding is the layer.
@@ -164,7 +166,8 @@ def require_layer(
             spelling (a Cargo version such as ``1.2.3-rc.1`` is one), which
             the native module's version of the layer must equal in normal
             form.
-        package: Package to install the module under as ``_rs``. Defaults to
+        package: Package to install the module under as ``_rs``, an
+            importable module path that is in ``sys.modules``. Defaults to
             `layer`.
 
     Returns:
@@ -174,14 +177,27 @@ def require_layer(
         ImportError: If the module does not contain the layer, or reports
             another version of it or one that is not a PEP 440 version. The
             message names the reason the module was selected and what to do.
-        ValueError: If `layer` is not a valid identifier or is a keyword, or
-            `version` is not a PEP 440 version.
+        ValueError: If `layer` is not a valid identifier or is a keyword,
+            `version` is not a PEP 440 version, or the package (`package`, or
+            `layer` if it is ``None``) is not an importable module path or is
+            not in ``sys.modules``.
 
     """
     attribute = get_layer_version_attribute(layer)
     required = _normalize_pep440_version(version)
     if required is None:
         raise ValueError(f"a layer's version is a PEP 440 version, not {version!r}")
+    owner = package if package is not None else layer
+    if not _is_module_name(owner):
+        raise ValueError(
+            f"a package is named by an importable module path, not {owner!r}"
+        )
+    parent = sys.modules.get(owner)
+    if parent is None:
+        raise ValueError(
+            f"the package {owner!r} is not in sys.modules; call require_layer "
+            "while that package is being imported"
+        )
     module = sys.modules[_EXTENSION_MODULE]
     reported = getattr(module, attribute, None)
     if not isinstance(reported, str):
@@ -191,7 +207,6 @@ def require_layer(
         raise _build_stale_layer_error(
             layer, version, reported, is_pep440=normalized is not None
         )
-    owner = package if package is not None else layer
     name = f"{owner}.{_EXTENSION_STEM}"
     held = sys.modules.get(name)
     if held is not None and held is not module:
@@ -205,7 +220,5 @@ def require_layer(
             name=name,
         )
     sys.modules[name] = module
-    parent = sys.modules.get(owner)
-    if parent is not None:
-        setattr(parent, _EXTENSION_STEM, module)
+    setattr(parent, _EXTENSION_STEM, module)
     return module

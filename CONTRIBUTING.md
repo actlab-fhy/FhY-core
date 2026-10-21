@@ -657,8 +657,11 @@ module, loading an aggregate raises `ImportError`.
 A product's Python package calls `fhy_core.native.require_layer(layer,
 version, package=None)` while it is imported. It checks that the native module
 reports `version` as `__<layer>_version__` (compared in PEP 440 normal form),
-installs the module as `<package>._rs`, and returns it. A `version` that is
-not a PEP 440 version raises `ValueError`. Its `ImportError` tells apart a
+installs the module as `<package>._rs` (in `sys.modules` and as the
+package's attribute `_rs`), and returns it. A `version` that is not a PEP 440
+version, or a package (`package`, else `layer`) that is not an importable
+module path or is not yet in `sys.modules`, raises `ValueError` before
+anything is installed. Its `ImportError` tells apart a
 module chosen by the variable that lacks the layer, a layer no installed
 distribution declares, and a stale layer, which includes a reported version
 that is not a PEP 440 version. `fhy_core.native.get_selection()`
