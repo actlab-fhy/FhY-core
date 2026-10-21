@@ -755,6 +755,25 @@ def test_the_environment_variable_selects_over_the_entry_points() -> None:
     )
 
 
+@pytest.mark.parametrize("value", [".rel", "a b", "pkg.mod:attr", "my-product.x"])
+def test_an_environment_variable_that_is_not_a_module_path_is_refused(
+    value: str,
+) -> None:
+    """Test the variable must name an importable module."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module(
+            {NATIVE_MODULE_ENVIRONMENT_VARIABLE: value},
+            [_entry_point("product", "native_product")],
+        )
+
+    assert str(caught.value) == (
+        f"The environment variable FHY_CORE_NATIVE_MODULE is set to {value!r}, "
+        "which is not an importable module path (dot-separated identifiers "
+        "that are not keywords). Set it to the module to use, such as "
+        "'fhy_core._rs', or unset it to let fhy_core choose."
+    )
+
+
 def test_a_blank_environment_variable_is_ignored() -> None:
     """Test a variable that is empty or blank does not select a module."""
     assert _select([], {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "  "}) == (
@@ -792,6 +811,28 @@ def test_a_module_that_is_not_selected_is_never_imported(
     assert "'native_upper'" in message
     assert "native_lower" not in message
     assert "was imported" not in message
+
+
+def test_a_selected_module_raising_on_import_is_refused_with_its_cause(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test any exception importing the module becomes the `ImportError` cause."""
+    write_native_module(
+        tmp_path,
+        "native_raising_on_import",
+        {},
+        fhy_core_version=importlib.metadata.version("fhy_core"),
+        on_import="raise RuntimeError('broken at import')",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(ImportError) as caught:
+        _extension._load_aggregate_extension("native_raising_on_import")
+
+    assert "'native_raising_on_import'" in str(caught.value)
+    assert "failed to import (RuntimeError: broken at import)" in str(caught.value)
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert "native_raising_on_import" not in sys.modules
 
 
 def _candidate(*names: str) -> _Candidate:

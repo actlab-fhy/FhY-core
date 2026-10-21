@@ -627,7 +627,8 @@ layer `name`. The loader groups the entry points by module across all
 distributions, so a module's layers are the union of its claims plus the
 implicit `fhy_core`.
 
-1. `FHY_CORE_NATIVE_MODULE`, if set, overrides everything. The entry points
+1. `FHY_CORE_NATIVE_MODULE`, if set, overrides everything; a value that is
+   not an importable module path raises `ImportError`. The entry points
    are still read, only to name alternatives in messages, and entry points
    whose names are not valid layer names (identifiers that are not keywords)
    or whose values are not module paths are ignored.
@@ -647,8 +648,9 @@ Only the selected module is imported. Once imported, it is checked: its
 `_rs` is refused, and every other layer its entry points claim must be backed
 by a `str` attribute `__<layer>_version__`, even when it is the only
 candidate or is `fhy_core._rs` itself (whose version is its `__version__`).
-A named module that fails to import raises `ImportError`; it never falls back
-to `fhy_core._rs`. If `fhy_core._rs` already names a different
+A named module that fails to import raises `ImportError`, with whatever
+exception the import raised as its cause; it never falls back to
+`fhy_core._rs`. If `fhy_core._rs` already names a different
 module, loading an aggregate raises `ImportError`.
 
 A product's Python package calls `fhy_core.native.require_layer(layer,

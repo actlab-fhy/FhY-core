@@ -26,7 +26,8 @@ Which native module is the extension depends on what is installed:
   importable without importing ``fhy_core``.
 - The environment variable ``FHY_CORE_NATIVE_MODULE`` names the module to
   load and overrides the entry points; ``fhy_core._rs`` names the module
-  ``fhy_core`` ships.
+  ``fhy_core`` ships. A value that is not an importable module path raises
+  ``ImportError``.
 
 A process holds one native module. Several modules that each contain every
 installed layer (a tie) and a set of modules of which none contains every
@@ -41,9 +42,10 @@ attribute or extras), and for a selected module that differs from the
 never imported. A selected module whose entry points claim a layer it does
 not report is refused, naming the entry point and the missing attribute;
 this holds for ``fhy_core._rs`` too when entry points advertise it. A named
-module that fails to import is never replaced by ``fhy_core._rs``, since a
-second copy of the Rust code would then run beside the one the product
-expects. ``fhy_core.native`` is the public interface to the selection.
+module that fails to import, whatever it raises, is never replaced by
+``fhy_core._rs``, since a second copy of the Rust code would then run beside
+the one the product expects. ``fhy_core.native`` is the public interface to
+the selection.
 """
 
 __all__: list[str] = []
@@ -533,6 +535,16 @@ def _choose_candidate(candidates: Sequence[_Candidate]) -> _Candidate | None:
     return complete[0]
 
 
+def _build_invalid_variable_value_error(value: str) -> ImportError:
+    return ImportError(
+        f"The environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE} is set "
+        f"to {value!r}, which is not an importable module path (dot-separated "
+        "identifiers that are not keywords). Set it to the module to use, such "
+        f"as {_EXTENSION_MODULE!r}, or unset it to let {_PACKAGE_NAME} choose.",
+        name=_EXTENSION_MODULE,
+    )
+
+
 def _select_native_module(
     environ: Mapping[str, str],
     entry_points: Iterable[importlib.metadata.EntryPoint],
@@ -549,13 +561,16 @@ def _select_native_module(
         ``fhy_core._rs``.
 
     Raises:
-        ImportError: If the variable is not set and an entry point's name is
-            not a valid layer name (an identifier that is not a keyword) or
-            its value is not a module path, or the advertised modules tie or
-            are incomparable.
+        ImportError: If the variable is set to a value that is not an
+            importable module path; if the variable is not set and an entry
+            point's name is not a valid layer name (an identifier that is not
+            a keyword) or its value is not a module path; or if the
+            advertised modules tie or are incomparable.
 
     """
     named = environ.get(NATIVE_MODULE_ENVIRONMENT_VARIABLE, "").strip()
+    if named and not _is_module_name(named):
+        raise _build_invalid_variable_value_error(named)
     candidates = _collect_candidates(entry_points, strict=not named)
     if named:
         return _Selection(named, "environment", candidates)
@@ -565,7 +580,7 @@ def _select_native_module(
     return _Selection(chosen.module, "entry_points", candidates)
 
 
-def _build_aggregate_import_error(module_name: str, error: ImportError) -> ImportError:
+def _build_aggregate_import_error(module_name: str, error: Exception) -> ImportError:
     return ImportError(
         f"{_PACKAGE_NAME} is set to run on the native extension module "
         f"{module_name!r}, which failed to import ({type(error).__name__}: "
@@ -657,7 +672,8 @@ def _load_aggregate_extension(
             layers are verified, or ``None`` if none does.
 
     Raises:
-        ImportError: If the module fails to import, does not report the
+        ImportError: If importing the module raises an ``Exception``, which
+            becomes the cause of this error, or the module does not report the
             installed package's version as ``__fhy_core_version__``, lacks a
             layer its entry points claim, or another native module is already
             installed as ``fhy_core._rs``.
@@ -665,7 +681,7 @@ def _load_aggregate_extension(
     """
     try:
         extension = importlib.import_module(module_name)
-    except ImportError as error:
+    except Exception as error:
         raise _build_aggregate_import_error(module_name, error) from error
     extension_version = getattr(extension, _AGGREGATE_VERSION_ATTRIBUTE, None)
     package_version = importlib.metadata.version(_PACKAGE_NAME)
