@@ -30,7 +30,7 @@ from fhy_core._extension import (
     _select_native_module,
     _Selection,
     _verify_declared_layers,
-    layer_version_attribute,
+    get_layer_version_attribute,
 )
 from tests.native_modules import (
     read_import_error,
@@ -723,10 +723,12 @@ def test_a_module_value_is_read_without_surrounding_space() -> None:
 
 
 @pytest.mark.parametrize("layer", ["class", "None", "not-a-layer", "1st", ""])
-def test_layer_version_attribute_refuses_a_name_that_is_not_a_layer(layer: str) -> None:
+def test_get_layer_version_attribute_refuses_a_name_that_is_not_a_layer(
+    layer: str,
+) -> None:
     """Test a keyword or non-identifier layer name raises `ValueError`."""
     with pytest.raises(ValueError, match="identifier"):
-        layer_version_attribute(layer)
+        get_layer_version_attribute(layer)
 
 
 def test_an_invalid_entry_point_name_is_ignored_under_the_variable() -> None:
@@ -808,9 +810,9 @@ def _fake_module(**attributes: object) -> ModuleType:
 
 def test_the_version_attribute_of_a_layer_is_dunder_version() -> None:
     """Test a layer's attribute is its name between `__` and `_version__`."""
-    assert layer_version_attribute("moga_sim") == "__moga_sim_version__"
+    assert get_layer_version_attribute("moga_sim") == "__moga_sim_version__"
     with pytest.raises(ValueError, match="identifier"):
-        layer_version_attribute("not-a-layer")
+        get_layer_version_attribute("not-a-layer")
 
 
 def test_a_module_holding_every_claimed_layer_is_verified() -> None:
@@ -972,8 +974,8 @@ def demo_package() -> Iterable[ModuleType]:
 
 
 def test_the_selection_of_this_process_is_public() -> None:
-    """Test `fhy_core.native.selection` reports what the loader chose."""
-    chosen = native.selection()
+    """Test `fhy_core.native.get_selection` reports what the loader chose."""
+    chosen = native.get_selection()
 
     loaded = _extension._SELECTION
     assert loaded is not None

@@ -29,16 +29,16 @@ from fhy_core._extension import (
     _describe_candidate,
     _distribution_name,
     _normalize_pep440_version,
-    layer_version_attribute,
+    get_layer_version_attribute,
 )
 
 __all__ = [
     "ENTRY_POINT_GROUP",
     "MODULE_ENVIRONMENT_VARIABLE",
     "NativeSelection",
-    "layer_version_attribute",
+    "get_layer_version_attribute",
+    "get_selection",
     "require_layer",
-    "selection",
 ]
 
 ENTRY_POINT_GROUP = NATIVE_ENTRY_POINT_GROUP
@@ -74,7 +74,7 @@ def _current_selection() -> _extension._Selection:
     return chosen
 
 
-def selection() -> NativeSelection:
+def get_selection() -> NativeSelection:
     """Return the native module this process runs on.
 
     Returns:
@@ -87,7 +87,7 @@ def selection() -> NativeSelection:
 
 def _build_missing_layer_error(layer: str, version: str) -> ImportError:
     chosen = _current_selection()
-    attribute = layer_version_attribute(layer)
+    attribute = get_layer_version_attribute(layer)
     if chosen.reason == "environment":
         holders = [c for c in chosen.candidates if layer in c.layers]
         advice = (
@@ -133,9 +133,9 @@ def _build_stale_layer_error(
         else "the package that provides the module"
     )
     report = (
-        f"reports version {reported!r} in {layer_version_attribute(layer)}"
+        f"reports version {reported!r} in {get_layer_version_attribute(layer)}"
         if is_pep440
-        else f"reports {reported!r} in {layer_version_attribute(layer)}, which "
+        else f"reports {reported!r} in {get_layer_version_attribute(layer)}, which "
         "is not a PEP 440 version"
     )
     return ImportError(
@@ -178,7 +178,7 @@ def require_layer(
             `version` is not a PEP 440 version.
 
     """
-    attribute = layer_version_attribute(layer)
+    attribute = get_layer_version_attribute(layer)
     required = _normalize_pep440_version(version)
     if required is None:
         raise ValueError(f"a layer's version is a PEP 440 version, not {version!r}")

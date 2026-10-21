@@ -300,7 +300,7 @@ def test_each_layer_of_the_aggregate_reports_its_version(site: pathlib.Path) -> 
             _normalize_pep440_version(aggregate.__fhy_example_search_version__)
             == version
         )
-        selection = fhy_core.native.selection()
+        selection = fhy_core.native.get_selection()
         assert selection.module == "{MODULE}"
         assert selection.reason == "entry_points"
         assert selection.layers == {{"fhy_core", "fhy_example", "fhy_example_search"}}
@@ -379,7 +379,7 @@ def test_a_lower_module_next_to_the_aggregate_is_never_imported(
 
             assert fhy_core._rs is aggregate
             assert "native_lower" not in sys.modules
-            selection = fhy_core.native.selection()
+            selection = fhy_core.native.get_selection()
             assert selection.module == "{MODULE}"
             derived = aggregate.Tagger.derive(Identifier("first"), "_derived")
             assert derived.name_hint == "first_derived"

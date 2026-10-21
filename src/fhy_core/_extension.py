@@ -140,7 +140,7 @@ def _is_module_name(name: str) -> bool:
     return all(_is_layer_name(part) for part in name.split("."))
 
 
-def layer_version_attribute(layer: str) -> str:
+def get_layer_version_attribute(layer: str) -> str:
     """Return the module attribute that holds the version of a layer.
 
     Args:
@@ -599,7 +599,7 @@ def _build_undeclared_layer_error(
         f"the entry point {ep.name!r}"
         + (f" of {_distribution_name(ep)!r}" if _distribution_name(ep) else "")
         + f" claims the layer {ep.name!r}, but the module has no string "
-        f"attribute {layer_version_attribute(ep.name)!r}"
+        f"attribute {get_layer_version_attribute(ep.name)!r}"
         for ep in missing
     )
     return ImportError(
@@ -639,7 +639,7 @@ def _verify_declared_layers(
         for entry_point in candidate.entry_points
         if entry_point.name != _PACKAGE_NAME
         and not isinstance(
-            getattr(extension, layer_version_attribute(entry_point.name), None), str
+            getattr(extension, get_layer_version_attribute(entry_point.name), None), str
         )
     ]
     if missing:
