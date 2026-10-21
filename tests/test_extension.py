@@ -400,10 +400,13 @@ def test_an_advertised_module_that_is_missing_is_not_replaced_by_the_own_one(
         run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
     )
 
-    assert "'native_missing'" in message
-    assert "failed to import" in message
-    assert "ModuleNotFoundError" in message
-    assert "fhy_core._rs" in message
+    assert message == (
+        "ImportError: fhy_core selected the native extension module "
+        "'native_missing' (entry point 'product' of 'product') from the "
+        "installed entry points, but it failed to import (ModuleNotFoundError: "
+        "No module named 'native_missing'). Reinstall the distribution that "
+        "provides it, or uninstall that distribution."
+    )
 
 
 @pytest.mark.slow
@@ -827,12 +830,51 @@ def test_a_selected_module_raising_on_import_is_refused_with_its_cause(
     monkeypatch.syspath_prepend(str(tmp_path))
 
     with pytest.raises(ImportError) as caught:
-        _extension._load_aggregate_extension("native_raising_on_import")
+        _extension._load_aggregate_extension(
+            _Selection("native_raising_on_import", "environment", ())
+        )
 
     assert "'native_raising_on_import'" in str(caught.value)
     assert "failed to import (RuntimeError: broken at import)" in str(caught.value)
     assert isinstance(caught.value.__cause__, RuntimeError)
     assert "native_raising_on_import" not in sys.modules
+
+
+def test_a_variable_module_that_fails_to_import_names_the_variable() -> None:
+    """Test the advice for a module the variable chose is about the variable."""
+    with pytest.raises(ImportError) as caught:
+        _extension._load_aggregate_extension(
+            _Selection("native_absent_by_variable", "environment", ())
+        )
+
+    assert str(caught.value) == (
+        "FHY_CORE_NATIVE_MODULE=native_absent_by_variable selected the native "
+        "extension module 'native_absent_by_variable', but it failed to import "
+        "(ModuleNotFoundError: No module named 'native_absent_by_variable'). "
+        "Unset FHY_CORE_NATIVE_MODULE to let fhy_core choose, or set it to an "
+        "importable module."
+    )
+
+
+def test_an_advertised_module_that_fails_to_import_names_its_entry_points() -> None:
+    """Test the advice for an advertised module is about its distribution."""
+    candidate = _Candidate(
+        "native_absent_advertised",
+        (_entry_point("product", "native_absent_advertised"),),
+    )
+
+    with pytest.raises(ImportError) as caught:
+        _extension._load_aggregate_extension(
+            _Selection("native_absent_advertised", "entry_points", (candidate,))
+        )
+
+    assert str(caught.value) == (
+        "fhy_core selected the native extension module "
+        "'native_absent_advertised' (entry point 'product') from the installed "
+        "entry points, but it failed to import (ModuleNotFoundError: No module "
+        "named 'native_absent_advertised'). Reinstall the distribution that "
+        "provides it, or uninstall that distribution."
+    )
 
 
 def _candidate(*names: str) -> _Candidate:

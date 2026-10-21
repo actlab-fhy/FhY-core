@@ -580,13 +580,27 @@ def _select_native_module(
     return _Selection(chosen.module, "entry_points", candidates)
 
 
-def _build_aggregate_import_error(module_name: str, error: Exception) -> ImportError:
+def _build_aggregate_import_error(
+    selection: _Selection, error: Exception
+) -> ImportError:
+    failure = f"failed to import ({type(error).__name__}: {error})"
+    if selection.reason == "environment":
+        return ImportError(
+            f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}={selection.module} selected "
+            f"the native extension module {selection.module!r}, but it {failure}. "
+            f"Unset {NATIVE_MODULE_ENVIRONMENT_VARIABLE} to let {_PACKAGE_NAME} "
+            "choose, or set it to an importable module.",
+            name=selection.module,
+        )
+    candidate = selection.candidate
+    described = (
+        repr(selection.module) if candidate is None else _describe_candidate(candidate)
+    )
     return ImportError(
-        f"{_PACKAGE_NAME} is set to run on the native extension module "
-        f"{module_name!r}, which failed to import ({type(error).__name__}: "
-        f"{error}). Reinstall the package that provides it, or uninstall it "
-        f"to use {_EXTENSION_MODULE}.",
-        name=module_name,
+        f"{_PACKAGE_NAME} selected the native extension module {described} "
+        f"from the installed entry points, but it {failure}. Reinstall the "
+        "distribution that provides it, or uninstall that distribution.",
+        name=selection.module,
     )
 
 
@@ -661,15 +675,14 @@ def _verify_declared_layers(
         raise _build_undeclared_layer_error(module_name, missing)
 
 
-def _load_aggregate_extension(
-    module_name: str, candidate: _Candidate | None = None
-) -> None:
+def _load_aggregate_extension(selection: _Selection) -> None:
     """Load a combined extension module and install it as ``fhy_core._rs``.
 
     Args:
-        module_name: Importable name of the combined extension module.
-        candidate: The entry points that advertise the module, whose claimed
-            layers are verified, or ``None`` if none does.
+        selection: The selection of a module other than ``fhy_core._rs``.
+            The claimed layers of its candidate, if any, are verified, and
+            its reason decides the advice given if the module fails to
+            import.
 
     Raises:
         ImportError: If importing the module raises an ``Exception``, which
@@ -679,10 +692,11 @@ def _load_aggregate_extension(
             installed as ``fhy_core._rs``.
 
     """
+    module_name = selection.module
     try:
         extension = importlib.import_module(module_name)
     except Exception as error:
-        raise _build_aggregate_import_error(module_name, error) from error
+        raise _build_aggregate_import_error(selection, error) from error
     extension_version = getattr(extension, _AGGREGATE_VERSION_ATTRIBUTE, None)
     package_version = importlib.metadata.version(_PACKAGE_NAME)
     if (
@@ -692,7 +706,7 @@ def _load_aggregate_extension(
         raise _build_stale_aggregate_error(
             module_name, extension_version, package_version
         )
-    _verify_declared_layers(module_name, extension, candidate)
+    _verify_declared_layers(module_name, extension, selection.candidate)
     _install_as_own_extension(module_name, extension)
 
 
@@ -736,7 +750,7 @@ def _check_extension() -> None:
         extension = _load_own_extension()
         _verify_declared_layers(_EXTENSION_MODULE, extension, selection.candidate)
     else:
-        _load_aggregate_extension(selection.module, selection.candidate)
+        _load_aggregate_extension(selection)
 
 
 _check_extension()
