@@ -59,6 +59,7 @@ __all__: list[str] = []
 import importlib
 import importlib.machinery
 import importlib.metadata
+import itertools
 import keyword
 import os
 import re
@@ -341,16 +342,43 @@ def _load_own_extension() -> ModuleType:
     return extension
 
 
+SelectionReason = Literal["environment", "entry_points", "own"]
+"""Why a native module was selected: the variable, the entry points, or neither."""
+
+
 @dataclass(frozen=True)
 class Candidate:
     """A native module that entry points advertise, with its entry points.
 
     Each entry point's name is a layer the module claims to contain: the
-    import name of a Python package whose Rust binding the module holds.
+    import name of a Python package whose Rust binding the module holds. A
+    candidate has at least one entry point, each named by a layer name and
+    valued, stripped of surrounding space, with the module; ``ValueError``
+    is raised otherwise.
     """
 
     module: str
     entry_points: tuple[importlib.metadata.EntryPoint, ...]
+
+    def __post_init__(self) -> None:
+        if not self.entry_points:
+            raise ValueError(
+                "a candidate is advertised by at least one entry point, but "
+                f"{self.module!r} has none"
+            )
+        for entry_point in self.entry_points:
+            if not _is_layer_name(entry_point.name):
+                raise ValueError(
+                    "an entry point of a candidate is named by a layer (an "
+                    "identifier that is not a keyword), not "
+                    f"{entry_point.name!r}"
+                )
+            if entry_point.value.strip() != self.module:
+                raise ValueError(
+                    "every entry point of a candidate names its module "
+                    f"{self.module!r}, but the entry point {entry_point.name!r} "
+                    f"names {entry_point.value!r}"
+                )
 
     @property
     def layers(self) -> frozenset[str]:
@@ -370,11 +398,42 @@ class Selection:
         candidates: Every module the entry points advertise, sorted by name,
             whether or not it was selected.
 
+    Only a state the loader can reach is built; ``ValueError`` is raised for
+    a selection for the reason ``"own"`` of a module other than
+    ``fhy_core._rs`` or with candidates, one for the reason
+    ``"entry_points"`` of a module that is not a candidate, and candidates
+    that are not sorted by module or repeat one.
+
     """
 
     module: str
-    reason: Literal["environment", "entry_points", "own"]
+    reason: SelectionReason
     candidates: tuple[Candidate, ...]
+
+    def __post_init__(self) -> None:
+        modules = [candidate.module for candidate in self.candidates]
+        if any(first >= second for first, second in itertools.pairwise(modules)):
+            raise ValueError(
+                "a selection's candidates are sorted by module with none "
+                f"repeated, not {modules}"
+            )
+        if self.reason == "own":
+            if self.module != EXTENSION_MODULE:
+                raise ValueError(
+                    "a selection for the reason 'own' is of "
+                    f"{EXTENSION_MODULE!r}, not {self.module!r}"
+                )
+            if modules:
+                raise ValueError(
+                    "a selection for the reason 'own' has no candidates, since "
+                    f"an advertised module would be selected, but it has {modules}"
+                )
+        if self.reason == "entry_points" and self.module not in modules:
+            raise ValueError(
+                "a selection for the reason 'entry_points' is of an advertised "
+                f"module, but {self.module!r} is not among the candidates "
+                f"{modules}"
+            )
 
     @property
     def candidate(self) -> Candidate | None:

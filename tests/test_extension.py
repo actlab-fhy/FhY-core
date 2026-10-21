@@ -26,6 +26,7 @@ from fhy_core._extension import (
     NATIVE_MODULE_ENVIRONMENT_VARIABLE,
     Candidate,
     Selection,
+    SelectionReason,
     _find_foreign_extension_builds,
     _select_native_module,
     _verify_declared_layers,
@@ -892,6 +893,103 @@ def _fake_module(**attributes: object) -> ModuleType:
     return module
 
 
+@pytest.mark.parametrize(
+    ("claims", "expected"),
+    [
+        (
+            [],
+            "a candidate is advertised by at least one entry point, but "
+            "'native_fake' has none",
+        ),
+        (
+            [("a", "native_fake"), ("b", "native_other")],
+            "every entry point of a candidate names its module 'native_fake', "
+            "but the entry point 'b' names 'native_other'",
+        ),
+        (
+            [("class", "native_fake")],
+            "an entry point of a candidate is named by a layer (an identifier "
+            "that is not a keyword), not 'class'",
+        ),
+    ],
+    ids=["no-entry-points", "other-module", "invalid-name"],
+)
+def test_an_impossible_candidate_is_refused(
+    claims: list[tuple[str, str]], expected: str
+) -> None:
+    """Test a candidate is built only from entry points that name its module."""
+    entry_points = tuple(_entry_point(name, module) for name, module in claims)
+
+    with pytest.raises(ValueError) as caught:
+        Candidate("native_fake", entry_points)
+
+    assert str(caught.value) == expected
+
+
+def _create_named_candidate(module: str) -> Candidate:
+    """Return a candidate `module` that the layer ``a`` claims."""
+    return Candidate(module, (_entry_point("a", module),))
+
+
+@pytest.mark.parametrize(
+    ("module", "reason", "candidates", "expected"),
+    [
+        (
+            "native_fake",
+            "own",
+            [],
+            "a selection for the reason 'own' is of 'fhy_core._rs', not 'native_fake'",
+        ),
+        (
+            "fhy_core._rs",
+            "own",
+            ["native_a"],
+            "a selection for the reason 'own' has no candidates, since an "
+            "advertised module would be selected, but it has ['native_a']",
+        ),
+        (
+            "native_other",
+            "entry_points",
+            ["native_a"],
+            "a selection for the reason 'entry_points' is of an advertised "
+            "module, but 'native_other' is not among the candidates "
+            "['native_a']",
+        ),
+        (
+            "native_named",
+            "environment",
+            ["native_b", "native_a"],
+            "a selection's candidates are sorted by module with none repeated, "
+            "not ['native_b', 'native_a']",
+        ),
+        (
+            "native_named",
+            "environment",
+            ["native_a", "native_a"],
+            "a selection's candidates are sorted by module with none repeated, "
+            "not ['native_a', 'native_a']",
+        ),
+    ],
+    ids=[
+        "own-other-module",
+        "own-with-candidates",
+        "entry-points-unadvertised",
+        "unsorted",
+        "repeated",
+    ],
+)
+def test_an_impossible_selection_is_refused(
+    module: str, reason: SelectionReason, candidates: list[str], expected: str
+) -> None:
+    """Test a selection is built only in a state the loader can reach."""
+    built = tuple(_create_named_candidate(name) for name in candidates)
+
+    with pytest.raises(ValueError) as caught:
+        Selection(module, reason, built)
+
+    assert str(caught.value) == expected
+
+
 def test_the_version_attribute_of_a_layer_is_dunder_version() -> None:
     """Test a layer's attribute is its name between `__` and `_version__`."""
     assert get_layer_version_attribute("moga_sim") == "__moga_sim_version__"
@@ -1246,7 +1344,7 @@ def test_require_layer_installs_under_the_named_package(
 ) -> None:
     """Test `package` names where the module is installed, and is set on it."""
     module = _fake_module(__demo_layer_version__="1")
-    _install_selection(monkeypatch, module, Selection("native_fake", "own", ()))
+    _install_selection(monkeypatch, module, Selection("native_fake", "environment", ()))
     other = ModuleType("demo_other")
     monkeypatch.setitem(sys.modules, "demo_other", other)
     try:
@@ -1265,7 +1363,7 @@ def test_require_layer_refuses_a_package_that_is_not_a_module_path(
 ) -> None:
     """Test a package name that cannot be imported is the caller's error."""
     module = _fake_module(__demo_layer_version__="1")
-    _install_selection(monkeypatch, module, Selection("native_fake", "own", ()))
+    _install_selection(monkeypatch, module, Selection("native_fake", "environment", ()))
 
     with pytest.raises(ValueError) as caught:
         native.require_layer("demo_layer", "1", package=package)
@@ -1287,7 +1385,7 @@ def test_require_layer_refuses_a_package_that_is_not_imported(
 ) -> None:
     """Test the owner must be imported, so its `_rs` is set on it."""
     module = _fake_module(**{f"__{layer}_version__": "1"})
-    _install_selection(monkeypatch, module, Selection("native_fake", "own", ()))
+    _install_selection(monkeypatch, module, Selection("native_fake", "environment", ()))
     owner = package or layer
 
     with pytest.raises(ValueError) as caught:
@@ -1306,7 +1404,7 @@ def test_require_layer_refuses_a_package_that_holds_another_module(
 ) -> None:
     """Test a package's own `_rs` is never replaced by another module."""
     module = _fake_module(__demo_layer_version__="1")
-    _install_selection(monkeypatch, module, Selection("native_fake", "own", ()))
+    _install_selection(monkeypatch, module, Selection("native_fake", "environment", ()))
     other = ModuleType("demo_layer._rs")
     other.__file__ = "/elsewhere/demo_layer/_rs.so"
     monkeypatch.setitem(sys.modules, "demo_layer._rs", other)
@@ -1326,7 +1424,7 @@ def test_require_layer_refuses_a_held_module_without_a_file(
 ) -> None:
     """Test the held-module error omits the location when there is no file."""
     module = _fake_module(__demo_layer_version__="1")
-    _install_selection(monkeypatch, module, Selection("native_fake", "own", ()))
+    _install_selection(monkeypatch, module, Selection("native_fake", "environment", ()))
     monkeypatch.setitem(sys.modules, "demo_layer._rs", ModuleType("demo_layer._rs"))
 
     with pytest.raises(ImportError, match="already another module") as caught:
@@ -1342,7 +1440,7 @@ def test_require_layer_is_idempotent(
 ) -> None:
     """Test requiring a layer twice returns the same module and changes nothing."""
     module = _fake_module(__demo_layer_version__="1")
-    _install_selection(monkeypatch, module, Selection("native_fake", "own", ()))
+    _install_selection(monkeypatch, module, Selection("native_fake", "environment", ()))
 
     first = native.require_layer("demo_layer", "1")
     second = native.require_layer("demo_layer", "1")
@@ -1367,7 +1465,10 @@ def test_require_layer_names_the_variable_when_it_selected_the_module(
     chosen = Selection(
         "native_low",
         "environment",
-        (_candidate("demo_layer"), Candidate("native_low", ())),
+        (
+            _candidate("demo_layer"),
+            Candidate("native_low", (_entry_point("low_layer", "native_low"),)),
+        ),
     )
     _install_selection(monkeypatch, _fake_module(), chosen)
 
@@ -1395,16 +1496,16 @@ def test_require_layer_with_the_variable_and_no_holder_says_so(
 
 
 @pytest.mark.usefixtures("demo_package")
-@pytest.mark.parametrize("reason", ["entry_points", "own"])
+@pytest.mark.parametrize(
+    ("module_name", "reason"),
+    [("native_fake", "entry_points"), ("fhy_core._rs", "own")],
+)
 def test_require_layer_names_the_missing_declaration(
-    monkeypatch: pytest.MonkeyPatch, reason: str
+    monkeypatch: pytest.MonkeyPatch, module_name: str, reason: SelectionReason
 ) -> None:
     """Test an undeclared layer says to reinstall the aggregate's package."""
-    chosen = Selection(
-        "native_fake",
-        reason,  # type: ignore[arg-type]
-        (_candidate("other_layer"),),
-    )
+    advertised = (_candidate("other_layer"),) if reason == "entry_points" else ()
+    chosen = Selection(module_name, reason, advertised)
     module = _fake_module(__other_layer_version__="1", __unadvertised_version__="1")
     _install_selection(monkeypatch, module, chosen)
 
@@ -1413,7 +1514,7 @@ def test_require_layer_names_the_missing_declaration(
 
     assert str(caught.value) == (
         "The layer 'demo_layer' (version '1') is not in the native module "
-        "'native_fake' that fhy_core runs on, which contains 'fhy_core', "
+        f"{module_name!r} that fhy_core runs on, which contains 'fhy_core', "
         "'other_layer', 'unadvertised', and no installed distribution "
         "declares it in the "
         "entry point group 'fhy_core.native'. Reinstall the package that "
@@ -1447,7 +1548,7 @@ def test_require_layer_refuses_a_version_that_is_not_pep440(
 ) -> None:
     """Test a required version that is not PEP 440 is the caller's error."""
     module = _fake_module(__demo_layer_version__=version)
-    _install_selection(monkeypatch, module, Selection("native_fake", "own", ()))
+    _install_selection(monkeypatch, module, Selection("native_fake", "environment", ()))
 
     with pytest.raises(ValueError) as caught:
         native.require_layer("demo_layer", version)
@@ -1462,7 +1563,9 @@ def test_require_layer_checks_the_version_before_the_module(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test a bad version is refused even where the module lacks the layer."""
-    _install_selection(monkeypatch, _fake_module(), Selection("native_fake", "own", ()))
+    _install_selection(
+        monkeypatch, _fake_module(), Selection("native_fake", "environment", ())
+    )
 
     with pytest.raises(ValueError, match="PEP 440"):
         native.require_layer("demo_layer", "dev")
@@ -1474,7 +1577,8 @@ def test_require_layer_refuses_a_reported_version_that_is_not_pep440(
 ) -> None:
     """Test a module reporting a non-PEP 440 version of the layer is stale."""
     module = _fake_module(__demo_layer_version__="garbage")
-    _install_selection(monkeypatch, module, Selection("native_fake", "own", ()))
+    chosen = Selection("native_fake", "entry_points", (_candidate("demo_layer"),))
+    _install_selection(monkeypatch, module, chosen)
 
     with pytest.raises(ImportError) as caught:
         native.require_layer("demo_layer", "1.0.0")
@@ -1493,7 +1597,7 @@ def test_require_layer_accepts_versions_equal_in_normal_form(
 ) -> None:
     """Test a Cargo-form report meets a PEP 440 requirement, and the reverse."""
     module = _fake_module(__demo_layer_version__="1.2.3-rc.1")
-    _install_selection(monkeypatch, module, Selection("native_fake", "own", ()))
+    _install_selection(monkeypatch, module, Selection("native_fake", "environment", ()))
 
     assert native.require_layer("demo_layer", "1.2.3rc1") is module
     assert native.require_layer("demo_layer", "v1.2.3-RC1") is module
@@ -1504,7 +1608,7 @@ def test_require_layer_treats_a_non_string_version_as_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test a version attribute that is not a string does not count."""
-    chosen = Selection("native_fake", "own", ())
+    chosen = Selection("native_fake", "entry_points", (_candidate("demo_layer"),))
     _install_selection(monkeypatch, _fake_module(__demo_layer_version__=1), chosen)
 
     with pytest.raises(ImportError, match="is not in the native module"):

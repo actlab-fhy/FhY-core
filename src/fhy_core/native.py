@@ -19,13 +19,13 @@ own ``_rs``.
 import sys
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Literal
 
 from fhy_core._extension import (
     EXTENSION_MODULE,
     EXTENSION_STEM,
     NATIVE_ENTRY_POINT_GROUP,
     NATIVE_MODULE_ENVIRONMENT_VARIABLE,
+    SelectionReason,
     describe_candidate,
     get_current_selection,
     get_distribution_name,
@@ -68,7 +68,7 @@ class NativeSelection:
     """
 
     module: str
-    reason: Literal["environment", "entry_points", "own"]
+    reason: SelectionReason
     layers: frozenset[str]
 
 
