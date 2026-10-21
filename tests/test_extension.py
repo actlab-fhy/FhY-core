@@ -15,6 +15,7 @@ import pathlib
 import subprocess
 import sys
 import sysconfig
+from collections.abc import Iterable
 
 import pytest
 
@@ -24,6 +25,7 @@ from fhy_core._extension import (
     NATIVE_MODULE_ENVIRONMENT_VARIABLE,
     _find_foreign_extension_builds,
     _normalize_pep440_version,
+    _select_native_module,
 )
 from tests.native_modules import (
     read_import_error,
@@ -440,3 +442,74 @@ def test_the_environment_variable_overrides_the_advertised_modules(
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.split() == ["fhy_core._rs"]
+
+
+def _entry_point(name: str, module: str) -> importlib.metadata.EntryPoint:
+    """Return an entry point of the native group, as an installed product has."""
+    return importlib.metadata.EntryPoint(
+        name=name, value=module, group=NATIVE_ENTRY_POINT_GROUP
+    )
+
+
+def _select(
+    entry_points: Iterable[importlib.metadata.EntryPoint],
+    environ: dict[str, str] | None = None,
+) -> tuple[str, str]:
+    """Return the module and the reason the selection gives."""
+    selection = _select_native_module(environ or {}, entry_points)
+    return selection.module, selection.reason
+
+
+def test_with_no_entry_points_the_own_module_is_selected() -> None:
+    """Test a process with no advertised module runs on `fhy_core._rs`."""
+    assert _select([]) == ("fhy_core._rs", "own")
+
+
+def test_one_advertised_module_is_selected() -> None:
+    """Test the one module the entry points name is selected."""
+    assert _select([_entry_point("product", "native_product")]) == (
+        "native_product",
+        "entry_points",
+    )
+
+
+def test_entry_points_naming_one_module_select_it_once() -> None:
+    """Test two entry points naming one module are not a conflict."""
+    selection = _select_native_module(
+        {},
+        [_entry_point("one", "native_shared"), _entry_point("two", "native_shared")],
+    )
+
+    assert selection.module == "native_shared"
+    assert [candidate.module for candidate in selection.candidates] == ["native_shared"]
+    assert len(selection.candidates[0].entry_points) == 2
+
+
+def test_two_advertised_modules_are_refused_naming_both() -> None:
+    """Test entry points naming two modules are refused in process."""
+    with pytest.raises(ImportError, match="one native extension module") as caught:
+        _select([_entry_point("one", "native_one"), _entry_point("two", "native_two")])
+
+    assert "'native_one'" in str(caught.value)
+    assert "'native_two'" in str(caught.value)
+
+
+def test_the_environment_variable_selects_over_the_entry_points() -> None:
+    """Test the named module wins, even over two conflicting modules."""
+    entry_points = [
+        _entry_point("one", "native_one"),
+        _entry_point("two", "native_two"),
+    ]
+
+    assert _select(entry_points, {NATIVE_MODULE_ENVIRONMENT_VARIABLE: " named "}) == (
+        "named",
+        "environment",
+    )
+
+
+def test_a_blank_environment_variable_is_ignored() -> None:
+    """Test a variable that is empty or blank does not select a module."""
+    assert _select([], {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "  "}) == (
+        "fhy_core._rs",
+        "own",
+    )

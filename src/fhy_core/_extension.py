@@ -38,8 +38,11 @@ import importlib.metadata
 import os
 import re
 import sys
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import Literal
 
 _EXTENSION_MODULE = "fhy_core._rs"
 # The entry-point group in which a product's combined extension module is
@@ -226,6 +229,36 @@ def _load_own_extension() -> None:
         raise _build_stale_extension_error(extension_version, package_version)
 
 
+@dataclass(frozen=True)
+class _Candidate:
+    """A native module that entry points advertise, with its entry points."""
+
+    module: str
+    entry_points: tuple[importlib.metadata.EntryPoint, ...]
+
+
+@dataclass(frozen=True)
+class _Selection:
+    """The native module a process runs on, and why it was chosen.
+
+    Attributes:
+        module: Name of the selected module.
+        reason: ``"environment"`` if the environment variable named it,
+            ``"entry_points"`` if the entry points advertised it, ``"own"``
+            if nothing was advertised and ``fhy_core._rs`` is used.
+        candidates: Every module the entry points advertise, in order of
+            first appearance, whether or not it was selected.
+
+    """
+
+    module: str
+    reason: Literal["environment", "entry_points", "own"]
+    candidates: tuple[_Candidate, ...]
+
+
+_SELECTION: _Selection | None = None
+
+
 def _describe_entry_point(entry_point: importlib.metadata.EntryPoint) -> str:
     """Return the module an entry point names, and the distribution it is in."""
     distribution = getattr(entry_point, "dist", None)
@@ -246,30 +279,68 @@ def _build_two_native_modules_error(first: str, second: str) -> ImportError:
     )
 
 
-def _select_native_module() -> str:
-    """Return the name of the native module to load.
+def _collect_candidates(
+    entry_points: Iterable[importlib.metadata.EntryPoint],
+) -> tuple[_Candidate, ...]:
+    """Group entry points by the module they name.
+
+    Args:
+        entry_points: Entry points of the group ``fhy_core.native``.
+
+    Returns:
+        One candidate per distinct module, in order of first appearance.
+
+    """
+    by_module: dict[str, list[importlib.metadata.EntryPoint]] = {}
+    for entry_point in entry_points:
+        by_module.setdefault(entry_point.module, []).append(entry_point)
+    return tuple(
+        _Candidate(module, tuple(claims)) for module, claims in by_module.items()
+    )
+
+
+def _choose_candidate(candidates: Sequence[_Candidate]) -> _Candidate | None:
+    """Return the one candidate to load, or ``None`` if there is none.
+
+    Raises:
+        ImportError: If the candidates are two different modules.
+
+    """
+    if len(candidates) > 1:
+        first, second, *_ = candidates
+        raise _build_two_native_modules_error(
+            _describe_entry_point(first.entry_points[0]),
+            _describe_entry_point(second.entry_points[0]),
+        )
+    return candidates[0] if candidates else None
+
+
+def _select_native_module(
+    environ: Mapping[str, str],
+    entry_points: Iterable[importlib.metadata.EntryPoint],
+) -> _Selection:
+    """Select the native module to load.
+
+    Args:
+        environ: The process environment.
+        entry_points: Entry points of the group ``fhy_core.native``.
 
     Returns:
         The module named by ``FHY_CORE_NATIVE_MODULE``, else the module the
-        entry points of the group ``fhy_core.native`` name, else
-        ``fhy_core._rs``.
+        entry points name, else ``fhy_core._rs``.
 
     Raises:
         ImportError: If the entry points name two different modules.
 
     """
-    named = os.environ.get(NATIVE_MODULE_ENVIRONMENT_VARIABLE, "").strip()
+    candidates = _collect_candidates(entry_points)
+    named = environ.get(NATIVE_MODULE_ENVIRONMENT_VARIABLE, "").strip()
     if named:
-        return named
-    by_module: dict[str, importlib.metadata.EntryPoint] = {}
-    for entry_point in importlib.metadata.entry_points(group=NATIVE_ENTRY_POINT_GROUP):
-        by_module.setdefault(entry_point.module, entry_point)
-    if len(by_module) > 1:
-        first, second, *_ = by_module.values()
-        raise _build_two_native_modules_error(
-            _describe_entry_point(first), _describe_entry_point(second)
-        )
-    return next(iter(by_module), _EXTENSION_MODULE)
+        return _Selection(named, "environment", candidates)
+    chosen = _choose_candidate(candidates)
+    if chosen is None:
+        return _Selection(_EXTENSION_MODULE, "own", candidates)
+    return _Selection(chosen.module, "entry_points", candidates)
 
 
 def _build_aggregate_import_error(module_name: str, error: ImportError) -> ImportError:
@@ -358,11 +429,15 @@ def _check_extension() -> None:
             different ones are. The message names the cause and the fix.
 
     """
-    module_name = _select_native_module()
-    if module_name == _EXTENSION_MODULE:
+    global _SELECTION  # noqa: PLW0603
+    selection = _select_native_module(
+        os.environ, importlib.metadata.entry_points(group=NATIVE_ENTRY_POINT_GROUP)
+    )
+    _SELECTION = selection
+    if selection.module == _EXTENSION_MODULE:
         _load_own_extension()
     else:
-        _load_aggregate_extension(module_name)
+        _load_aggregate_extension(selection.module)
 
 
 _check_extension()
