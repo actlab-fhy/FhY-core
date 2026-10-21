@@ -63,7 +63,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Literal
 
-_EXTENSION_MODULE = "fhy_core._rs"
+EXTENSION_MODULE = "fhy_core._rs"
 # The entry-point group in which a product's combined extension module is
 # advertised: the entry point's value is the module's name.
 NATIVE_ENTRY_POINT_GROUP = "fhy_core.native"
@@ -73,11 +73,11 @@ NATIVE_MODULE_ENVIRONMENT_VARIABLE = "FHY_CORE_NATIVE_MODULE"
 # The attribute of a combined extension module that holds the version of the
 # `fhy_core` Rust code it links.
 _AGGREGATE_VERSION_ATTRIBUTE = "__fhy_core_version__"
-_EXTENSION_STEM = "_rs"
+EXTENSION_STEM = "_rs"
 # File endings of a compiled extension module on any platform.
 _EXTENSION_FILE_ENDINGS = (".so", ".pyd")
 _PACKAGE_NAME = "fhy_core"
-_REQUIREMENT = f"{_PACKAGE_NAME} requires its Rust extension {_EXTENSION_MODULE}"
+_REQUIREMENT = f"{_PACKAGE_NAME} requires its Rust extension {EXTENSION_MODULE}"
 _REBUILD_ADVICE = (
     "Rebuild the extension for this interpreter from the source checkout "
     "with `uv sync`, or reinstall the fhy_core wheel."
@@ -127,7 +127,7 @@ def _is_layer_name(name: str) -> bool:
     return name.isidentifier() and not keyword.iskeyword(name)
 
 
-def _is_module_name(name: str) -> bool:
+def is_module_name(name: str) -> bool:
     """Return whether `name` is an absolute, importable module path.
 
     Args:
@@ -179,10 +179,10 @@ def _find_foreign_extension_builds(
         was found or one of them matches ``extension_suffixes``.
 
     """
-    loadable_names = {_EXTENSION_STEM + suffix for suffix in extension_suffixes}
+    loadable_names = {EXTENSION_STEM + suffix for suffix in extension_suffixes}
     build_names = sorted(
         path.name
-        for path in directory.glob(f"{_EXTENSION_STEM}.*")
+        for path in directory.glob(f"{EXTENSION_STEM}.*")
         if path.name.endswith(_EXTENSION_FILE_ENDINGS)
     )
     if any(name in loadable_names for name in build_names):
@@ -195,7 +195,7 @@ def _build_missing_extension_error() -> ImportError:
         f"{_REQUIREMENT}, which is not installed. Install a fhy_core wheel for "
         "this platform, or build the extension from the source checkout with "
         "`uv sync`.",
-        name=_EXTENSION_MODULE,
+        name=EXTENSION_MODULE,
     )
 
 
@@ -205,8 +205,8 @@ def _build_foreign_extension_error(
     return ImportError(
         f"{_REQUIREMENT}, which is installed only as {', '.join(build_names)}; "
         f"this interpreter does not load those builds (it loads "
-        f"{_EXTENSION_STEM}{extension_suffixes[0]}). {_REBUILD_ADVICE}",
-        name=_EXTENSION_MODULE,
+        f"{EXTENSION_STEM}{extension_suffixes[0]}). {_REBUILD_ADVICE}",
+        name=EXTENSION_MODULE,
     )
 
 
@@ -214,7 +214,7 @@ def _build_failed_import_error(error: ImportError) -> ImportError:
     return ImportError(
         f"{_REQUIREMENT}, which is installed but failed to import "
         f"({type(error).__name__}: {error}). {_REBUILD_ADVICE}",
-        name=_EXTENSION_MODULE,
+        name=EXTENSION_MODULE,
     )
 
 
@@ -230,11 +230,11 @@ def _build_stale_extension_error(
         f"{_REQUIREMENT} at the installed package's version "
         f"{package_version!r}, but the extension reports {reported_version}, "
         f"so it is stale. {_REBUILD_ADVICE}",
-        name=_EXTENSION_MODULE,
+        name=EXTENSION_MODULE,
     )
 
 
-def _normalize_pep440_version(version: str) -> str | None:
+def normalize_pep440_version(version: str) -> str | None:
     """Return a version in PEP 440's normal form, the form maturin gives it.
 
     Args:
@@ -277,9 +277,9 @@ def _load_own_extension() -> ModuleType:
 
     """
     try:
-        extension = importlib.import_module(_EXTENSION_MODULE)
+        extension = importlib.import_module(EXTENSION_MODULE)
     except ModuleNotFoundError as error:
-        if error.name != _EXTENSION_MODULE:
+        if error.name != EXTENSION_MODULE:
             raise _build_failed_import_error(error) from error
         extension_suffixes = importlib.machinery.EXTENSION_SUFFIXES
         build_names = _find_foreign_extension_builds(
@@ -296,14 +296,14 @@ def _load_own_extension() -> ModuleType:
     package_version = importlib.metadata.version(_PACKAGE_NAME)
     if (
         not isinstance(extension_version, str)
-        or _normalize_pep440_version(extension_version) != package_version
+        or normalize_pep440_version(extension_version) != package_version
     ):
         raise _build_stale_extension_error(extension_version, package_version)
     return extension
 
 
 @dataclass(frozen=True)
-class _Candidate:
+class Candidate:
     """A native module that entry points advertise, with its entry points.
 
     Each entry point's name is a layer the module claims to contain: the
@@ -320,7 +320,7 @@ class _Candidate:
 
 
 @dataclass(frozen=True)
-class _Selection:
+class Selection:
     """The native module a process runs on, and why it was chosen.
 
     Attributes:
@@ -335,10 +335,10 @@ class _Selection:
 
     module: str
     reason: Literal["environment", "entry_points", "own"]
-    candidates: tuple[_Candidate, ...]
+    candidates: tuple[Candidate, ...]
 
     @property
-    def candidate(self) -> _Candidate | None:
+    def candidate(self) -> Candidate | None:
         """The advertised module that was selected, if it is advertised."""
         for candidate in self.candidates:
             if candidate.module == self.module:
@@ -352,19 +352,34 @@ class _Selection:
         return frozenset({_PACKAGE_NAME}) if candidate is None else candidate.layers
 
 
-_SELECTION: _Selection | None = None
+_SELECTION: Selection | None = None
 
 
-def _distribution_name(entry_point: importlib.metadata.EntryPoint) -> str:
+def get_current_selection() -> Selection:
+    """Return the selection made while ``fhy_core`` was imported.
+
+    Returns:
+        The native module of the process, and why it was chosen.
+
+    Raises:
+        RuntimeError: If no native module has been selected.
+
+    """
+    if _SELECTION is None:
+        raise RuntimeError("fhy_core has not selected its native module")
+    return _SELECTION
+
+
+def get_distribution_name(entry_point: importlib.metadata.EntryPoint) -> str:
     """Return the name of the distribution of an entry point, or ``""``."""
     distribution = getattr(entry_point, "dist", None)
     return "" if distribution is None else str(distribution.name)
 
 
-def _describe_candidate(candidate: _Candidate) -> str:
+def describe_candidate(candidate: Candidate) -> str:
     """Return the module of a candidate and the entry points that name it."""
     owners = sorted(
-        {(ep.name, _distribution_name(ep)) for ep in candidate.entry_points},
+        {(ep.name, get_distribution_name(ep)) for ep in candidate.entry_points},
         key=lambda owner: (owner[1], owner[0]),
     )
     parts = [
@@ -387,31 +402,31 @@ def _build_two_native_modules_error(first: str, second: str) -> ImportError:
         f"environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}. Two "
         "native modules would hold two copies of the Rust code, with "
         "colliding identifier ids, split registries and unrelated classes.",
-        name=_EXTENSION_MODULE,
+        name=EXTENSION_MODULE,
     )
 
 
 def _build_tie_error(
-    required: frozenset[str], tied: Sequence[_Candidate]
+    required: frozenset[str], tied: Sequence[Candidate]
 ) -> ImportError:
     return ImportError(
         f"{_PACKAGE_NAME} runs on one native extension module per process, "
         f"but several installed modules each contain every installed layer "
         f"({_format_layers(required)}): "
-        f"{'; '.join(_describe_candidate(candidate) for candidate in tied)}. "
+        f"{'; '.join(describe_candidate(candidate) for candidate in tied)}. "
         f"{_PACKAGE_NAME} cannot choose between them. Uninstall all but one "
         f"of the distributions that provide them, or name the one to use in "
         f"the environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}.",
-        name=_EXTENSION_MODULE,
+        name=EXTENSION_MODULE,
     )
 
 
 def _build_incomparable_error(
-    required: frozenset[str], candidates: Sequence[_Candidate]
+    required: frozenset[str], candidates: Sequence[Candidate]
 ) -> ImportError:
     ordered = sorted(candidates, key=lambda c: (-len(c.layers), c.module))
     lacks = "; ".join(
-        f"{_describe_candidate(candidate)} lacks "
+        f"{describe_candidate(candidate)} lacks "
         f"{_format_layers(required - candidate.layers)}"
         for candidate in ordered
     )
@@ -422,14 +437,14 @@ def _build_incomparable_error(
         f"contains all of those layers, or name the module to use in the "
         f"environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}, which "
         "leaves the layers it lacks without their native code.",
-        name=_EXTENSION_MODULE,
+        name=EXTENSION_MODULE,
     )
 
 
 def _build_invalid_layer_name_error(
     entry_point: importlib.metadata.EntryPoint,
 ) -> ImportError:
-    distribution = _distribution_name(entry_point)
+    distribution = get_distribution_name(entry_point)
     owner = f" of {distribution!r}" if distribution else ""
     return ImportError(
         f"The entry point {entry_point.name!r}{owner} in the group "
@@ -440,14 +455,14 @@ def _build_invalid_layer_name_error(
         "not one). Fix the "
         f"entry point, or name the module to use in the environment variable "
         f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}.",
-        name=_EXTENSION_MODULE,
+        name=EXTENSION_MODULE,
     )
 
 
 def _build_invalid_module_value_error(
     entry_point: importlib.metadata.EntryPoint,
 ) -> ImportError:
-    distribution = _distribution_name(entry_point)
+    distribution = get_distribution_name(entry_point)
     owner = f" of {distribution!r}" if distribution else ""
     return ImportError(
         f"The entry point {entry_point.name!r}{owner} in the group "
@@ -456,13 +471,13 @@ def _build_invalid_module_value_error(
         "module path such as 'my_product._native' with no attribute or "
         "extras. Fix the entry point, or name the module to use in the "
         f"environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE}.",
-        name=_EXTENSION_MODULE,
+        name=EXTENSION_MODULE,
     )
 
 
 def _collect_candidates(
     entry_points: Iterable[importlib.metadata.EntryPoint], *, strict: bool
-) -> tuple[_Candidate, ...]:
+) -> tuple[Candidate, ...]:
     """Group entry points by the module they name, across distributions.
 
     Args:
@@ -490,18 +505,18 @@ def _collect_candidates(
                 raise _build_invalid_layer_name_error(entry_point)
             continue
         module = entry_point.value.strip()
-        if not _is_module_name(module):
+        if not is_module_name(module):
             if strict:
                 raise _build_invalid_module_value_error(entry_point)
             continue
         by_module.setdefault(module, []).append(entry_point)
     return tuple(
-        _Candidate(
+        Candidate(
             module,
             tuple(
                 sorted(
                     claims,
-                    key=lambda ep: (_distribution_name(ep), ep.name),
+                    key=lambda ep: (get_distribution_name(ep), ep.name),
                 )
             ),
         )
@@ -509,7 +524,7 @@ def _collect_candidates(
     )
 
 
-def _choose_candidate(candidates: Sequence[_Candidate]) -> _Candidate | None:
+def _choose_candidate(candidates: Sequence[Candidate]) -> Candidate | None:
     """Return the candidate that contains every layer any candidate does.
 
     Args:
@@ -540,15 +555,15 @@ def _build_invalid_variable_value_error(value: str) -> ImportError:
         f"The environment variable {NATIVE_MODULE_ENVIRONMENT_VARIABLE} is set "
         f"to {value!r}, which is not an importable module path (dot-separated "
         "identifiers that are not keywords). Set it to the module to use, such "
-        f"as {_EXTENSION_MODULE!r}, or unset it to let {_PACKAGE_NAME} choose.",
-        name=_EXTENSION_MODULE,
+        f"as {EXTENSION_MODULE!r}, or unset it to let {_PACKAGE_NAME} choose.",
+        name=EXTENSION_MODULE,
     )
 
 
 def _select_native_module(
     environ: Mapping[str, str],
     entry_points: Iterable[importlib.metadata.EntryPoint],
-) -> _Selection:
+) -> Selection:
     """Select the native module to load.
 
     Args:
@@ -569,19 +584,19 @@ def _select_native_module(
 
     """
     named = environ.get(NATIVE_MODULE_ENVIRONMENT_VARIABLE, "").strip()
-    if named and not _is_module_name(named):
+    if named and not is_module_name(named):
         raise _build_invalid_variable_value_error(named)
     candidates = _collect_candidates(entry_points, strict=not named)
     if named:
-        return _Selection(named, "environment", candidates)
+        return Selection(named, "environment", candidates)
     chosen = _choose_candidate(candidates)
     if chosen is None:
-        return _Selection(_EXTENSION_MODULE, "own", candidates)
-    return _Selection(chosen.module, "entry_points", candidates)
+        return Selection(EXTENSION_MODULE, "own", candidates)
+    return Selection(chosen.module, "entry_points", candidates)
 
 
 def _build_aggregate_import_error(
-    selection: _Selection, error: Exception
+    selection: Selection, error: Exception
 ) -> ImportError:
     failure = f"failed to import ({type(error).__name__}: {error})"
     if selection.reason == "environment":
@@ -594,7 +609,7 @@ def _build_aggregate_import_error(
         )
     candidate = selection.candidate
     described = (
-        repr(selection.module) if candidate is None else _describe_candidate(candidate)
+        repr(selection.module) if candidate is None else describe_candidate(candidate)
     )
     return ImportError(
         f"{_PACKAGE_NAME} selected the native extension module {described} "
@@ -626,7 +641,7 @@ def _build_undeclared_layer_error(
 ) -> ImportError:
     claims = "; ".join(
         f"the entry point {ep.name!r}"
-        + (f" of {_distribution_name(ep)!r}" if _distribution_name(ep) else "")
+        + (f" of {get_distribution_name(ep)!r}" if get_distribution_name(ep) else "")
         + f" claims the layer {ep.name!r}, but the module has no string "
         f"attribute {get_layer_version_attribute(ep.name)!r}"
         for ep in missing
@@ -642,7 +657,7 @@ def _build_undeclared_layer_error(
 
 
 def _verify_declared_layers(
-    module_name: str, extension: ModuleType, candidate: _Candidate | None
+    module_name: str, extension: ModuleType, candidate: Candidate | None
 ) -> None:
     """Check a module holds every layer its entry points claim for it.
 
@@ -675,7 +690,7 @@ def _verify_declared_layers(
         raise _build_undeclared_layer_error(module_name, missing)
 
 
-def _load_aggregate_extension(selection: _Selection) -> None:
+def _load_aggregate_extension(selection: Selection) -> None:
     """Load a combined extension module and install it as ``fhy_core._rs``.
 
     Args:
@@ -701,7 +716,7 @@ def _load_aggregate_extension(selection: _Selection) -> None:
     package_version = importlib.metadata.version(_PACKAGE_NAME)
     if (
         not isinstance(extension_version, str)
-        or _normalize_pep440_version(extension_version) != package_version
+        or normalize_pep440_version(extension_version) != package_version
     ):
         raise _build_stale_aggregate_error(
             module_name, extension_version, package_version
@@ -721,16 +736,16 @@ def _install_as_own_extension(module_name: str, extension: ModuleType) -> None:
         ImportError: If ``fhy_core._rs`` names another module.
 
     """
-    held = sys.modules.get(_EXTENSION_MODULE)
+    held = sys.modules.get(EXTENSION_MODULE)
     if held is not None and held is not extension:
         held_file = getattr(held, "__file__", None)
         raise _build_two_native_modules_error(
             f"{module_name!r}",
-            f"{_EXTENSION_MODULE!r}"
+            f"{EXTENSION_MODULE!r}"
             + (f" (loaded from {held_file})" if held_file else ""),
         )
-    sys.modules[_EXTENSION_MODULE] = extension
-    setattr(sys.modules[_PACKAGE_NAME], _EXTENSION_STEM, extension)
+    sys.modules[EXTENSION_MODULE] = extension
+    setattr(sys.modules[_PACKAGE_NAME], EXTENSION_STEM, extension)
 
 
 def _check_extension() -> None:
@@ -746,9 +761,9 @@ def _check_extension() -> None:
         os.environ, importlib.metadata.entry_points(group=NATIVE_ENTRY_POINT_GROUP)
     )
     _SELECTION = selection
-    if selection.module == _EXTENSION_MODULE:
+    if selection.module == EXTENSION_MODULE:
         extension = _load_own_extension()
-        _verify_declared_layers(_EXTENSION_MODULE, extension, selection.candidate)
+        _verify_declared_layers(EXTENSION_MODULE, extension, selection.candidate)
     else:
         _load_aggregate_extension(selection)
 

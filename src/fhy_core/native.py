@@ -20,17 +20,17 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import Literal
 
-from fhy_core import _extension
 from fhy_core._extension import (
-    _EXTENSION_MODULE,
-    _EXTENSION_STEM,
+    EXTENSION_MODULE,
+    EXTENSION_STEM,
     NATIVE_ENTRY_POINT_GROUP,
     NATIVE_MODULE_ENVIRONMENT_VARIABLE,
-    _describe_candidate,
-    _distribution_name,
-    _is_module_name,
-    _normalize_pep440_version,
+    describe_candidate,
+    get_current_selection,
+    get_distribution_name,
     get_layer_version_attribute,
+    is_module_name,
+    normalize_pep440_version,
 )
 
 __all__ = [
@@ -68,13 +68,6 @@ class NativeSelection:
     layers: frozenset[str]
 
 
-def _current_selection() -> _extension._Selection:
-    chosen = _extension._SELECTION
-    if chosen is None:
-        raise RuntimeError("fhy_core has not selected its native module")
-    return chosen
-
-
 def get_selection() -> NativeSelection:
     """Return the native module this process runs on.
 
@@ -82,18 +75,18 @@ def get_selection() -> NativeSelection:
         What was selected while ``fhy_core`` was imported, and why.
 
     """
-    chosen = _current_selection()
+    chosen = get_current_selection()
     return NativeSelection(chosen.module, chosen.reason, chosen.layers)
 
 
 def _build_missing_layer_error(layer: str, version: str) -> ImportError:
-    chosen = _current_selection()
+    chosen = get_current_selection()
     attribute = get_layer_version_attribute(layer)
     if chosen.reason == "environment":
         holders = [c for c in chosen.candidates if layer in c.layers]
         advice = (
             "Installed modules that do: "
-            + "; ".join(_describe_candidate(c) for c in holders)
+            + "; ".join(describe_candidate(c) for c in holders)
             + ". Unset the variable to let fhy_core choose, or set it to one "
             "of those."
             if holders
@@ -120,10 +113,10 @@ def _build_missing_layer_error(layer: str, version: str) -> ImportError:
 def _build_stale_layer_error(
     layer: str, version: str, reported: str, *, is_pep440: bool
 ) -> ImportError:
-    chosen = _current_selection()
+    chosen = get_current_selection()
     candidate = chosen.candidate
     distributions = sorted(
-        {name for ep in candidate.entry_points if (name := _distribution_name(ep))}
+        {name for ep in candidate.entry_points if (name := get_distribution_name(ep))}
         if candidate is not None
         else set()
     )
@@ -184,11 +177,11 @@ def require_layer(
 
     """
     attribute = get_layer_version_attribute(layer)
-    required = _normalize_pep440_version(version)
+    required = normalize_pep440_version(version)
     if required is None:
         raise ValueError(f"a layer's version is a PEP 440 version, not {version!r}")
     owner = package if package is not None else layer
-    if not _is_module_name(owner):
+    if not is_module_name(owner):
         raise ValueError(
             f"a package is named by an importable module path, not {owner!r}"
         )
@@ -198,16 +191,16 @@ def require_layer(
             f"the package {owner!r} is not in sys.modules; call require_layer "
             "while that package is being imported"
         )
-    module = sys.modules[_EXTENSION_MODULE]
+    module = sys.modules[EXTENSION_MODULE]
     reported = getattr(module, attribute, None)
     if not isinstance(reported, str):
         raise _build_missing_layer_error(layer, version)
-    normalized = _normalize_pep440_version(reported)
+    normalized = normalize_pep440_version(reported)
     if normalized != required:
         raise _build_stale_layer_error(
             layer, version, reported, is_pep440=normalized is not None
         )
-    name = f"{owner}.{_EXTENSION_STEM}"
+    name = f"{owner}.{EXTENSION_STEM}"
     held = sys.modules.get(name)
     if held is not None and held is not module:
         held_file = getattr(held, "__file__", None)
@@ -220,5 +213,5 @@ def require_layer(
             name=name,
         )
     sys.modules[name] = module
-    setattr(parent, _EXTENSION_STEM, module)
+    setattr(parent, EXTENSION_STEM, module)
     return module
