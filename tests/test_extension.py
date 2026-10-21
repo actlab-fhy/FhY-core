@@ -503,8 +503,19 @@ _CHAINS = {
         ("c", "native_abc"),
         ("c", "native_abc"),
     ],
+    "diamond": [
+        ("a", "native_a"),
+        ("b", "native_b"),
+        ("a", "native_ab"),
+        ("b", "native_ab"),
+    ],
 }
-_CHAIN_TOPS = {"one": "native_a", "two": "native_ab", "three": "native_abc"}
+_CHAIN_TOPS = {
+    "one": "native_a",
+    "two": "native_ab",
+    "three": "native_abc",
+    "diamond": "native_ab",
+}
 
 
 @pytest.mark.parametrize("chain", list(_CHAINS))
@@ -522,8 +533,8 @@ def test_a_chain_of_layers_selects_its_top(chain: str, reverse: bool) -> None:
     )
 
 
-def test_the_same_module_declared_by_two_distributions_is_merged() -> None:
-    """Test claims from different distributions on one module are unioned."""
+def test_separate_entry_points_naming_one_module_are_unioned() -> None:
+    """Test separate entry points, one naming each layer, union on their module."""
     selection = _select_native_module(
         {},
         [
@@ -595,7 +606,9 @@ def test_the_environment_variable_overrides_a_tie_and_incomparable_sets(
     assert len(selection.candidates) == 2
 
 
-@pytest.mark.parametrize("name", ["not-an-identifier", "1st", "a.b", ""])
+@pytest.mark.parametrize(
+    "name", ["not-an-identifier", "1st", "a.b", "", "class", "None"]
+)
 def test_an_entry_point_name_that_is_not_an_identifier_is_refused(name: str) -> None:
     """Test a name that cannot be a package's import name is an error."""
     with pytest.raises(ImportError) as caught:
@@ -605,6 +618,13 @@ def test_an_entry_point_name_that_is_not_an_identifier_is_refused(name: str) -> 
     assert repr(name) in message
     assert "'native_bad'" in message
     assert "not a valid Python identifier" in message
+
+
+@pytest.mark.parametrize("layer", ["class", "None", "not-a-layer", "1st", ""])
+def test_layer_version_attribute_refuses_a_name_that_is_not_a_layer(layer: str) -> None:
+    """Test a keyword or non-identifier layer name raises `ValueError`."""
+    with pytest.raises(ValueError, match="identifier"):
+        layer_version_attribute(layer)
 
 
 def test_an_invalid_entry_point_name_is_ignored_under_the_variable() -> None:
@@ -756,6 +776,30 @@ def test_a_claim_the_module_does_not_back_is_refused_end_to_end(
 
 @pytest.mark.slow
 @pytest.mark.subprocess
+def test_the_variable_naming_an_advertised_module_verifies_its_claims(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test a module the variable names is verified against its entry points."""
+    version = importlib.metadata.version("fhy_core")
+    write_distribution(
+        tmp_path, "product", {"fhy_core": "native_lying", "extra": "native_lying"}
+    )
+    write_native_module(tmp_path, "native_lying", {}, fhy_core_version=version)
+
+    message = read_import_error(
+        run_python(
+            _PRINT_EXTENSION_NAME,
+            python_path=[tmp_path],
+            environment={NATIVE_MODULE_ENVIRONMENT_VARIABLE: "native_lying"},
+        )
+    )
+
+    assert "the entry point 'extra' of 'product' claims the layer 'extra'" in message
+    assert "'__extra_version__'" in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
 def test_a_claim_the_module_backs_is_accepted_end_to_end(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -799,7 +843,8 @@ def test_the_selection_of_this_process_is_public() -> None:
     """Test `fhy_core.native.selection` reports what the loader chose."""
     chosen = native.selection()
 
-    assert chosen.module == _rs.__name__ or chosen.reason != "own"
+    assert chosen.module == _rs.__name__
+    assert (chosen.reason == "own") == (chosen.module == "fhy_core._rs")
     assert "fhy_core" in chosen.layers
     assert native.ENTRY_POINT_GROUP == NATIVE_ENTRY_POINT_GROUP
     assert native.MODULE_ENVIRONMENT_VARIABLE == NATIVE_MODULE_ENVIRONMENT_VARIABLE
@@ -840,10 +885,39 @@ def test_require_layer_refuses_a_package_that_holds_another_module(
     """Test a package's own `_rs` is never replaced by another module."""
     module = _fake_module(__demo_layer_version__="1")
     _install_selection(monkeypatch, module, _Selection("native_fake", "own", ()))
-    monkeypatch.setitem(sys.modules, "demo_layer._rs", ModuleType("demo_layer._rs"))
+    other = ModuleType("demo_layer._rs")
+    other.__file__ = "/elsewhere/demo_layer/_rs.so"
+    monkeypatch.setitem(sys.modules, "demo_layer._rs", other)
 
-    with pytest.raises(ImportError, match="already another module"):
+    with pytest.raises(ImportError, match="already another module") as caught:
         native.require_layer("demo_layer", "1")
+
+    message = str(caught.value)
+    assert "(loaded from /elsewhere/demo_layer/_rs.so)" in message
+    assert "'native_fake'" in message
+    assert "Uninstall the package that provides the other module" in message
+
+
+def test_require_layer_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch, demo_package: ModuleType
+) -> None:
+    """Test requiring a layer twice returns the same module and changes nothing."""
+    module = _fake_module(__demo_layer_version__="1")
+    _install_selection(monkeypatch, module, _Selection("native_fake", "own", ()))
+
+    first = native.require_layer("demo_layer", "1")
+    second = native.require_layer("demo_layer", "1")
+
+    assert first is second is module
+    assert sys.modules["demo_layer._rs"] is module
+    assert demo_package._rs is module
+
+
+@pytest.mark.parametrize("layer", ["class", "not-a-layer"])
+def test_require_layer_refuses_a_name_that_is_not_a_layer(layer: str) -> None:
+    """Test a keyword or non-identifier layer raises `ValueError`."""
+    with pytest.raises(ValueError, match="identifier"):
+        native.require_layer(layer, "1")
 
 
 def test_require_layer_names_the_variable_when_it_selected_the_module(

@@ -165,7 +165,7 @@ def require_layer(
         ImportError: If the module does not contain the layer, or reports
             another version of it. The message names the reason the module
             was selected and what to do.
-        ValueError: If `layer` is not a valid identifier.
+        ValueError: If `layer` is not a valid identifier or is a keyword.
 
     """
     attribute = layer_version_attribute(layer)
@@ -181,10 +181,13 @@ def require_layer(
     name = f"{owner}.{_EXTENSION_STEM}"
     held = sys.modules.get(name)
     if held is not None and held is not module:
+        held_file = getattr(held, "__file__", None)
+        where = f" (loaded from {held_file})" if held_file else ""
         raise ImportError(
-            f"{name!r} is already another module than the native module "
-            f"{module.__name__!r} that fhy_core runs on, and a process holds "
-            "one native extension module.",
+            f"{name!r} is already another module{where} than the native "
+            f"module {module.__name__!r} that fhy_core runs on, and a process "
+            "holds one native extension module. Uninstall the package that "
+            "provides the other module.",
             name=name,
         )
     sys.modules[name] = module

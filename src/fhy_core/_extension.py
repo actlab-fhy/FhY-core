@@ -49,6 +49,7 @@ __all__: list[str] = []
 import importlib
 import importlib.machinery
 import importlib.metadata
+import keyword
 import os
 import re
 import sys
@@ -109,6 +110,19 @@ _PEP440_PRE_RELEASE_LABELS = {
 }
 
 
+def is_layer_name(name: str) -> bool:
+    """Return whether `name` can be the import name of a package.
+
+    Args:
+        name: Candidate layer name.
+
+    Returns:
+        ``True`` if `name` is an identifier and not a Python keyword.
+
+    """
+    return name.isidentifier() and not keyword.iskeyword(name)
+
+
 def layer_version_attribute(layer: str) -> str:
     """Return the module attribute that holds the version of a layer.
 
@@ -120,11 +134,14 @@ def layer_version_attribute(layer: str) -> str:
         contains the layer.
 
     Raises:
-        ValueError: If `layer` is not a valid Python identifier.
+        ValueError: If `layer` is not a valid Python identifier or is a
+            Python keyword.
 
     """
-    if not layer.isidentifier():
-        raise ValueError(f"a layer is named by an identifier, not {layer!r}")
+    if not is_layer_name(layer):
+        raise ValueError(
+            f"a layer is named by an identifier that is not a keyword, not {layer!r}"
+        )
     return f"__{layer}_version__"
 
 
@@ -396,7 +413,8 @@ def _build_invalid_layer_name_error(
         f"{NATIVE_ENTRY_POINT_GROUP!r} names the module {entry_point.module!r}, "
         "but an entry point's name is the layer the module contains, the "
         "import name of a Python package, and "
-        f"{entry_point.name!r} is not a valid Python identifier. Fix the "
+        f"{entry_point.name!r} is not a valid Python identifier (a keyword is "
+        "not one). Fix the "
         f"entry point, or name the module to use in the environment variable "
         f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}.",
         name=_EXTENSION_MODULE,
@@ -410,7 +428,7 @@ def _collect_candidates(
 
     Args:
         entry_points: Entry points of the group ``fhy_core.native``.
-        strict: Whether an entry point whose name is not an identifier is an
+        strict: Whether an entry point whose name is not a layer name is an
             error. If not, such entry points are ignored.
 
     Returns:
@@ -424,7 +442,7 @@ def _collect_candidates(
     """
     by_module: dict[str, list[importlib.metadata.EntryPoint]] = {}
     for entry_point in entry_points:
-        if not entry_point.name.isidentifier():
+        if not is_layer_name(entry_point.name):
             if strict:
                 raise _build_invalid_layer_name_error(entry_point)
             continue
