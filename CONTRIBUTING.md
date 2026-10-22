@@ -564,6 +564,13 @@ Its public surface for downstream crates:
 | `util::foreign` | `read_foreign`, `record_foreign_failure`, `RaisedError` |
 | `util::testing` | Behind the `testing` feature; enable it only in `[dev-dependencies]`. Stand-in `fhy_core` modules for embedded-interpreter tests: `with_stand_ins`, `install_module`, `evaluate`, `define`, `entry`. |
 
+A downstream crate's own `register` sets `__<layer>_version__` on the module,
+where `<layer>` is the import name of its Python package, as `register` sets
+`__fhy_core_version__`. The value is the crate's Cargo version, which must
+equal the Python package's version after PEP 440 normalization. A layer is present in a module if and only if the
+module has that `str` attribute, so the attribute is what `fhy_core` and the
+package's `fhy_core.native.require_layer` check.
+
 Each item's rustdoc states its errors and panics. Search-space kind
 resolvers have the shape of the core's
 `fhy_core::search_space::wire::VariableResolverFn` /
@@ -580,16 +587,25 @@ documented `pub fn` over the `pub(crate)` one. No `#[pyclass]` becomes
 
 An aggregate is one `cdylib` per product. Its `#[pymodule]` calls
 `fhy_core_py::register`, then each of its own crates' registration
-functions. `rust/example-aggregate` is the template and the test; it
-registers one class, `Tagger`, that takes and returns an `Identifier` and
-an `OpAttribute`. A downstream aggregate must:
+functions, and each of those sets its layer's `__<layer>_version__`. A
+product advertises its aggregate with one entry point per layer in the group
+`fhy_core.native`: the entry point's name is the layer (the import name of
+the Python package whose Rust binding the module holds) and its value is the
+module's import path, with no `:attribute` or `[extras]`. `rust/example-aggregate` is the template and the test. It holds two
+layers, `fhy_example` (one class, `Tagger`, that takes and returns an
+`Identifier` and an `OpAttribute`) and `fhy_example_search` (the
+`search_space` and oracle kinds), advertised by two entry points that name the
+same module. A downstream aggregate must:
 
 - name its classes' package explicitly (`module = "..."`);
+- set `__<layer>_version__` for each layer it holds, and advertise each;
 - be a top-level module that imports no `fhy_core` Python code at import,
   because `fhy_core` imports it while `fhy_core` itself is importing;
 - have its package import `fhy_core` before calling into the module, since
   the binding imports `fhy_core` modules on first use and doing so from
-  inside an earlier call can deadlock on a once-initialized cache;
+  inside an earlier call can deadlock on a once-initialized cache, and then
+  call `fhy_core.native.require_layer(layer, version)`, which checks the
+  layer and installs the module as the package's own `_rs`;
 - depend on the same `fhy-core` source and version as `fhy-core-py`, since
   two sources are two copies of the statics.
 
@@ -605,40 +621,88 @@ and `__module__` against an aggregate named `_fhy_example_aggregate`.
 
 #### The loader
 
-`fhy_core._extension` picks the process's native module at import:
+`fhy_core._extension` picks the process's native module at import. An entry
+point `name = "module"` in the group `fhy_core.native`
+(`[project.entry-points."fhy_core.native"]`) means that `module` contains the
+layer `name`. The loader groups the entry points by module across all
+distributions, so a module's layers are the union of its claims plus the
+implicit `fhy_core`.
 
-1. `FHY_CORE_NATIVE_MODULE`, if set, overrides everything.
-2. Otherwise, the module named by entry points in the group
-   `fhy_core.native` (`[project.entry-points."fhy_core.native"]`,
-   `product = "module_name"`). Two entry points naming different modules
-   raise `ImportError` listing both.
-3. Otherwise, `fhy_core._rs`.
+1. `FHY_CORE_NATIVE_MODULE`, if set, overrides everything; a value that is
+   not an importable module path raises `ImportError`. The entry points
+   are still read, to name alternatives in messages and to verify the named
+   module's claims if they advertise it, and entry points whose names are
+   not valid layer names (identifiers that are not keywords) or whose values
+   are not module paths are skipped. The import stays silent about them and
+   about a tie or incomparable set the variable overrides; if the named
+   module then lacks a layer, `require_layer`'s error names both.
+2. Otherwise, with no entry points, `fhy_core._rs`.
+3. Otherwise, the *required* layers are the union of every advertised
+   module's layers, and the loader selects the one module whose layers equal
+   the required layers. Several such modules are a tie, which raises
+   `ImportError` naming the tied modules and the layers; no such module
+   means the layer sets are incomparable, which raises `ImportError` naming
+   each module with the layers it lacks. Set the variable to resolve
+   either. An entry point whose name is not a valid layer name (an
+   identifier that is not a keyword), or whose value is not an importable
+   module path (dot-separated layer names, with no `:attribute` or
+   `[extras]`), is refused, naming it, its distribution and its value.
 
-An aggregate reports the `fhy_core` version it contains as
-`__fhy_core_version__` (set by `register`), and a mismatch is refused like
-a stale `_rs`. A named module that fails to import raises `ImportError`; it
-never falls back to `fhy_core._rs`. If `fhy_core._rs` already names a
-different module, loading an aggregate raises `ImportError`.
+Only the selected module is imported. Once imported, it is checked: its
+`__fhy_core_version__`, a Cargo version, must equal the installed package's
+version after PEP 440 normalization, as a stale `_rs` is refused (the error
+names `FHY_CORE_NATIVE_MODULE` if the variable chose the module, else the
+entry points that advertise it), and every other layer its entry points claim must be backed
+by a `str` attribute `__<layer>_version__`, even when it is the only
+candidate or is `fhy_core._rs` itself (whose version is its `__version__`).
+A named module that fails to import raises `ImportError`, with whatever
+exception the import raised as its cause, advising to unset or correct the
+variable if the variable chose it, or to reinstall or uninstall the
+distribution that advertises it; it never falls back to `fhy_core._rs`. If `fhy_core._rs` already names a different
+module, loading an aggregate raises `ImportError`. An `fhy_core._rs` that the
+failed import loaded and then refused, as stale or lacking a claimed layer,
+is removed from `sys.modules`, so a retry in the same process with the
+variable set loads the named module; one that was already there is kept.
 
-`tests/test_extension.py` covers the loader without a build.
-`tests/test_composed_extension.py` builds `rust/example-aggregate` with
-`cargo build` into `target/composition-<python>` and checks, in a fresh
-interpreter, that one counter, one registry per interned type, and one set
-of classes serve both the aggregate and `fhy_core`.
+A product's Python package calls `fhy_core.native.require_layer(layer,
+version, package=None)` while it is imported. It checks that the native module
+reports `version` as `__<layer>_version__` (compared in PEP 440 normal form),
+installs the module as `<package>._rs` (in `sys.modules` and as the
+package's attribute `_rs`), and returns it. A `version` that is not a PEP 440
+version, or a package (`package`, else `layer`) that is not an importable
+module path or is not yet in `sys.modules`, raises `ValueError` before
+anything is installed. Its `ImportError` tells apart a
+module chosen by the variable that lacks the layer, a layer no installed
+distribution declares, and a stale layer, which includes a reported version
+that is not a PEP 440 version; a stale layer in a module the variable chose
+names the variable. `fhy_core.native.get_selection()`
+returns the module, the reason it was chosen (`environment`, `entry_points` or
+`own`) and the layers the module contains, read from its
+`__<layer>_version__` attributes whether or not an entry point advertises
+them; the missing-layer message names those layers too.
+
+`tests/test_extension.py` covers the selection as pure functions, in process,
+and the loading in fresh interpreters with fake modules
+(`tests/native_modules.py`). `tests/test_composed_extension.py` builds
+`rust/example-aggregate` with `cargo build` into `target/composition-<python>`
+and checks, in a fresh interpreter, that one counter, one registry per
+interned type, and one set of classes serve both the aggregate and
+`fhy_core`, and that the aggregate is selected over a lower fake module that
+claims one of its layers, without importing the fake.
 
 #### Shipping an aggregate
 
-There can be one aggregate per set of packages that may share a process,
-so per-product wheels do not work once two products have Rust code. The
-intended design is an umbrella distribution (working name `fhy-native`)
-whose extension aggregates every `-py` crate of the stack, pinned to
-matching releases, declaring the `fhy_core.native` entry point; products
-depend on it through an optional extra. A `-py` crate pins
-`fhy-core-py = "=X.Y.Z"` to the `fhy_core` release it installs with.
-`fhy_core` keeps shipping its own `_rs`. Until the umbrella exists, a
-single downstream product with Rust code may ship its own aggregate under
-the entry point and hand over to the umbrella later. No aggregate release
-packaging lives in this repository.
+There can be one native module per set of packages that may share a process,
+so per-product wheels with their own extensions do not work once two
+products have Rust code. Chains work without further packaging: a product
+whose aggregate contains the layers of the products below it, advertised by
+one entry point each, is selected over theirs, and the lower modules are
+never imported. An umbrella or combined product, whose aggregate contains
+every layer of the stack, is needed only when two installed products have
+incomparable layer sets, such as two products that each build on `fhy_core`
+alone. A `-py` crate pins `fhy-core-py = "=X.Y.Z"` to the `fhy_core`
+release it installs with. `fhy_core` keeps shipping its own `_rs`. No
+aggregate release packaging lives in this repository.
 
 #### Free-threaded Python
 

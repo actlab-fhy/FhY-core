@@ -43,6 +43,7 @@ _ENTRY_POINTS = [
     "fhy_core",
     "fhy_core.traits",
     "fhy_core.identifier",
+    "fhy_core.native",
     "fhy_core.term",
     "fhy_core.provenance",
     "fhy_core.types",

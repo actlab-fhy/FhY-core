@@ -1,6 +1,6 @@
 [package]
 name = "fhy-core-example-aggregate"
-description = "Test-only aggregate extension: fhy-core-py plus one tiny class, the proof that a downstream binding composes with fhy_core."
+description = "Test-only aggregate extension: fhy-core-py plus two layers (fhy_example and fhy_example_search), the proof that downstream bindings compose with fhy_core."
 publish = false
 version.workspace = true
 edition.workspace = true

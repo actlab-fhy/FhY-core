@@ -1,0 +1,270 @@
+"""The native module ``fhy_core`` runs on, and the layers it holds.
+
+A process runs on one native (Rust extension) module, installed as
+``fhy_core._rs``. A downstream product that builds an aggregate module,
+``fhy_core``'s binding plus its own, advertises it in the entry-point group
+``fhy_core.native``: an entry point ``name = "module"`` means the module
+contains the *layer* ``name``, the import name of the Python package whose
+Rust binding the module holds. ``fhy_core`` is always a layer. A layer is
+present in a module if and only if the module has a ``str`` attribute
+``__<layer>_version__``, so `get_selection` reports the layers the module
+contains, whether or not an entry point advertises them.
+
+This module is the interface a downstream package uses to claim its layer:
+call `require_layer` while that package is being imported, to check the layer is in
+the native module of the process and to install the module as the package's
+own ``_rs``.
+"""
+
+import importlib.metadata
+import sys
+from dataclasses import dataclass
+from types import ModuleType
+
+from fhy_core._extension import (
+    EXTENSION_MODULE,
+    EXTENSION_STEM,
+    NATIVE_ENTRY_POINT_GROUP,
+    NATIVE_MODULE_ENVIRONMENT_VARIABLE,
+    Selection,
+    SelectionReason,
+    describe_candidate,
+    describe_candidate_conflict,
+    get_current_selection,
+    get_distribution_name,
+    get_layer_version_attribute,
+    is_module_name,
+    normalize_pep440_version,
+    read_module_layers,
+)
+
+__all__ = [
+    "ENTRY_POINT_GROUP",
+    "MODULE_ENVIRONMENT_VARIABLE",
+    "NativeSelection",
+    "get_layer_version_attribute",
+    "get_selection",
+    "require_layer",
+]
+
+ENTRY_POINT_GROUP = NATIVE_ENTRY_POINT_GROUP
+"""The entry-point group in which a product advertises its native module."""
+
+MODULE_ENVIRONMENT_VARIABLE = NATIVE_MODULE_ENVIRONMENT_VARIABLE
+"""The environment variable that names the native module, overriding the group."""
+
+
+@dataclass(frozen=True)
+class NativeSelection:
+    """The native module this process runs on, and why it was chosen.
+
+    Attributes:
+        module: Name of the module installed as ``fhy_core._rs``.
+        reason: ``"environment"`` if ``FHY_CORE_NATIVE_MODULE`` named it,
+            ``"entry_points"`` if installed distributions advertised it, or
+            ``"own"`` if nothing was advertised and it is ``fhy_core._rs``.
+        layers: The layers the module contains: every layer ``L`` for
+            which it has a ``str`` attribute ``__L_version__``, and always
+            ``fhy_core``. They are read from the module, so they include
+            layers no entry point advertises.
+
+    """
+
+    module: str
+    reason: SelectionReason
+    layers: frozenset[str]
+
+
+def get_selection() -> NativeSelection:
+    """Return the native module this process runs on.
+
+    Returns:
+        What was selected while ``fhy_core`` was imported, and why.
+
+    """
+    chosen = get_current_selection()
+    return NativeSelection(
+        chosen.module,
+        chosen.reason,
+        read_module_layers(sys.modules[EXTENSION_MODULE]),
+    )
+
+
+def _describe_skipped_entry_point(entry_point: importlib.metadata.EntryPoint) -> str:
+    distribution = get_distribution_name(entry_point)
+    owner = f" of {distribution!r}" if distribution else ""
+    return f"{entry_point.name!r}{owner} (value {entry_point.value!r})"
+
+
+def _describe_what_the_variable_overrode(chosen: Selection) -> str:
+    """Return the sentences naming what the variable skipped or hid, if any."""
+    sentences = ""
+    if chosen.skipped:
+        ordered = sorted(
+            chosen.skipped,
+            key=lambda ep: (get_distribution_name(ep), ep.name, ep.value),
+        )
+        noun = "entry point" if len(ordered) == 1 else "entry points"
+        sentences += (
+            f" The variable made fhy_core skip the invalid {noun} "
+            f"{', '.join(map(_describe_skipped_entry_point, ordered))}."
+        )
+    conflict = describe_candidate_conflict(chosen.candidates)
+    if conflict is not None:
+        sentences += f" Without the variable, the import would fail: {conflict}."
+    return sentences
+
+
+def _build_missing_layer_error(layer: str, version: str) -> ImportError:
+    chosen = get_current_selection()
+    attribute = get_layer_version_attribute(layer)
+    if chosen.reason == "environment":
+        holders = [c for c in chosen.candidates if layer in c.layers]
+        advice = (
+            "Installed modules that do: "
+            + "; ".join(describe_candidate(c) for c in holders)
+            + ". Unset the variable to let fhy_core choose, or set it to one "
+            "of those."
+            if holders
+            else "No installed distribution declares that layer; install the "
+            "package that provides it, or unset the variable."
+        )
+        return ImportError(
+            f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}={chosen.module} selected "
+            f"{chosen.module!r}, which does not contain the layer {layer!r} "
+            f"(no {attribute}). {advice}"
+            f"{_describe_what_the_variable_overrode(chosen)}",
+            name=chosen.module,
+        )
+    contained = read_module_layers(sys.modules[EXTENSION_MODULE])
+    layers = ", ".join(repr(name) for name in sorted(contained))
+    return ImportError(
+        f"The layer {layer!r} (version {version!r}) is not in the native "
+        f"module {chosen.module!r} that fhy_core runs on, which contains "
+        f"{layers}, and no installed distribution declares it in the entry "
+        f"point group {NATIVE_ENTRY_POINT_GROUP!r}. Reinstall the package that "
+        f"provides the aggregate containing {layer!r}.",
+        name=chosen.module,
+    )
+
+
+def _build_stale_layer_error(
+    layer: str, version: str, reported: str, *, is_pep440: bool
+) -> ImportError:
+    chosen = get_current_selection()
+    candidate = chosen.candidate
+    distributions = sorted(
+        {name for ep in candidate.entry_points if (name := get_distribution_name(ep))}
+        if candidate is not None
+        else set()
+    )
+    source = (
+        "the distribution that advertised the module "
+        f"({', '.join(map(repr, distributions))})"
+        if distributions
+        else "the package that provides the module"
+    )
+    report = (
+        f"reports version {reported!r} in {get_layer_version_attribute(layer)}"
+        if is_pep440
+        else f"reports {reported!r} in {get_layer_version_attribute(layer)}, which "
+        "is not a PEP 440 version"
+    )
+    if chosen.reason == "environment":
+        return ImportError(
+            f"The layer {layer!r} needs version {version!r}, but the native "
+            f"module {chosen.module!r} that "
+            f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE}={chosen.module} selected "
+            f"{report}, so it is stale. Rebuild or reinstall {source}, or unset "
+            f"{NATIVE_MODULE_ENVIRONMENT_VARIABLE} to let fhy_core choose, or "
+            f"set it to a module that holds {layer!r} at version {version!r}.",
+            name=chosen.module,
+        )
+    return ImportError(
+        f"The layer {layer!r} needs version {version!r}, but the native "
+        f"module {chosen.module!r} that fhy_core runs on {report}, so it is "
+        f"stale. Rebuild or reinstall {source}.",
+        name=chosen.module,
+    )
+
+
+def require_layer(
+    layer: str, version: str, *, package: str | None = None
+) -> ModuleType:
+    """Check the native module holds a layer, and install it for a package.
+
+    Call this while the package that owns the layer is imported. The check
+    is that the native module ``fhy_core`` runs on has the attribute
+    ``__<layer>_version__`` and that its PEP 440 normal form equals that of
+    `version`. The module is then installed as ``<package>._rs``, in
+    ``sys.modules`` and as the attribute ``_rs`` of the package, so the
+    package's binding finds its state there as ``fhy_core``'s finds its own
+    in ``fhy_core._rs``. Nothing is installed unless every check passes.
+
+    Args:
+        layer: Import name of the package whose Rust binding is the layer.
+        version: The version of the package, a PEP 440 version in any
+            spelling (a Cargo version such as ``1.2.3-rc.1`` is one), which
+            the native module's version of the layer must equal in normal
+            form.
+        package: Package to install the module under as ``_rs``, an
+            importable module path that is in ``sys.modules``. Defaults to
+            `layer`.
+
+    Returns:
+        The native module of the process.
+
+    Raises:
+        ImportError: If the module does not contain the layer, reports
+            another version of it or one that is not a PEP 440 version, or
+            ``<package>._rs`` is already another module. The message says
+            what to do, naming the environment variable if it selected the
+            module; if that module lacks the layer, the message names the
+            installed modules that declare the layer, the invalid entry
+            points the variable made the loader skip, and any tie or
+            incomparable set among the advertised modules that it overrode.
+        ValueError: If `layer` is not a valid identifier or is a keyword;
+            if `version` is not a PEP 440 version; if the package
+            (`package`, or `layer` if it is ``None``) is not an importable
+            module path; or if the package is not in ``sys.modules``.
+
+    """
+    attribute = get_layer_version_attribute(layer)
+    required = normalize_pep440_version(version)
+    if required is None:
+        raise ValueError(f"a layer's version is a PEP 440 version, not {version!r}")
+    owner = package if package is not None else layer
+    if not is_module_name(owner):
+        raise ValueError(
+            f"a package is named by an importable module path, not {owner!r}"
+        )
+    parent = sys.modules.get(owner)
+    if parent is None:
+        raise ValueError(
+            f"the package {owner!r} is not in sys.modules; call require_layer "
+            "while that package is being imported"
+        )
+    module = sys.modules[EXTENSION_MODULE]
+    reported = getattr(module, attribute, None)
+    if not isinstance(reported, str):
+        raise _build_missing_layer_error(layer, version)
+    normalized = normalize_pep440_version(reported)
+    if normalized != required:
+        raise _build_stale_layer_error(
+            layer, version, reported, is_pep440=normalized is not None
+        )
+    name = f"{owner}.{EXTENSION_STEM}"
+    held = sys.modules.get(name)
+    if held is not None and held is not module:
+        held_file = getattr(held, "__file__", None)
+        where = f" (loaded from {held_file})" if held_file else ""
+        raise ImportError(
+            f"{name!r} is already another module{where} than the native "
+            f"module {module.__name__!r} that fhy_core runs on, and a process "
+            "holds one native extension module. Uninstall the package that "
+            "provides the other module.",
+            name=name,
+        )
+    sys.modules[name] = module
+    setattr(parent, EXTENSION_STEM, module)
+    return module

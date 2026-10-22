@@ -15,20 +15,30 @@ import pathlib
 import subprocess
 import sys
 import sysconfig
+from collections.abc import Iterable
+from types import ModuleType
 
 import pytest
 
-from fhy_core import _rs
+from fhy_core import _extension, _rs, native
 from fhy_core._extension import (
     NATIVE_ENTRY_POINT_GROUP,
     NATIVE_MODULE_ENVIRONMENT_VARIABLE,
+    Candidate,
+    Selection,
+    SelectionReason,
     _find_foreign_extension_builds,
-    _normalize_pep440_version,
+    _select_native_module,
+    _verify_declared_layers,
+    get_current_selection,
+    get_layer_version_attribute,
+    normalize_pep440_version,
 )
 from tests.native_modules import (
     read_import_error,
     run_python,
     write_distribution,
+    write_native_module,
 )
 
 _IMPORT_PACKAGE_PROGRAM = (
@@ -40,6 +50,7 @@ _IMPORT_PACKAGE_PROGRAM = (
 )
 _REQUIREMENT = "fhy_core requires its Rust extension fhy_core._rs"
 _REBUILD_ADVICE = "`uv sync`"
+_PACKAGE_VERSION = importlib.metadata.version("fhy_core")
 
 
 def _import_the_package(program_prefix: str = "") -> subprocess.CompletedProcess[str]:
@@ -219,7 +230,7 @@ def test_a_broken_extension_raises_import_error_naming_the_cause(
 
 def test_extension_version_matches_the_installed_package_version() -> None:
     """Test the extension's Cargo version normalizes to the package version."""
-    assert _normalize_pep440_version(_rs.__version__) == importlib.metadata.version(
+    assert normalize_pep440_version(_rs.__version__) == importlib.metadata.version(
         "fhy_core"
     )
 
@@ -250,13 +261,13 @@ def test_cargo_version_normalizes_to_the_version_maturin_builds(
     cargo_version: str, package_version: str
 ) -> None:
     """Test a Cargo version normalizes to the package version maturin gives it."""
-    assert _normalize_pep440_version(cargo_version) == package_version
+    assert normalize_pep440_version(cargo_version) == package_version
 
 
 @pytest.mark.parametrize("version", ["0.3.0-foo.1", "0.0.0-stale", "", "stale"])
 def test_a_non_pep440_version_does_not_normalize(version: str) -> None:
     """Test a version maturin cannot build a package from has no normal form."""
-    assert _normalize_pep440_version(version) is None
+    assert normalize_pep440_version(version) is None
 
 
 def _create_stale_extension_prefix(version_assignment: str) -> str:
@@ -310,6 +321,37 @@ def test_a_versionless_extension_raises_import_error() -> None:
     assert _REBUILD_ADVICE in message
 
 
+# Source that makes the installed package's metadata unreadable, as when the
+# package is imported from a source tree that was never installed.
+_HIDE_PACKAGE_METADATA_PREFIX = (
+    "import importlib.metadata\n"
+    "_read_version = importlib.metadata.version\n"
+    "def _read_version_without_fhy_core(name):\n"
+    "    if name == 'fhy_core':\n"
+    "        raise importlib.metadata.PackageNotFoundError(name)\n"
+    "    return _read_version(name)\n"
+    "importlib.metadata.version = _read_version_without_fhy_core\n"
+)
+_MISSING_METADATA_MESSAGE = (
+    "ImportError: fhy_core has no installed distribution metadata, which "
+    "holds the version its Rust extension must match; it is likely imported "
+    "from a source tree that was never installed. Rebuild the extension for "
+    "this interpreter from the source checkout with `uv sync`, or reinstall "
+    "the fhy_core wheel."
+)
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_missing_package_metadata_raises_import_error() -> None:
+    """Test the import fails with advice when the package has no metadata."""
+    completed = _import_the_package(_HIDE_PACKAGE_METADATA_PREFIX)
+
+    assert _read_import_error(completed) == _MISSING_METADATA_MESSAGE
+    assert "PackageNotFoundError: No package metadata" in completed.stderr
+    assert "was the direct cause of the following exception" in completed.stderr
+
+
 @pytest.mark.skipif(
     not sysconfig.get_config_var("Py_GIL_DISABLED"),
     reason="only a free-threaded interpreter can run without the GIL",
@@ -346,10 +388,10 @@ _PRINT_EXTENSION_NAME = "import fhy_core\nprint(fhy_core._rs.__name__)"
 
 @pytest.mark.slow
 @pytest.mark.subprocess
-def test_two_advertised_native_modules_are_refused_naming_both(
+def test_incomparable_native_modules_are_refused_naming_both(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Test entry points naming different modules make the import fail."""
+    """Test with no module containing every installed layer the import fails."""
     write_distribution(tmp_path, "product-one", {"one": "native_one"})
     write_distribution(tmp_path, "product-two", {"two": "native_two"})
 
@@ -357,9 +399,9 @@ def test_two_advertised_native_modules_are_refused_naming_both(
         run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
     )
 
-    assert "one native extension module per process" in message
-    assert "'native_one' (entry point 'one' of 'product-one')" in message
-    assert "'native_two' (entry point 'two' of 'product-two')" in message
+    assert "no installed module contains every installed layer" in message
+    assert "'native_one' (entry point 'one' of 'product-one') lacks 'two'" in message
+    assert "'native_two' (entry point 'two' of 'product-two') lacks 'one'" in message
     assert NATIVE_MODULE_ENVIRONMENT_VARIABLE in message
 
 
@@ -377,7 +419,7 @@ def test_two_entry_points_naming_one_module_are_not_a_conflict(
     )
 
     assert "'native_shared'" in message
-    assert "one native extension module per process" not in message
+    assert "no installed module contains every installed layer" not in message
 
 
 @pytest.mark.slow
@@ -392,10 +434,13 @@ def test_an_advertised_module_that_is_missing_is_not_replaced_by_the_own_one(
         run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
     )
 
-    assert "'native_missing'" in message
-    assert "failed to import" in message
-    assert "ModuleNotFoundError" in message
-    assert "fhy_core._rs" in message
+    assert message == (
+        "ImportError: fhy_core selected the native extension module "
+        "'native_missing' (entry point 'product' of 'product') from the "
+        "installed entry points, but it failed to import (ModuleNotFoundError: "
+        "No module named 'native_missing'). Reinstall the distribution that "
+        "provides it, or uninstall that distribution."
+    )
 
 
 @pytest.mark.slow
@@ -425,6 +470,27 @@ def test_a_stale_advertised_module_is_refused(
 
 @pytest.mark.slow
 @pytest.mark.subprocess
+def test_missing_package_metadata_with_an_advertised_module_raises_import_error(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test an advertised module also needs the package's metadata."""
+    write_distribution(tmp_path, "product", {"product": "native_current"})
+    (tmp_path / "native_current.py").write_text(
+        f"__fhy_core_version__ = {importlib.metadata.version('fhy_core')!r}\n"
+    )
+
+    completed = run_python(
+        _HIDE_PACKAGE_METADATA_PREFIX + _PRINT_EXTENSION_NAME,
+        python_path=[tmp_path],
+    )
+
+    assert read_import_error(completed) == _MISSING_METADATA_MESSAGE
+    assert "PackageNotFoundError: No package metadata" in completed.stderr
+    assert "was the direct cause of the following exception" in completed.stderr
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
 def test_the_environment_variable_overrides_the_advertised_modules(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -440,3 +506,1283 @@ def test_the_environment_variable_overrides_the_advertised_modules(
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.split() == ["fhy_core._rs"]
+
+
+def _entry_point(name: str, module: str) -> importlib.metadata.EntryPoint:
+    """Return an entry point of the native group, as an installed product has."""
+    return importlib.metadata.EntryPoint(
+        name=name, value=module, group=NATIVE_ENTRY_POINT_GROUP
+    )
+
+
+def _entry_points(
+    claims: Iterable[tuple[str, str]],
+) -> list[importlib.metadata.EntryPoint]:
+    """Return an entry point of the native group per ``(name, module)`` claim."""
+    return [_entry_point(name, module) for name, module in claims]
+
+
+def _select(
+    entry_points: Iterable[importlib.metadata.EntryPoint],
+    environ: dict[str, str] | None = None,
+) -> tuple[str, str]:
+    """Return the module and the reason the selection gives."""
+    selection = _select_native_module(environ or {}, entry_points)
+    return selection.module, selection.reason
+
+
+def test_with_no_entry_points_the_own_module_is_selected() -> None:
+    """Test a process with no advertised module runs on `fhy_core._rs`."""
+    assert _select([]) == ("fhy_core._rs", "own")
+
+
+def test_one_advertised_module_is_selected() -> None:
+    """Test the one module the entry points name is selected."""
+    assert _select([_entry_point("product", "native_product")]) == (
+        "native_product",
+        "entry_points",
+    )
+
+
+@pytest.mark.parametrize(
+    ("claims", "candidates", "layers"),
+    [
+        (
+            [("one", "native_shared"), ("two", "native_shared")],
+            ["native_shared"],
+            {"fhy_core", "one", "two"},
+        ),
+        (
+            [
+                ("product", "native_shared"),
+                ("base", "native_shared"),
+                ("base", "native_base"),
+            ],
+            ["native_base", "native_shared"],
+            {"fhy_core", "product", "base"},
+        ),
+    ],
+    ids=["alone", "beside-a-lower-module"],
+)
+def test_entry_points_naming_one_module_are_merged_into_its_layers(
+    claims: list[tuple[str, str]], candidates: list[str], layers: set[str]
+) -> None:
+    """Test entry points naming one module give it each layer, once."""
+    selection = _select_native_module({}, _entry_points(claims))
+
+    assert selection.module == "native_shared"
+    assert [candidate.module for candidate in selection.candidates] == candidates
+    assert selection.layers == layers
+
+
+@pytest.mark.parametrize(
+    ("claims", "top"),
+    [
+        pytest.param([("a", "native_a")], "native_a", id="chain-of-one"),
+        pytest.param(
+            [("a", "native_a"), ("b", "native_ab"), ("a", "native_ab")],
+            "native_ab",
+            id="chain-of-two",
+        ),
+        pytest.param(
+            [
+                ("a", "native_a"),
+                ("a", "native_ab"),
+                ("b", "native_ab"),
+                ("b", "native_abc"),
+                ("a", "native_abc"),
+                ("c", "native_abc"),
+                ("c", "native_abc"),
+            ],
+            "native_abc",
+            id="chain-of-three",
+        ),
+        pytest.param(
+            [
+                ("a", "native_a"),
+                ("b", "native_b"),
+                ("a", "native_ab"),
+                ("b", "native_ab"),
+            ],
+            "native_ab",
+            id="diamond",
+        ),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reversed"])
+def test_the_module_containing_every_layer_is_selected(
+    claims: list[tuple[str, str]], top: str, reverse: bool
+) -> None:
+    """Test the top of a chain or diamond is selected, whatever the order."""
+    ordered = claims[::-1] if reverse else claims
+
+    assert _select(_entry_points(ordered)) == (top, "entry_points")
+
+
+def test_two_modules_with_the_same_layers_are_a_tie() -> None:
+    """Test equally complete modules are refused, naming both and the fix."""
+    entry_points = _entry_points([("a", "native_one"), ("a", "native_two")])
+
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, entry_points)
+
+    message = str(caught.value)
+    assert "several installed modules each contain every installed layer" in message
+    assert "'native_one'" in message
+    assert "'native_two'" in message
+    assert "'a'" in message
+    assert NATIVE_MODULE_ENVIRONMENT_VARIABLE in message
+
+
+def test_incomparable_layer_sets_are_refused_naming_what_each_lacks() -> None:
+    """Test with no module containing every installed layer, each lack is named."""
+    entry_points = _entry_points(
+        [("one", "native_small"), ("two", "native_big"), ("three", "native_big")]
+    )
+
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, entry_points)
+
+    message = str(caught.value)
+    assert "no installed module contains every installed layer" in message
+    assert "'fhy_core', 'one', 'three', 'two'" in message
+    # The module with more layers comes first.
+    assert message.index("'native_big'") < message.index("'native_small'")
+    assert "'native_big' (entry points 'three', 'two') lacks 'one'" in message
+    assert "'native_small' (entry point 'one') lacks 'three', 'two'" in message
+    assert NATIVE_MODULE_ENVIRONMENT_VARIABLE in message
+
+
+@pytest.mark.parametrize(
+    "entry_points",
+    [
+        [("a", "native_one"), ("a", "native_two")],
+        [("one", "native_one"), ("two", "native_two")],
+    ],
+    ids=["tie", "incomparable"],
+)
+def test_the_environment_variable_overrides_a_tie_and_incomparable_sets(
+    entry_points: list[tuple[str, str]],
+) -> None:
+    """Test the named module wins, where the entry points alone are refused."""
+    selection = _select_native_module(
+        {NATIVE_MODULE_ENVIRONMENT_VARIABLE: " native_two "},
+        _entry_points(entry_points),
+    )
+
+    assert (selection.module, selection.reason) == ("native_two", "environment")
+    assert len(selection.candidates) == 2
+
+
+_INVALID_LAYER_NAMES = ["not-an-identifier", "1st", "a.b", "", "class", "None"]
+
+
+@pytest.mark.parametrize("name", _INVALID_LAYER_NAMES)
+def test_an_entry_point_name_that_is_not_a_layer_name_is_refused(name: str) -> None:
+    """Test a name that cannot be a package's import name is an error."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, [_entry_point(name, "native_bad")])
+
+    message = str(caught.value)
+    assert repr(name) in message
+    assert "'native_bad'" in message
+    assert "not a valid Python identifier" in message
+
+
+_MALFORMED_MODULE_VALUES = [
+    "",
+    "my-product._native",
+    "a b",
+    "pkg.mod:attr",
+    "pkg.mod [extra]",
+    ".rel",
+    "pkg..mod",
+    "pkg.class",
+]
+
+
+@pytest.mark.parametrize("value", _MALFORMED_MODULE_VALUES)
+def test_an_entry_point_value_that_is_not_a_module_path_is_refused(value: str) -> None:
+    """Test a value that cannot be imported as a module is an error."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, [_entry_point("product", value)])
+
+    message = str(caught.value)
+    assert "The entry point 'product' in the group 'fhy_core.native'" in message
+    assert f"has the value {value!r}" in message
+    assert "importable module path" in message
+    assert "no attribute or extras" in message
+    assert NATIVE_MODULE_ENVIRONMENT_VARIABLE in message
+
+
+def test_a_malformed_entry_point_value_is_refused_naming_the_fix() -> None:
+    """Test the refusal of a malformed value names the cause and the fix."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module({}, [_entry_point("product", "pkg.mod:attr")])
+
+    assert str(caught.value) == (
+        "The entry point 'product' in the group 'fhy_core.native' has the "
+        "value 'pkg.mod:attr', but an entry point's value is the native "
+        "module, an importable module path such as 'my_product._native' with "
+        "no attribute or extras. Fix the entry point, or name the module to "
+        "use in the environment variable FHY_CORE_NATIVE_MODULE."
+    )
+
+
+@pytest.mark.parametrize("value", _MALFORMED_MODULE_VALUES)
+def test_a_malformed_entry_point_value_is_ignored_under_the_variable(
+    value: str,
+) -> None:
+    """Test the variable overrides strict values, as it does strict names."""
+    selection = _select_native_module(
+        {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "native_named"},
+        [_entry_point("product", value), _entry_point("other", "native_other")],
+    )
+
+    assert selection.module == "native_named"
+    assert [candidate.module for candidate in selection.candidates] == ["native_other"]
+    assert selection.skipped == (_entry_point("product", value),)
+
+
+def test_an_invalid_name_with_a_malformed_value_is_refused_for_its_name() -> None:
+    """Test an entry point bad in both ways is refused for its name."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module(
+            {}, [_entry_point("not-an-identifier", "my-product._native")]
+        )
+
+    message = str(caught.value)
+    assert "'not-an-identifier'" in message
+    assert "names the module 'my-product._native'" in message
+    assert "not a valid Python identifier" in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_malformed_entry_point_value_is_refused_end_to_end(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test an installed malformed value fails the import naming its owner."""
+    write_distribution(tmp_path, "product", {"product": "my-product._native"})
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "The entry point 'product' of 'product'" in message
+    assert "has the value 'my-product._native'" in message
+
+
+def test_a_module_value_is_read_without_surrounding_space() -> None:
+    """Test a value padded with spaces names the module it surrounds."""
+    assert _select([_entry_point("product", " native_p ")]) == (
+        "native_p",
+        "entry_points",
+    )
+
+
+@pytest.mark.parametrize("layer", _INVALID_LAYER_NAMES)
+def test_get_layer_version_attribute_refuses_a_name_that_is_not_a_layer(
+    layer: str,
+) -> None:
+    """Test a keyword or non-identifier layer name raises `ValueError`."""
+    with pytest.raises(ValueError, match="identifier"):
+        get_layer_version_attribute(layer)
+
+
+def test_an_invalid_entry_point_name_is_ignored_under_the_variable() -> None:
+    """Test the variable overrides strict names too."""
+    selection = _select_native_module(
+        {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "native_named"},
+        [_entry_point("not-an-identifier", "native_bad")],
+    )
+
+    assert selection.module == "native_named"
+    assert selection.candidates == ()
+    assert selection.skipped == (_entry_point("not-an-identifier", "native_bad"),)
+
+
+@pytest.mark.parametrize("value", [".rel", "a b", "pkg.mod:attr", "my-product.x"])
+def test_an_environment_variable_that_is_not_a_module_path_is_refused(
+    value: str,
+) -> None:
+    """Test the variable must name an importable module."""
+    with pytest.raises(ImportError) as caught:
+        _select_native_module(
+            {NATIVE_MODULE_ENVIRONMENT_VARIABLE: value},
+            [_entry_point("product", "native_product")],
+        )
+
+    assert str(caught.value) == (
+        f"The environment variable FHY_CORE_NATIVE_MODULE is set to {value!r}, "
+        "which is not an importable module path (dot-separated identifiers "
+        "that are not keywords). Set it to the module to use, such as "
+        "'fhy_core._rs', or unset it to let fhy_core choose."
+    )
+
+
+def test_a_blank_environment_variable_is_ignored() -> None:
+    """Test a variable that is empty or blank does not select a module."""
+    assert _select([], {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "  "}) == (
+        "fhy_core._rs",
+        "own",
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_module_that_is_not_selected_is_never_imported(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test a lower layer's module is not imported when a higher one is chosen."""
+    version = importlib.metadata.version("fhy_core")
+    write_distribution(tmp_path, "lower", {"base": "native_lower"})
+    write_distribution(
+        tmp_path, "upper", {"base": "native_upper", "top": "native_upper"}
+    )
+    write_native_module(
+        tmp_path,
+        "native_lower",
+        {},
+        fhy_core_version=version,
+        on_import="raise RuntimeError('the lower module was imported')",
+    )
+    write_native_module(
+        tmp_path, "native_upper", {"base": "0", "top": "0"}, fhy_core_version=None
+    )
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "'native_upper'" in message
+    assert "native_lower" not in message
+    assert "was imported" not in message
+
+
+def test_a_selected_module_raising_on_import_is_refused_with_its_cause(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test any exception importing the module becomes the `ImportError` cause."""
+    write_native_module(
+        tmp_path,
+        "native_raising_on_import",
+        {},
+        fhy_core_version=importlib.metadata.version("fhy_core"),
+        on_import="raise RuntimeError('broken at import')",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(ImportError) as caught:
+        _extension._load_aggregate_extension(
+            Selection("native_raising_on_import", "environment", ())
+        )
+
+    assert "'native_raising_on_import'" in str(caught.value)
+    assert "failed to import (RuntimeError: broken at import)" in str(caught.value)
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert "native_raising_on_import" not in sys.modules
+
+
+def test_a_variable_module_that_fails_to_import_names_the_variable() -> None:
+    """Test the advice for a module the variable chose is about the variable."""
+    with pytest.raises(ImportError) as caught:
+        _extension._load_aggregate_extension(
+            Selection("native_absent_by_variable", "environment", ())
+        )
+
+    assert str(caught.value) == (
+        "FHY_CORE_NATIVE_MODULE=native_absent_by_variable selected the native "
+        "extension module 'native_absent_by_variable', but it failed to import "
+        "(ModuleNotFoundError: No module named 'native_absent_by_variable'). "
+        "Unset FHY_CORE_NATIVE_MODULE to let fhy_core choose, or set it to an "
+        "importable module."
+    )
+
+
+def test_an_advertised_module_that_fails_to_import_names_its_entry_points() -> None:
+    """Test the advice for an advertised module is about its distribution."""
+    candidate = Candidate(
+        "native_absent_advertised",
+        (_entry_point("product", "native_absent_advertised"),),
+    )
+
+    with pytest.raises(ImportError) as caught:
+        _extension._load_aggregate_extension(
+            Selection("native_absent_advertised", "entry_points", (candidate,))
+        )
+
+    assert str(caught.value) == (
+        "fhy_core selected the native extension module "
+        "'native_absent_advertised' (entry point 'product') from the installed "
+        "entry points, but it failed to import (ModuleNotFoundError: No module "
+        "named 'native_absent_advertised'). Reinstall the distribution that "
+        "provides it, or uninstall that distribution."
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        (
+            "environment",
+            "FHY_CORE_NATIVE_MODULE=native_stale_by_variable selected the "
+            "native extension module 'native_stale_by_variable', which must "
+            f"hold fhy_core {_PACKAGE_VERSION!r}, but it reports version "
+            "'0.0.0-stale', so it is stale or is not a fhy_core extension. "
+            "Rebuild or reinstall the package that provides it for fhy_core "
+            f"{_PACKAGE_VERSION!r}, or unset FHY_CORE_NATIVE_MODULE to let "
+            "fhy_core choose.",
+        ),
+        (
+            "entry_points",
+            "fhy_core selected the native extension module "
+            "'native_stale_advertised' (entry point 'product') from the "
+            f"installed entry points, which must hold fhy_core {_PACKAGE_VERSION!r}, "
+            "but it reports version '0.0.0-stale', so it is stale or is not "
+            "a fhy_core extension. Rebuild or reinstall the distribution that "
+            f"provides it for fhy_core {_PACKAGE_VERSION!r}, or uninstall that "
+            "distribution.",
+        ),
+    ],
+    ids=["environment", "entry_points"],
+)
+def test_a_stale_aggregate_is_refused_naming_why_it_was_selected(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reason: SelectionReason,
+    expected: str,
+) -> None:
+    """Test the advice for a stale module follows how it was selected."""
+    module = (
+        "native_stale_by_variable"
+        if reason == "environment"
+        else "native_stale_advertised"
+    )
+    write_native_module(tmp_path, module, {}, fhy_core_version="0.0.0-stale")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    advertised = (
+        (Candidate(module, (_entry_point("product", module),)),)
+        if reason == "entry_points"
+        else ()
+    )
+
+    try:
+        with pytest.raises(ImportError) as caught:
+            _extension._load_aggregate_extension(Selection(module, reason, advertised))
+    finally:
+        sys.modules.pop(module, None)
+
+    assert str(caught.value) == expected
+
+
+def _candidate(*names: str) -> Candidate:
+    """Return the candidate `native_fake` that the named layers claim."""
+    return Candidate(
+        "native_fake", tuple(_entry_points((name, "native_fake") for name in names))
+    )
+
+
+def _fake_module(**attributes: object) -> ModuleType:
+    module = ModuleType("native_fake")
+    for name, value in attributes.items():
+        setattr(module, name, value)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("claims", "expected"),
+    [
+        (
+            [],
+            "a candidate is advertised by at least one entry point, but "
+            "'native_fake' has none",
+        ),
+        (
+            [("a", "native_fake"), ("b", "native_other")],
+            "every entry point of a candidate names its module 'native_fake', "
+            "but the entry point 'b' names 'native_other'",
+        ),
+        (
+            [("class", "native_fake")],
+            "an entry point of a candidate is named by a layer (an identifier "
+            "that is not a keyword), not 'class'",
+        ),
+    ],
+    ids=["no-entry-points", "other-module", "invalid-name"],
+)
+def test_an_impossible_candidate_is_refused(
+    claims: list[tuple[str, str]], expected: str
+) -> None:
+    """Test a candidate is built only from entry points that name its module."""
+    with pytest.raises(ValueError) as caught:
+        Candidate("native_fake", tuple(_entry_points(claims)))
+
+    assert str(caught.value) == expected
+
+
+def _create_named_candidate(module: str) -> Candidate:
+    """Return a candidate `module` that the layer ``a`` claims."""
+    return Candidate(module, (_entry_point("a", module),))
+
+
+@pytest.mark.parametrize(
+    ("module", "reason", "candidates", "expected"),
+    [
+        (
+            "native_fake",
+            "own",
+            [],
+            "a selection for the reason 'own' is of 'fhy_core._rs', not 'native_fake'",
+        ),
+        (
+            "fhy_core._rs",
+            "own",
+            ["native_a"],
+            "a selection for the reason 'own' has no candidates, since an "
+            "advertised module would be selected, but it has ['native_a']",
+        ),
+        (
+            "native_other",
+            "entry_points",
+            ["native_a"],
+            "a selection for the reason 'entry_points' is of an advertised "
+            "module, but 'native_other' is not among the candidates "
+            "['native_a']",
+        ),
+        (
+            "native_named",
+            "environment",
+            ["native_b", "native_a"],
+            "a selection's candidates are sorted by module with none repeated, "
+            "not ['native_b', 'native_a']",
+        ),
+        (
+            "native_named",
+            "environment",
+            ["native_a", "native_a"],
+            "a selection's candidates are sorted by module with none repeated, "
+            "not ['native_a', 'native_a']",
+        ),
+    ],
+    ids=[
+        "own-other-module",
+        "own-with-candidates",
+        "entry-points-unadvertised",
+        "unsorted",
+        "repeated",
+    ],
+)
+def test_an_impossible_selection_is_refused(
+    module: str, reason: SelectionReason, candidates: list[str], expected: str
+) -> None:
+    """Test a selection is built only in a state the loader can reach."""
+    built = tuple(_create_named_candidate(name) for name in candidates)
+
+    with pytest.raises(ValueError) as caught:
+        Selection(module, reason, built)
+
+    assert str(caught.value) == expected
+
+
+def test_the_version_attribute_of_a_layer_is_dunder_version() -> None:
+    """Test a layer's attribute is its name between `__` and `_version__`."""
+    assert get_layer_version_attribute("moga_sim") == "__moga_sim_version__"
+
+
+def test_a_module_holding_every_claimed_layer_is_verified() -> None:
+    """Test claims backed by version attributes pass; `fhy_core` is exempt."""
+    module = _fake_module(__a_version__="1", __b_version__="2")
+
+    _verify_declared_layers("native_fake", module, _candidate("a", "b", "fhy_core"))
+
+
+def test_a_module_with_no_entry_points_is_not_verified() -> None:
+    """Test a module no entry point advertises claims nothing to verify."""
+    _verify_declared_layers("native_fake", _fake_module(), None)
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [{}, {"__b_version__": 2}, {"__b_version__": None}],
+    ids=["absent", "not-a-string", "none"],
+)
+def test_a_claimed_layer_without_a_version_string_is_refused(
+    attributes: dict[str, object],
+) -> None:
+    """Test a lying claim names the entry point and the missing attribute."""
+    module = _fake_module(__a_version__="1", **attributes)
+
+    with pytest.raises(ImportError) as caught:
+        _verify_declared_layers("native_fake", module, _candidate("a", "b"))
+
+    message = str(caught.value)
+    assert "'native_fake'" in message
+    assert "the entry point 'b' claims the layer 'b'" in message
+    assert "'__b_version__'" in message
+    assert "__a_version__" not in message
+
+
+def test_every_missing_layer_is_named() -> None:
+    """Test a module that lacks several claimed layers is refused naming each."""
+    with pytest.raises(ImportError) as caught:
+        _verify_declared_layers("native_fake", _fake_module(), _candidate("a", "b"))
+
+    message = str(caught.value)
+    assert "'__a_version__'" in message
+    assert "'__b_version__'" in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+@pytest.mark.parametrize(
+    "environment",
+    [{}, {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "native_lying"}],
+    ids=["entry-points", "variable"],
+)
+def test_a_claim_the_module_does_not_back_is_refused_end_to_end(
+    tmp_path: pathlib.Path, environment: dict[str, str]
+) -> None:
+    """Test a claim the module lacks fails the import, however it was selected."""
+    write_distribution(
+        tmp_path, "product", {"fhy_core": "native_lying", "extra": "native_lying"}
+    )
+    write_native_module(tmp_path, "native_lying", {}, fhy_core_version=_PACKAGE_VERSION)
+
+    message = read_import_error(
+        run_python(
+            _PRINT_EXTENSION_NAME, python_path=[tmp_path], environment=environment
+        )
+    )
+
+    assert "the entry point 'extra' of 'product' claims the layer 'extra'" in message
+    assert "'__extra_version__'" in message
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_claim_on_the_own_module_it_does_not_back_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test an entry point naming `fhy_core._rs` has its claim verified too."""
+    write_distribution(tmp_path, "product", {"foo": "fhy_core._rs"})
+
+    message = read_import_error(
+        run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+    )
+
+    assert "the entry point 'foo' of 'product' claims the layer 'foo'" in message
+    assert "'__foo_version__'" in message
+
+
+def _write_proxy_aggregate(site_directory: pathlib.Path, module: str) -> None:
+    """Write an aggregate that is a fresh load of this build of `fhy_core._rs`.
+
+    Importing `module` loads the built extension file again, sets its
+    ``__fhy_core_version__`` to its ``__version__`` and makes the loaded
+    extension the module, so the package runs on it in full.
+    """
+    (site_directory / f"{module}.py").write_text(
+        "import importlib.util, sys\n"
+        "_spec = importlib.util.spec_from_file_location(\n"
+        f"    'fhy_core._rs', {_rs.__file__!r}\n"
+        ")\n"
+        "_extension = importlib.util.module_from_spec(_spec)\n"
+        "_spec.loader.exec_module(_extension)\n"
+        "_extension.__fhy_core_version__ = _extension.__version__\n"
+        "sys.modules[__name__] = _extension\n"
+    )
+
+
+_FAKE_PACKAGE_VERSION = (
+    "import importlib.metadata\n"
+    "_real_version = importlib.metadata.version\n"
+    "importlib.metadata.version = (\n"
+    "    lambda name: '9.9.9' if name == 'fhy_core' else _real_version(name)\n"
+    ")\n"
+)
+_RESTORE_PACKAGE_VERSION = "importlib.metadata.version = _real_version\n"
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+@pytest.mark.parametrize(
+    ("entry_points", "before", "after", "expected_refusal"),
+    [
+        ({}, _FAKE_PACKAGE_VERSION, _RESTORE_PACKAGE_VERSION, "so it is stale"),
+        (
+            {"foo": "fhy_core._rs"},
+            "",
+            "",
+            "the entry point 'foo' of 'product' claims the layer 'foo'",
+        ),
+    ],
+    ids=["stale", "undeclared-layer"],
+)
+def test_a_rejected_own_extension_is_not_kept_for_a_retry(
+    tmp_path: pathlib.Path,
+    entry_points: dict[str, str],
+    before: str,
+    after: str,
+    expected_refusal: str,
+) -> None:
+    """Test a retry under the variable loads its module, not the refused `_rs`."""
+    write_distribution(tmp_path, "product", entry_points)
+    _write_proxy_aggregate(tmp_path, "native_proxy")
+    program = (
+        "import os, sys\n"
+        f"{before}"
+        "try:\n"
+        "    import fhy_core\n"
+        "except ImportError as error:\n"
+        "    print('refused:', error)\n"
+        f"{after}"
+        "print('fhy_core._rs' in sys.modules)\n"
+        f"os.environ[{NATIVE_MODULE_ENVIRONMENT_VARIABLE!r}] = 'native_proxy'\n"
+        "import fhy_core\n"
+        "from fhy_core.identifier import Identifier\n"
+        "print(fhy_core._rs is sys.modules['native_proxy'])\n"
+        "print(fhy_core.native.get_selection().reason)\n"
+        "first = Identifier('first')\n"
+        "print(Identifier('second').id - first.id)\n"
+    )
+
+    completed = run_python(program, python_path=[tmp_path])
+
+    assert completed.returncode == 0, completed.stderr
+    refusal, *rest = completed.stdout.splitlines()
+    assert refusal.startswith("refused: ")
+    assert expected_refusal in refusal
+    assert rest == ["False", "True", "environment", "1"]
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_rejected_extension_held_before_the_import_is_kept() -> None:
+    """Test the loader removes only an extension the failed import loaded."""
+    program = (
+        _create_stale_extension_prefix("_fake_extension.__version__ = '0.0.0-stale'")
+        + "try:\n"
+        "    import fhy_core\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "print(sys.modules['fhy_core._rs'] is _fake_extension)\n"
+    )
+
+    completed = run_python(program)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["True"]
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_an_entry_point_naming_the_own_module_as_fhy_core_is_accepted(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test advertising `fhy_core._rs` for the layer `fhy_core` imports."""
+    write_distribution(tmp_path, "product", {"fhy_core": "fhy_core._rs"})
+
+    completed = run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["fhy_core._rs"]
+
+
+@pytest.mark.slow
+@pytest.mark.subprocess
+def test_a_claim_the_module_backs_is_accepted_end_to_end(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Test a module that reports a claimed layer passes verification."""
+    version = importlib.metadata.version("fhy_core")
+    write_distribution(tmp_path, "product", {"extra": "native_honest"})
+    write_native_module(
+        tmp_path, "native_honest", {"extra": "1"}, fhy_core_version=version
+    )
+
+    completed = run_python(_PRINT_EXTENSION_NAME, python_path=[tmp_path])
+
+    # The fake holds none of the binding, so the package fails later, not in
+    # the verification of the claims.
+    assert completed.returncode != 0
+    assert "claims the layer" not in completed.stderr
+    assert "no attribute 'PartiallyOrderedSet'" in completed.stderr
+
+
+_VARIABLE_SELECTION = Selection("native_fake", "environment", ())
+
+
+def _install_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    module: ModuleType,
+    selection: Selection = _VARIABLE_SELECTION,
+) -> None:
+    """Make `module` the native module of the process, chosen as `selection`.
+
+    The default selection is of ``native_fake``, named by the variable, with
+    nothing advertised.
+    """
+    monkeypatch.setitem(sys.modules, "fhy_core._rs", module)
+    monkeypatch.setattr(_extension, "_SELECTION", selection)
+
+
+@pytest.fixture
+def demo_package() -> Iterable[ModuleType]:
+    """Provide a package ``demo_layer`` in `sys.modules`, restored after."""
+    package = ModuleType("demo_layer")
+    sys.modules["demo_layer"] = package
+    yield package
+    sys.modules.pop("demo_layer", None)
+    sys.modules.pop("demo_layer._rs", None)
+
+
+def test_the_selection_of_this_process_is_public() -> None:
+    """Test `fhy_core.native.get_selection` reports what the loader chose."""
+    chosen = native.get_selection()
+
+    loaded = _extension._SELECTION
+    assert loaded is not None
+    assert (chosen.module, chosen.reason, chosen.layers) == (
+        loaded.module,
+        loaded.reason,
+        _extension.read_module_layers(_rs),
+    )
+    assert chosen.module == _rs.__name__
+    assert chosen.reason != "own" or chosen.module == "fhy_core._rs"
+    assert "fhy_core" in chosen.layers
+    assert native.ENTRY_POINT_GROUP == NATIVE_ENTRY_POINT_GROUP
+    assert native.MODULE_ENVIRONMENT_VARIABLE == NATIVE_MODULE_ENVIRONMENT_VARIABLE
+
+
+def test_the_current_selection_is_an_error_before_one_is_made(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test reading the selection before the loader made one raises."""
+    monkeypatch.setattr(_extension, "_SELECTION", None)
+
+    with pytest.raises(RuntimeError, match="has not selected its native module"):
+        get_current_selection()
+    with pytest.raises(RuntimeError, match="has not selected its native module"):
+        native.get_selection()
+
+
+def test_the_selection_reports_the_layers_its_module_contains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the layers are those the module reports, advertised or not."""
+    module = _fake_module(__fhy_core_version__="0", __demo_version__="1")
+    _install_selection(monkeypatch, module)
+
+    assert native.get_selection().layers == {"fhy_core", "demo"}
+
+
+def test_only_string_versions_of_layer_names_are_layers() -> None:
+    """Test attributes that are not a layer's string version are ignored."""
+    module = _fake_module(
+        __version__="1",
+        __a_version__="1",
+        __b_version__=2,
+        __c_version__=None,
+        _d_version__="1",
+        __e_version="1",
+        **{
+            "__class_version__": "1",
+            "__not-a-layer_version__": "1",
+            "__1st_version__": "1",
+        },
+    )
+
+    assert _extension.read_module_layers(module) == {"fhy_core", "a"}
+
+
+@pytest.mark.skipif(
+    _has_native_entry_points(),
+    reason="a combined extension is installed, so the package does not run alone",
+)
+def test_the_own_module_contains_the_fhy_core_layer_alone() -> None:
+    """Test `fhy_core._rs`, which reports `__version__`, holds `fhy_core` only."""
+    assert _extension.read_module_layers(_rs) == {"fhy_core"}
+    assert native.get_selection().layers == {"fhy_core"}
+
+
+def test_require_layer_installs_the_module_for_the_package(
+    monkeypatch: pytest.MonkeyPatch, demo_package: ModuleType
+) -> None:
+    """Test a present layer returns the module and installs it as `_rs`."""
+    module = _fake_module(__demo_layer_version__="1.2.3rc1")
+    chosen = Selection("native_fake", "entry_points", (_candidate("demo_layer"),))
+    _install_selection(monkeypatch, module, chosen)
+
+    returned = native.require_layer("demo_layer", "1.2.3-rc.1")
+
+    assert returned is module
+    assert sys.modules["demo_layer._rs"] is module
+    assert demo_package._rs is module
+
+
+def test_require_layer_installs_under_the_named_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test `package` names where the module is installed, and is set on it."""
+    module = _fake_module(__demo_layer_version__="1")
+    _install_selection(monkeypatch, module)
+    other = ModuleType("demo_other")
+    monkeypatch.setitem(sys.modules, "demo_other", other)
+    try:
+        native.require_layer("demo_layer", "1", package="demo_other")
+
+        assert sys.modules["demo_other._rs"] is module
+        assert other._rs is module
+        assert "demo_layer._rs" not in sys.modules
+    finally:
+        sys.modules.pop("demo_other._rs", None)
+
+
+@pytest.mark.parametrize("package", ["", "a b", "pkg.", ".rel", "class"])
+def test_require_layer_refuses_a_package_that_is_not_a_module_path(
+    monkeypatch: pytest.MonkeyPatch, package: str
+) -> None:
+    """Test a package name that cannot be imported is the caller's error."""
+    module = _fake_module(__demo_layer_version__="1")
+    _install_selection(monkeypatch, module)
+
+    with pytest.raises(ValueError) as caught:
+        native.require_layer("demo_layer", "1", package=package)
+
+    assert str(caught.value) == (
+        f"a package is named by an importable module path, not {package!r}"
+    )
+    assert f"{package}._rs" not in sys.modules
+    assert "demo_layer._rs" not in sys.modules
+
+
+@pytest.mark.parametrize(
+    ("layer", "package"),
+    [("demo_layer", "typo_pkg"), ("demo_unimported", None)],
+    ids=["package", "layer"],
+)
+def test_require_layer_refuses_a_package_that_is_not_imported(
+    monkeypatch: pytest.MonkeyPatch, layer: str, package: str | None
+) -> None:
+    """Test the owner must be imported, so its `_rs` is set on it."""
+    module = _fake_module(**{f"__{layer}_version__": "1"})
+    _install_selection(monkeypatch, module)
+    owner = package or layer
+
+    with pytest.raises(ValueError) as caught:
+        native.require_layer(layer, "1", package=package)
+
+    assert str(caught.value) == (
+        f"the package {owner!r} is not in sys.modules; call require_layer "
+        "while that package is being imported"
+    )
+    assert f"{owner}._rs" not in sys.modules
+
+
+@pytest.mark.usefixtures("demo_package")
+@pytest.mark.parametrize(
+    ("held_file", "location"),
+    [
+        ("/elsewhere/demo_layer/_rs.so", " (loaded from /elsewhere/demo_layer/_rs.so)"),
+        (None, ""),
+    ],
+    ids=["with-file", "without-file"],
+)
+def test_require_layer_refuses_a_package_that_holds_another_module(
+    monkeypatch: pytest.MonkeyPatch, held_file: str | None, location: str
+) -> None:
+    """Test a package's own `_rs` is never replaced, naming its file if any."""
+    _install_selection(monkeypatch, _fake_module(__demo_layer_version__="1"))
+    other = ModuleType("demo_layer._rs")
+    if held_file is not None:
+        other.__file__ = held_file
+    monkeypatch.setitem(sys.modules, "demo_layer._rs", other)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1")
+
+    assert str(caught.value) == (
+        f"'demo_layer._rs' is already another module{location} than the "
+        "native module 'native_fake' that fhy_core runs on, and a process "
+        "holds one native extension module. Uninstall the package that "
+        "provides the other module."
+    )
+
+
+def test_require_layer_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch, demo_package: ModuleType
+) -> None:
+    """Test requiring a layer twice returns the same module and changes nothing."""
+    module = _fake_module(__demo_layer_version__="1")
+    _install_selection(monkeypatch, module)
+
+    first = native.require_layer("demo_layer", "1")
+    second = native.require_layer("demo_layer", "1")
+
+    assert first is second is module
+    assert sys.modules["demo_layer._rs"] is module
+    assert demo_package._rs is module
+
+
+@pytest.mark.parametrize("layer", _INVALID_LAYER_NAMES)
+def test_require_layer_refuses_a_name_that_is_not_a_layer(layer: str) -> None:
+    """Test a keyword or non-identifier layer raises `ValueError`."""
+    with pytest.raises(ValueError, match="identifier"):
+        native.require_layer(layer, "1")
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_names_the_variable_when_it_selected_the_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a layer the variable's module lacks names the modules that have it."""
+    chosen = Selection(
+        "native_low",
+        "environment",
+        (
+            _candidate("demo_layer"),
+            Candidate("native_low", (_entry_point("fhy_core", "native_low"),)),
+        ),
+    )
+    _install_selection(monkeypatch, _fake_module(), chosen)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1")
+
+    assert str(caught.value) == (
+        "FHY_CORE_NATIVE_MODULE=native_low selected 'native_low', which does "
+        "not contain the layer 'demo_layer' (no __demo_layer_version__). "
+        "Installed modules that do: 'native_fake' (entry point 'demo_layer'). "
+        "Unset the variable to let fhy_core choose, or set it to one of those."
+    )
+
+
+def _read_installed_entry_points(
+    site_directory: pathlib.Path,
+) -> list[importlib.metadata.EntryPoint]:
+    """Return the native entry points of the distributions in a directory."""
+    return [
+        entry_point
+        for distribution in importlib.metadata.distributions(path=[str(site_directory)])
+        for entry_point in distribution.entry_points
+        if entry_point.group == NATIVE_ENTRY_POINT_GROUP
+    ]
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_under_the_variable_names_what_it_skipped_and_hid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Test a missing layer names the entry points skipped and the tie hidden."""
+    write_distribution(
+        tmp_path, "product", {"bad-name": "native_bad", "a": "native_one"}
+    )
+    write_distribution(tmp_path, "other", {"a": "native_two", "b": "my-product.x"})
+    chosen = _select_native_module(
+        {NATIVE_MODULE_ENVIRONMENT_VARIABLE: "native_low"},
+        _read_installed_entry_points(tmp_path),
+    )
+    _install_selection(monkeypatch, _fake_module(), chosen)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1")
+
+    assert str(caught.value) == (
+        "FHY_CORE_NATIVE_MODULE=native_low selected 'native_low', which does "
+        "not contain the layer 'demo_layer' (no __demo_layer_version__). No "
+        "installed distribution declares that layer; install the package that "
+        "provides it, or unset the variable. The variable made fhy_core skip "
+        "the invalid entry points 'b' of 'other' (value 'my-product.x'), "
+        "'bad-name' of 'product' (value 'native_bad'). Without the variable, "
+        "the import would fail: several installed modules each contain every "
+        "installed layer ('a', 'fhy_core'): 'native_one' (entry point 'a' of "
+        "'product'); 'native_two' (entry point 'a' of 'other')."
+    )
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_under_the_variable_names_incomparable_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a missing layer says the variable hid an incomparable set."""
+    chosen = Selection(
+        "native_low",
+        "environment",
+        (_candidate("demo_layer"), _create_named_candidate("native_low")),
+    )
+    _install_selection(monkeypatch, _fake_module(), chosen)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1")
+
+    assert str(caught.value).endswith(
+        " Without the variable, the import would fail: no installed module "
+        "contains every installed layer ('a', 'demo_layer', 'fhy_core'): "
+        "'native_fake' (entry point 'demo_layer') lacks 'a'; 'native_low' "
+        "(entry point 'a') lacks 'demo_layer'."
+    )
+
+
+def test_only_the_variable_skips_entry_points() -> None:
+    """Test a selection the variable did not make skips no entry point."""
+    with pytest.raises(ValueError) as caught:
+        Selection(
+            "fhy_core._rs", "own", (), skipped=(_entry_point("1st", "native_bad"),)
+        )
+
+    assert str(caught.value) == (
+        "a selection skips entry points only under the environment variable, "
+        "but one for the reason 'own' skips ['1st']"
+    )
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_with_the_variable_and_no_holder_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test no installed module declaring the layer is said, not hidden."""
+    chosen = Selection("native_low", "environment", ())
+    _install_selection(monkeypatch, _fake_module(), chosen)
+
+    with pytest.raises(ImportError, match="No installed distribution declares"):
+        native.require_layer("demo_layer", "1")
+
+
+@pytest.mark.usefixtures("demo_package")
+@pytest.mark.parametrize(
+    ("module_name", "reason"),
+    [("native_fake", "entry_points"), ("fhy_core._rs", "own")],
+)
+def test_require_layer_names_the_missing_declaration(
+    monkeypatch: pytest.MonkeyPatch, module_name: str, reason: SelectionReason
+) -> None:
+    """Test an undeclared layer says to reinstall the aggregate's package."""
+    advertised = (_candidate("other_layer"),) if reason == "entry_points" else ()
+    chosen = Selection(module_name, reason, advertised)
+    module = _fake_module(__other_layer_version__="1", __unadvertised_version__="1")
+    _install_selection(monkeypatch, module, chosen)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1")
+
+    assert str(caught.value) == (
+        "The layer 'demo_layer' (version '1') is not in the native module "
+        f"{module_name!r} that fhy_core runs on, which contains 'fhy_core', "
+        "'other_layer', 'unadvertised', and no installed distribution "
+        "declares it in the "
+        "entry point group 'fhy_core.native'. Reinstall the package that "
+        "provides the aggregate containing 'demo_layer'."
+    )
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_refuses_a_stale_layer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a layer of another version names both versions."""
+    module = _fake_module(__demo_layer_version__="0.9.0")
+    chosen = Selection("native_fake", "entry_points", (_candidate("demo_layer"),))
+    _install_selection(monkeypatch, module, chosen)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1.0.0")
+
+    assert str(caught.value) == (
+        "The layer 'demo_layer' needs version '1.0.0', but the native module "
+        "'native_fake' that fhy_core runs on reports version '0.9.0' in "
+        "__demo_layer_version__, so it is stale. Rebuild or reinstall the "
+        "package that provides the module."
+    )
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_names_the_variable_that_selected_a_stale_layer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a stale layer in the variable's module names the variable."""
+    module = _fake_module(__demo_layer_version__="0.9.0")
+    _install_selection(monkeypatch, module)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1.0.0")
+
+    assert str(caught.value) == (
+        "The layer 'demo_layer' needs version '1.0.0', but the native module "
+        "'native_fake' that FHY_CORE_NATIVE_MODULE=native_fake selected "
+        "reports version '0.9.0' in __demo_layer_version__, so it is stale. "
+        "Rebuild or reinstall the package that provides the module, or unset "
+        "FHY_CORE_NATIVE_MODULE to let fhy_core choose, or set it to a module "
+        "that holds 'demo_layer' at version '1.0.0'."
+    )
+
+
+@pytest.mark.parametrize("version", ["dev", "", "1.0.0-foo.1"])
+def test_require_layer_refuses_a_version_that_is_not_pep440(
+    monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    """Test a required version that is not PEP 440 is the caller's error."""
+    module = _fake_module(__demo_layer_version__=version)
+    _install_selection(monkeypatch, module)
+
+    with pytest.raises(ValueError) as caught:
+        native.require_layer("demo_layer", version)
+
+    assert str(caught.value) == (
+        f"a layer's version is a PEP 440 version, not {version!r}"
+    )
+    assert "demo_layer._rs" not in sys.modules
+
+
+def test_require_layer_checks_the_version_before_the_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a bad version is refused even where the module lacks the layer."""
+    _install_selection(monkeypatch, _fake_module())
+
+    with pytest.raises(ValueError, match="PEP 440"):
+        native.require_layer("demo_layer", "dev")
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_refuses_a_reported_version_that_is_not_pep440(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a module reporting a non-PEP 440 version of the layer is stale."""
+    module = _fake_module(__demo_layer_version__="garbage")
+    chosen = Selection("native_fake", "entry_points", (_candidate("demo_layer"),))
+    _install_selection(monkeypatch, module, chosen)
+
+    with pytest.raises(ImportError) as caught:
+        native.require_layer("demo_layer", "1.0.0")
+
+    assert str(caught.value) == (
+        "The layer 'demo_layer' needs version '1.0.0', but the native module "
+        "'native_fake' that fhy_core runs on reports 'garbage' in "
+        "__demo_layer_version__, which is not a PEP 440 version, so it is "
+        "stale. Rebuild or reinstall the package that provides the module."
+    )
+    assert "demo_layer._rs" not in sys.modules
+
+
+def test_require_layer_accepts_versions_equal_in_normal_form(
+    monkeypatch: pytest.MonkeyPatch, demo_package: ModuleType
+) -> None:
+    """Test a Cargo-form report meets a PEP 440 requirement, and the reverse."""
+    module = _fake_module(__demo_layer_version__="1.2.3-rc.1")
+    _install_selection(monkeypatch, module)
+
+    assert native.require_layer("demo_layer", "1.2.3rc1") is module
+    assert native.require_layer("demo_layer", "v1.2.3-RC1") is module
+
+
+@pytest.mark.usefixtures("demo_package")
+def test_require_layer_treats_a_non_string_version_as_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a version attribute that is not a string does not count."""
+    chosen = Selection("native_fake", "entry_points", (_candidate("demo_layer"),))
+    _install_selection(monkeypatch, _fake_module(__demo_layer_version__=1), chosen)
+
+    with pytest.raises(ImportError, match="is not in the native module"):
+        native.require_layer("demo_layer", "1")

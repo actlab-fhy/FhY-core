@@ -21,11 +21,18 @@ import textwrap
 import pytest
 
 from fhy_core._extension import NATIVE_MODULE_ENVIRONMENT_VARIABLE
-from tests.native_modules import read_import_error, run_python, write_distribution
+from tests.native_modules import (
+    read_import_error,
+    run_python,
+    write_distribution,
+    write_native_module,
+)
 
 ROOT = pathlib.Path(__file__).parent.parent
 PACKAGE = "fhy-core-example-aggregate"
 MODULE = "_fhy_example_aggregate"
+# The layers the aggregate holds, one entry point each.
+LAYERS = ("fhy_example", "fhy_example_search")
 
 pytestmark = [pytest.mark.slow, pytest.mark.subprocess]
 
@@ -82,7 +89,7 @@ def site(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     shutil.copy(
         target / "debug" / _library_name(), site / f"{MODULE}{extension_suffix}"
     )
-    write_distribution(site, PACKAGE, {"example": MODULE})
+    write_distribution(site, PACKAGE, dict.fromkeys(LAYERS, MODULE))
     return site
 
 
@@ -273,3 +280,122 @@ def test_the_aggregate_holds_fhy_core_state_once(site: pathlib.Path) -> None:
     )
 
     assert output.split() == ["ok"]
+
+
+def test_each_layer_of_the_aggregate_reports_its_version(site: pathlib.Path) -> None:
+    """Test the aggregate sets one `__<layer>_version__` per layer."""
+    output = _run(
+        site,
+        f"""
+        import importlib.metadata
+        import {MODULE} as aggregate
+        import fhy_core
+
+        from fhy_core._extension import normalize_pep440_version
+
+        # The crates report a Cargo version; the package's is PEP 440 normal.
+        version = importlib.metadata.version("fhy_core")
+        assert normalize_pep440_version(aggregate.__fhy_example_version__) == version
+        assert (
+            normalize_pep440_version(aggregate.__fhy_example_search_version__)
+            == version
+        )
+        selection = fhy_core.native.get_selection()
+        assert selection.module == "{MODULE}"
+        assert selection.reason == "entry_points"
+        assert selection.layers == {{"fhy_core", "fhy_example", "fhy_example_search"}}
+        print("ok")
+        """,
+    )
+
+    assert output.split() == ["ok"]
+
+
+def test_a_layer_is_required_and_installed_for_its_package(
+    site: pathlib.Path,
+) -> None:
+    """Test `require_layer` finds each layer and installs the module."""
+    output = _run(
+        site,
+        f"""
+        import importlib.metadata
+        import sys
+        import types
+        import {MODULE} as aggregate
+        import fhy_core
+
+        # The packages that own the layers, as they are while importing.
+        for package in ("fhy_example", "search_package", "not_installed"):
+            sys.modules[package] = types.ModuleType(package)
+        version = importlib.metadata.version("fhy_core")
+        module = fhy_core.native.require_layer("fhy_example", version)
+        assert module is aggregate
+        assert sys.modules["fhy_example._rs"] is aggregate
+        assert sys.modules["fhy_example"]._rs is aggregate
+        module = fhy_core.native.require_layer(
+            "fhy_example_search", version, package="search_package"
+        )
+        assert sys.modules["search_package._rs"] is aggregate
+        assert sys.modules["search_package"]._rs is aggregate
+        try:
+            fhy_core.native.require_layer(
+                "fhy_example_search", "999.0.0", package="search_package"
+            )
+        except ImportError as error:
+            assert "is stale" in str(error)
+            assert "{PACKAGE}" in str(error)
+        else:
+            raise AssertionError("no ImportError")
+        try:
+            fhy_core.native.require_layer("not_installed", version)
+        except ImportError as error:
+            assert "is not in the native module" in str(error)
+        else:
+            raise AssertionError("no ImportError")
+        print("ok")
+        """,
+    )
+
+    assert output.split() == ["ok"]
+
+
+def test_a_lower_module_next_to_the_aggregate_is_never_imported(
+    site: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    """Test the aggregate, which holds every layer, is selected over a lower one.
+
+    The lower module claims one of the aggregate's layers and raises when it
+    is imported, so the aggregate is selected only if the lower one is not
+    imported, and composition still works on it.
+    """
+    write_distribution(tmp_path, "lower-product", {"fhy_example": "native_lower"})
+    write_native_module(
+        tmp_path,
+        "native_lower",
+        {},
+        fhy_core_version="0",
+        on_import="raise RuntimeError('the lower module was imported')",
+    )
+
+    completed = run_python(
+        textwrap.dedent(
+            f"""
+            import sys
+            import fhy_core
+            import {MODULE} as aggregate
+            from fhy_core.identifier import Identifier
+
+            assert fhy_core._rs is aggregate
+            assert "native_lower" not in sys.modules
+            selection = fhy_core.native.get_selection()
+            assert selection.module == "{MODULE}"
+            derived = aggregate.Tagger.derive(Identifier("first"), "_derived")
+            assert derived.name_hint == "first_derived"
+            print("ok")
+            """
+        ),
+        python_path=[site, tmp_path],
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["ok"]

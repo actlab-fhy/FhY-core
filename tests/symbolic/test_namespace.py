@@ -53,6 +53,7 @@ def test_fhy_core_top_level_still_has_only_identifier_as_a_re_exported_symbol() 
         "identifier",
         "lattice",
         "logger",
+        "native",
         "op_attribute",
         "pass_infrastructure",
         "provenance",

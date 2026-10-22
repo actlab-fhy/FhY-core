@@ -34,12 +34,28 @@ fn aggregate(module: &Bound<'_, PyModule>) -> PyResult<()> {
 ```
 
 The product's wheel advertises the module through the `fhy_core.native`
-entry-point group, and `fhy_core` loads it in place of its own `_rs`:
+entry-point group, one entry point per *layer* the module contains. An entry
+point's name is the import name of the Python package whose Rust binding the
+module holds, and its value is the module's import path, with no
+`:attribute` or `[extras]`:
 
 ```toml
 [project.entry-points."fhy_core.native"]
 my_product = "_my_product_native"
 ```
+
+The module sets `__my_product_version__` to the version of the product's Rust
+crate, from its crate's `register`. That Cargo version must equal the version
+of the product's Python package after PEP 440 normalization (`1.2.3-rc.1` is
+`1.2.3rc1`), as maturin normalizes it; `require_layer` compares the two in
+that form. A layer is present in a module if and only if the module has that
+attribute, and `fhy_core` refuses a module that lacks the attribute of a layer
+it is advertised to contain. `fhy_core` loads the one
+installed module that contains every installed layer in place of its own
+`_rs`, so a chain of products needs no umbrella product, provided the top
+product's aggregate contains the layers of the products below it and
+advertises each with an entry point. The product's Python package calls
+`fhy_core.native.require_layer("my_product", version)` while it is imported.
 
 An aggregate must also:
 
@@ -64,7 +80,11 @@ fhy-core = "=0.2.0"   # only if you use it directly; same version
 ```
 
 `register` sets `__fhy_core_version__` (`VERSION_ATTRIBUTE`) on the module,
-and `fhy_core` refuses an aggregate whose version differs from its own.
+and `fhy_core` refuses an aggregate whose version, after PEP 440
+normalization, differs from the installed `fhy_core` package's. A
+downstream crate's own `register` does the same for its layer, setting
+`__<layer>_version__` to its Cargo version, which must equal its Python
+package's version after PEP 440 normalization.
 
 ## Public API
 
