@@ -31,7 +31,7 @@ numpy = "0.29"
 proptest = "1"
 # The non-self-describing format the serialization round-trip tests use.
 postcard = { version = "1", default-features = false, features = ["alloc"] }
-rstest = "0.27"
+rstest = "0.28"
 # The z3 backend of `fhy_core::solver`, behind the off-by-default `z3` feature.
 z3 = "0.21"
 # Exact, and equal to the workspace version: fhy-core-py of a release is
